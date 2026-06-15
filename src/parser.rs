@@ -53,6 +53,7 @@ pub enum Stmt {
         body: Vec<Stmt>,
     },
     Return(Expr),
+    Print(Expr),
     ExprStmt(Expr),
 }
 
@@ -103,6 +104,7 @@ impl Parser {
         match self.peek().clone() {
             TokenKind::KwFn => self.parse_fn_decl(),
             TokenKind::KwReturn => self.parse_return(),
+            TokenKind::KwPrint => self.parse_print(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
             _ => {
                 let expr = self.parse_expr();
@@ -163,6 +165,15 @@ impl Parser {
         let expr = self.parse_expr();
         self.expect(&TokenKind::Semi);
         Stmt::Return(expr)
+    }
+
+    fn parse_print(&mut self) -> Stmt {
+        self.advance(); // consume 印刷
+        self.expect(&TokenKind::LParen);
+        let expr = self.parse_expr();
+        self.expect(&TokenKind::RParen);
+        self.expect(&TokenKind::Semi);
+        Stmt::Print(expr)
     }
 
     // Parses additive expressions (lowest precedence we need for now).
@@ -366,6 +377,18 @@ mod tests {
                 op: BinOpKind::Add,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn test_parse_print_stmt() {
+        // 印刷（年齢）；
+        let tokens = Lexer::new("印刷（年齢）；").tokenize();
+        let ast = Parser::new(tokens).parse();
+        assert_eq!(ast.len(), 1);
+        assert!(matches!(
+            &ast[0],
+            Stmt::Print(Expr::Ident(n)) if n == "年齢"
         ));
     }
 }

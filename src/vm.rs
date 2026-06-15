@@ -34,6 +34,7 @@ pub struct Vm {
 
 impl Vm {
     /// Construct from a script chunk (no named functions).
+    #[allow(dead_code)] // used in low-level unit tests that bypass the compiler
     pub fn new(constants: Vec<Value>, instructions: Vec<Instruction>) -> Self {
         let script_chunk = Chunk {
             instructions,
@@ -70,6 +71,11 @@ impl Vm {
     pub fn run(&mut self) -> Option<Value> {
         loop {
             let frame = self.frames.last_mut().expect("no active frame");
+            // Implicit return when execution reaches the end of a chunk.
+            if frame.ip >= frame.instructions.len() {
+                self.frames.pop();
+                return None;
+            }
             let instr = frame.instructions[frame.ip].clone();
             frame.ip += 1;
 
@@ -112,6 +118,10 @@ impl Vm {
                     self.frames.push(new_frame);
                     // Execution continues inside the new frame on the next iteration.
                 }
+                Instruction::Print => {
+                    let val = self.stack.pop().expect("stack underflow on Print");
+                    println!("{}", display_value(&val));
+                }
                 Instruction::Return => {
                     let return_val = self.stack.pop();
                     self.frames.pop();
@@ -131,6 +141,15 @@ impl Vm {
         let rhs = self.stack.pop().expect("stack underflow");
         let lhs = self.stack.pop().expect("stack underflow");
         (lhs, rhs)
+    }
+}
+
+pub fn display_value(val: &Value) -> String {
+    match val {
+        Value::Int(n) => n.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Str(s) => s.clone(),
+        Value::Bool(b) => if *b { "真" } else { "偽" }.to_string(),
     }
 }
 
@@ -203,6 +222,27 @@ mod tests {
         // 返す 二倍（５）；  →  10
         let src = "関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝返す 二倍（５）；";
         assert_eq!(run(src), Some(Value::Int(10)));
+    }
+
+    #[test]
+    fn test_vm_print_integer() {
+        // 印刷（４２）；  — should not panic and produces no return value
+        let result = run("印刷（４２）；");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_vm_print_variable() {
+        // 整数 Ａ ＝ ７；  印刷（Ａ）；
+        let result = run("整数 Ａ ＝ ７；印刷（Ａ）；");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_vm_print_then_return() {
+        // 印刷（１）；  返す ２；  — prints 1, returns 2
+        let result = run("印刷（１）；返す ２；");
+        assert_eq!(result, Some(Value::Int(2)));
     }
 
     #[test]

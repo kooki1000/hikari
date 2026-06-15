@@ -10,6 +10,7 @@ pub enum TokenKind {
     // Statement keywords
     KwFn,     // 関数
     KwReturn, // 返す
+    KwPrint,  // 印刷
 
     // Literals
     LitInt(i64),
@@ -127,6 +128,7 @@ impl Lexer {
             "無" => TokenKind::TyVoid,
             "関数" => TokenKind::KwFn,
             "返す" => TokenKind::KwReturn,
+            "印刷" => TokenKind::KwPrint,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -360,5 +362,13 @@ mod tests {
                 TokenKind::Eof,
             ]
         );
+    }
+
+    #[test]
+    fn test_lex_print_keyword() {
+        let tokens = Lexer::new("印刷").tokenize();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::KwPrint);
+        assert_eq!(tokens[1].kind, TokenKind::Eof);
     }
 }

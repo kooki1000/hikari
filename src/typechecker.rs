@@ -129,6 +129,11 @@ impl TypeChecker {
                 Ok(())
             }
 
+            Stmt::Print(expr) => {
+                self.infer_expr(expr)?; // any type is printable
+                Ok(())
+            }
+
             Stmt::ExprStmt(expr) => {
                 self.infer_expr(expr)?;
                 Ok(())
