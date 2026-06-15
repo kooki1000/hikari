@@ -11,6 +11,9 @@ pub enum TokenKind {
     KwFn,     // 関数
     KwReturn, // 返す
     KwPrint,  // 印刷
+    KwIf,     // もし
+    KwThen,   // ならば
+    KwElse,   // 違えば
 
     // Literals
     LitInt(i64),
@@ -21,6 +24,9 @@ pub enum TokenKind {
 
     // Operators & punctuation
     Assign, // ＝
+    EqEq,   // ＝＝
+    Lt,     // ＜
+    Gt,     // ＞
     Semi,   // ；
     Plus,   // ＋
     Minus,  // ー  (also prefix of arrow)
@@ -129,6 +135,9 @@ impl Lexer {
             "関数" => TokenKind::KwFn,
             "返す" => TokenKind::KwReturn,
             "印刷" => TokenKind::KwPrint,
+            "もし" => TokenKind::KwIf,
+            "ならば" => TokenKind::KwThen,
+            "違えば" => TokenKind::KwElse,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -158,7 +167,20 @@ impl Lexer {
                 }
                 '＝' => {
                     self.advance();
-                    TokenKind::Assign
+                    if self.peek() == Some('＝') {
+                        self.advance();
+                        TokenKind::EqEq
+                    } else {
+                        TokenKind::Assign
+                    }
+                }
+                '＜' => {
+                    self.advance();
+                    TokenKind::Lt
+                }
+                '＞' => {
+                    self.advance();
+                    TokenKind::Gt
                 }
                 '；' => {
                     self.advance();
@@ -228,7 +250,19 @@ fn fw_digit_to_ascii(ch: char) -> char {
 fn is_symbol(ch: char) -> bool {
     matches!(
         ch,
-        '＝' | '；' | '＋' | 'ー' | '＊' | '／' | '｛' | '｝' | '（' | '）' | '「' | '」'
+        '＝' | '；'
+            | '＋'
+            | 'ー'
+            | '＊'
+            | '／'
+            | '｛'
+            | '｝'
+            | '（'
+            | '）'
+            | '「'
+            | '」'
+            | '＜'
+            | '＞'
     )
 }
 
@@ -370,5 +404,37 @@ mod tests {
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].kind, TokenKind::KwPrint);
         assert_eq!(tokens[1].kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_lex_if_keywords() {
+        let src = "もし ならば 違えば";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                &TokenKind::KwIf,
+                &TokenKind::KwThen,
+                &TokenKind::KwElse,
+                &TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_comparison_operators() {
+        let src = "＝＝ ＜ ＞";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                &TokenKind::EqEq,
+                &TokenKind::Lt,
+                &TokenKind::Gt,
+                &TokenKind::Eof,
+            ]
+        );
     }
 }

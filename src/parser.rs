@@ -37,6 +37,9 @@ pub enum BinOpKind {
     Sub, // ー
     Mul, // ＊
     Div, // ／
+    Eq,  // ＝＝
+    Lt,  // ＜
+    Gt,  // ＞
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -54,6 +57,11 @@ pub enum Stmt {
     },
     Return(Expr),
     Print(Expr),
+    If {
+        condition: Expr,
+        then_body: Vec<Stmt>,
+        else_body: Option<Vec<Stmt>>,
+    },
     ExprStmt(Expr),
 }
 
@@ -105,6 +113,7 @@ impl Parser {
             TokenKind::KwFn => self.parse_fn_decl(),
             TokenKind::KwReturn => self.parse_return(),
             TokenKind::KwPrint => self.parse_print(),
+            TokenKind::KwIf => self.parse_if(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
             _ => {
                 let expr = self.parse_expr();
@@ -167,6 +176,35 @@ impl Parser {
         Stmt::Return(expr)
     }
 
+    fn parse_if(&mut self) -> Stmt {
+        self.advance(); // consume もし
+        let condition = self.parse_expr();
+        self.expect(&TokenKind::KwThen); // ならば
+        self.expect(&TokenKind::LBrace);
+        let mut then_body = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            then_body.push(self.parse_stmt());
+        }
+        self.expect(&TokenKind::RBrace);
+        let else_body = if self.peek() == &TokenKind::KwElse {
+            self.advance(); // consume 違えば
+            self.expect(&TokenKind::LBrace);
+            let mut body = Vec::new();
+            while self.peek() != &TokenKind::RBrace {
+                body.push(self.parse_stmt());
+            }
+            self.expect(&TokenKind::RBrace);
+            Some(body)
+        } else {
+            None
+        };
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        }
+    }
+
     fn parse_print(&mut self) -> Stmt {
         self.advance(); // consume 印刷
         self.expect(&TokenKind::LParen);
@@ -176,9 +214,26 @@ impl Parser {
         Stmt::Print(expr)
     }
 
-    // Parses additive expressions (lowest precedence we need for now).
     fn parse_expr(&mut self) -> Expr {
-        self.parse_additive()
+        self.parse_comparison()
+    }
+
+    // Comparison: lowest precedence  (＝＝  ＜  ＞)
+    fn parse_comparison(&mut self) -> Expr {
+        let lhs = self.parse_additive();
+        let op = match self.peek() {
+            TokenKind::EqEq => BinOpKind::Eq,
+            TokenKind::Lt => BinOpKind::Lt,
+            TokenKind::Gt => BinOpKind::Gt,
+            _ => return lhs,
+        };
+        self.advance();
+        let rhs = self.parse_additive();
+        Expr::BinOp {
+            op,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        }
     }
 
     fn parse_additive(&mut self) -> Expr {
@@ -378,6 +433,44 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn test_parse_if_stmt() {
+        // もし １ ＝＝ １ ならば ｛ 印刷（１）； ｝
+        let src = "もし １ ＝＝ １ ならば ｛ 印刷（１）； ｝";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse();
+        assert_eq!(ast.len(), 1);
+        let Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } = &ast[0]
+        else {
+            panic!("expected If stmt")
+        };
+        assert!(matches!(
+            condition,
+            Expr::BinOp {
+                op: BinOpKind::Eq,
+                ..
+            }
+        ));
+        assert_eq!(then_body.len(), 1);
+        assert!(matches!(then_body[0], Stmt::Print(_)));
+        assert!(else_body.is_none());
+    }
+
+    #[test]
+    fn test_parse_if_else_stmt() {
+        // もし Ａ ＝＝ ０ ならば ｛ 印刷（１）； ｝ 違えば ｛ 印刷（２）； ｝
+        let src = "もし Ａ ＝＝ ０ ならば ｛ 印刷（１）； ｝ 違えば ｛ 印刷（２）； ｝";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse();
+        let Stmt::If { else_body, .. } = &ast[0] else {
+            panic!()
+        };
+        assert!(else_body.is_some());
+        assert_eq!(else_body.as_ref().unwrap().len(), 1);
     }
 
     #[test]
