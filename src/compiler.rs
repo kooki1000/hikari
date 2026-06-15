@@ -24,6 +24,7 @@ pub enum Instruction {
     Mul,
     Div,
     Call(u16, u8), // Call(fn_idx, arg_count)
+    Print,         // pop and print top of stack
     Return,
 }
 
@@ -133,6 +134,10 @@ impl Compiler {
             Stmt::FnDecl { .. } => {
                 // Nested fn decls are not yet supported; top-level ones are
                 // handled in compile() directly.
+            }
+            Stmt::Print(expr) => {
+                self.emit_expr(expr, instrs, locals);
+                instrs.push(Instruction::Print);
             }
             Stmt::Return(expr) => {
                 self.emit_expr(expr, instrs, locals);

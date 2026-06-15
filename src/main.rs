@@ -10,7 +10,7 @@ use compiler::Compiler;
 use lexer::Lexer;
 use parser::Parser;
 use typechecker::TypeChecker;
-use vm::Vm;
+use vm::{Vm, display_value};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -25,35 +25,19 @@ fn main() {
         process::exit(1);
     });
 
-    // Lex
     let tokens = Lexer::new(&source).tokenize();
-
-    // Parse
     let ast = Parser::new(tokens).parse();
 
-    // Type-check
     if let Err(e) = TypeChecker::new().check(&ast) {
         eprintln!("型エラー: {:?}", e);
         process::exit(1);
     }
 
-    // Compile
     let mut compiler = Compiler::new();
     let instructions = compiler.compile(&ast);
-
-    // Run
     let result = Vm::with_chunks(compiler.constants, compiler.chunks, instructions).run();
 
     if let Some(value) = result {
         println!("{}", display_value(&value));
-    }
-}
-
-fn display_value(val: &compiler::Value) -> String {
-    match val {
-        compiler::Value::Int(n) => n.to_string(),
-        compiler::Value::Float(f) => f.to_string(),
-        compiler::Value::Str(s) => s.clone(),
-        compiler::Value::Bool(b) => if *b { "真" } else { "偽" }.to_string(),
     }
 }
