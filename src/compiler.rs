@@ -23,8 +23,13 @@ pub enum Instruction {
     Sub,
     Mul,
     Div,
-    Call(u16, u8), // Call(fn_idx, arg_count)
-    Print,         // pop and print top of stack
+    Equal,            // pop two values, push Bool (==)
+    LessThan,         // pop two values, push Bool (<)
+    GreaterThan,      // pop two values, push Bool (>)
+    JumpIfFalse(u16), // pop Bool; jump to absolute offset if false
+    Jump(u16),        // unconditional jump to absolute offset
+    Call(u16, u8),    // Call(fn_idx, arg_count)
+    Print,            // pop and print top of stack
     Return,
 }
 
@@ -139,6 +144,40 @@ impl Compiler {
                 self.emit_expr(expr, instrs, locals);
                 instrs.push(Instruction::Print);
             }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                self.emit_expr(condition, instrs, locals);
+                // Placeholder index; back-patched after then_body is emitted.
+                let jump_if_false_idx = instrs.len();
+                instrs.push(Instruction::JumpIfFalse(0));
+
+                for s in then_body {
+                    self.emit_stmt(s, instrs, locals);
+                }
+
+                if let Some(else_stmts) = else_body {
+                    // Jump over else_body after then_body executes.
+                    let jump_idx = instrs.len();
+                    instrs.push(Instruction::Jump(0));
+                    // Back-patch JumpIfFalse to land here (start of else).
+                    let else_start = instrs.len() as u16;
+                    instrs[jump_if_false_idx] = Instruction::JumpIfFalse(else_start);
+
+                    for s in else_stmts {
+                        self.emit_stmt(s, instrs, locals);
+                    }
+                    // Back-patch Jump to land after else_body.
+                    let after_else = instrs.len() as u16;
+                    instrs[jump_idx] = Instruction::Jump(after_else);
+                } else {
+                    // No else: back-patch JumpIfFalse to land after then_body.
+                    let after_then = instrs.len() as u16;
+                    instrs[jump_if_false_idx] = Instruction::JumpIfFalse(after_then);
+                }
+            }
             Stmt::Return(expr) => {
                 self.emit_expr(expr, instrs, locals);
                 instrs.push(Instruction::Return);
@@ -184,6 +223,9 @@ impl Compiler {
                     BinOpKind::Sub => Instruction::Sub,
                     BinOpKind::Mul => Instruction::Mul,
                     BinOpKind::Div => Instruction::Div,
+                    BinOpKind::Eq => Instruction::Equal,
+                    BinOpKind::Lt => Instruction::LessThan,
+                    BinOpKind::Gt => Instruction::GreaterThan,
                 };
                 instrs.push(instr);
             }

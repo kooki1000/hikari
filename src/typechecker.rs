@@ -130,7 +130,27 @@ impl TypeChecker {
             }
 
             Stmt::Print(expr) => {
-                self.infer_expr(expr)?; // any type is printable
+                self.infer_expr(expr)?;
+                Ok(())
+            }
+
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                let cond_ty = self.infer_expr(condition)?;
+                if cond_ty != HikariType::Bool {
+                    return Err(TypeError::VarDeclMismatch {
+                        name: "<もし condition>".to_string(),
+                        declared: HikariType::Bool,
+                        got: cond_ty,
+                    });
+                }
+                self.check(then_body)?;
+                if let Some(body) = else_body {
+                    self.check(body)?;
+                }
                 Ok(())
             }
 
@@ -164,7 +184,10 @@ impl TypeChecker {
                         rhs: rty,
                     });
                 }
-                Ok(lty)
+                match op {
+                    BinOpKind::Eq | BinOpKind::Lt | BinOpKind::Gt => Ok(HikariType::Bool),
+                    _ => Ok(lty),
+                }
             }
 
             Expr::Call { name, args } => {

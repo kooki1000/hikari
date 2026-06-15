@@ -118,6 +118,27 @@ impl Vm {
                     self.frames.push(new_frame);
                     // Execution continues inside the new frame on the next iteration.
                 }
+                Instruction::Equal => {
+                    let (l, r) = self.pop2();
+                    self.stack.push(Value::Bool(l == r));
+                }
+                Instruction::LessThan => {
+                    let (l, r) = self.pop2();
+                    self.stack.push(Value::Bool(cmp_lt(l, r)));
+                }
+                Instruction::GreaterThan => {
+                    let (l, r) = self.pop2();
+                    self.stack.push(Value::Bool(cmp_gt(l, r)));
+                }
+                Instruction::JumpIfFalse(offset) => {
+                    let val = self.stack.pop().expect("stack underflow on JumpIfFalse");
+                    if val == Value::Bool(false) {
+                        self.frames.last_mut().unwrap().ip = offset as usize;
+                    }
+                }
+                Instruction::Jump(offset) => {
+                    self.frames.last_mut().unwrap().ip = offset as usize;
+                }
                 Instruction::Print => {
                     let val = self.stack.pop().expect("stack underflow on Print");
                     println!("{}", display_value(&val));
@@ -150,6 +171,22 @@ pub fn display_value(val: &Value) -> String {
         Value::Float(f) => f.to_string(),
         Value::Str(s) => s.clone(),
         Value::Bool(b) => if *b { "真" } else { "偽" }.to_string(),
+    }
+}
+
+fn cmp_lt(lhs: Value, rhs: Value) -> bool {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => a < b,
+        (Value::Float(a), Value::Float(b)) => a < b,
+        _ => panic!("type error in comparison"),
+    }
+}
+
+fn cmp_gt(lhs: Value, rhs: Value) -> bool {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => a > b,
+        (Value::Float(a), Value::Float(b)) => a > b,
+        _ => panic!("type error in comparison"),
     }
 }
 
@@ -243,6 +280,38 @@ mod tests {
         // 印刷（１）；  返す ２；  — prints 1, returns 2
         let result = run("印刷（１）；返す ２；");
         assert_eq!(result, Some(Value::Int(2)));
+    }
+
+    #[test]
+    fn test_vm_if_true_branch() {
+        // もし １ ＝＝ １ ならば ｛ 返す １０； ｝
+        // Condition is true → returns 10
+        let result = run("もし １ ＝＝ １ ならば ｛ 返す １０； ｝");
+        assert_eq!(result, Some(Value::Int(10)));
+    }
+
+    #[test]
+    fn test_vm_if_false_branch_skipped() {
+        // もし １ ＝＝ ２ ならば ｛ 返す １０； ｝ 返す ０；
+        // Condition is false → skips then_body, returns 0
+        let result = run("もし １ ＝＝ ２ ならば ｛ 返す １０； ｝返す ０；");
+        assert_eq!(result, Some(Value::Int(0)));
+    }
+
+    #[test]
+    fn test_vm_if_else() {
+        // もし １ ＝＝ ２ ならば ｛ 返す １； ｝ 違えば ｛ 返す ２； ｝
+        // Condition false → else branch → returns 2
+        let result = run("もし １ ＝＝ ２ ならば ｛ 返す １； ｝ 違えば ｛ 返す ２； ｝");
+        assert_eq!(result, Some(Value::Int(2)));
+    }
+
+    #[test]
+    fn test_vm_comparison_lt_gt() {
+        // 整数 Ａ ＝ ３；  もし Ａ ＜ ５ ならば ｛ 返す １； ｝ 違えば ｛ 返す ０； ｝
+        let result =
+            run("整数 Ａ ＝ ３；もし Ａ ＜ ５ ならば ｛ 返す １； ｝ 違えば ｛ 返す ０； ｝");
+        assert_eq!(result, Some(Value::Int(1)));
     }
 
     #[test]
