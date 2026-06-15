@@ -42,7 +42,7 @@ fn main() {
     let instructions = compiler.compile(&ast);
 
     // Run
-    let result = Vm::new(compiler.constants, instructions).run();
+    let result = Vm::with_chunks(compiler.constants, compiler.chunks, instructions).run();
 
     if let Some(value) = result {
         println!("{}", display_value(&value));
