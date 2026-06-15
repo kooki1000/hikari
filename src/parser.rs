@@ -1,0 +1,371 @@
+use crate::lexer::{Token, TokenKind};
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum HikariType {
+    Int,    // 整数
+    Float,  // 小数
+    String, // 文字列
+    Bool,   // 真偽
+    Void,   // 無
+}
+
+// ── AST nodes ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Expr {
+    LitInt(i64),
+    LitFloat(f64),
+    LitString(String),
+    LitBool(bool),
+    Ident(String),
+    BinOp {
+        op: BinOpKind,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    Call {
+        name: String,
+        args: Vec<Expr>,
+    },
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum BinOpKind {
+    Add, // ＋
+    Sub, // ー
+    Mul, // ＊
+    Div, // ／
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Stmt {
+    VarDecl {
+        ty: HikariType,
+        name: String,
+        value: Expr,
+    },
+    FnDecl {
+        name: String,
+        params: Vec<(HikariType, String)>,
+        return_ty: HikariType,
+        body: Vec<Stmt>,
+    },
+    Return(Expr),
+    ExprStmt(Expr),
+}
+
+// ── Parser ───────────────────────────────────────────────────────────────────
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+}
+
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, pos: 0 }
+    }
+
+    fn peek(&self) -> &TokenKind {
+        &self.tokens[self.pos].kind
+    }
+
+    fn advance(&mut self) -> &TokenKind {
+        let kind = &self.tokens[self.pos].kind;
+        if self.pos + 1 < self.tokens.len() {
+            self.pos += 1;
+        }
+        kind
+    }
+
+    fn expect(&mut self, expected: &TokenKind) {
+        let got = self.advance();
+        assert_eq!(
+            std::mem::discriminant(got),
+            std::mem::discriminant(expected),
+            "expected {:?}, got {:?}",
+            expected,
+            got
+        );
+    }
+
+    pub fn parse(&mut self) -> Vec<Stmt> {
+        let mut stmts = Vec::new();
+        while self.peek() != &TokenKind::Eof {
+            stmts.push(self.parse_stmt());
+        }
+        stmts
+    }
+
+    fn parse_stmt(&mut self) -> Stmt {
+        match self.peek().clone() {
+            TokenKind::KwFn => self.parse_fn_decl(),
+            TokenKind::KwReturn => self.parse_return(),
+            kind if is_type_token(&kind) => self.parse_var_decl(),
+            _ => {
+                let expr = self.parse_expr();
+                self.expect(&TokenKind::Semi);
+                Stmt::ExprStmt(expr)
+            }
+        }
+    }
+
+    fn parse_var_decl(&mut self) -> Stmt {
+        let ty = self.parse_type();
+        let name = match self.advance().clone() {
+            TokenKind::Ident(n) => n,
+            other => panic!("expected identifier, got {:?}", other),
+        };
+        self.expect(&TokenKind::Assign);
+        let value = self.parse_expr();
+        self.expect(&TokenKind::Semi);
+        Stmt::VarDecl { ty, name, value }
+    }
+
+    fn parse_fn_decl(&mut self) -> Stmt {
+        self.advance(); // consume 関数
+        let name = match self.advance().clone() {
+            TokenKind::Ident(n) => n,
+            other => panic!("expected function name, got {:?}", other),
+        };
+        self.expect(&TokenKind::LParen);
+        let mut params = Vec::new();
+        while self.peek() != &TokenKind::RParen {
+            let ty = self.parse_type();
+            let pname = match self.advance().clone() {
+                TokenKind::Ident(n) => n,
+                other => panic!("expected param name, got {:?}", other),
+            };
+            params.push((ty, pname));
+            // future: handle comma-separated params
+        }
+        self.expect(&TokenKind::RParen);
+        self.expect(&TokenKind::Arrow);
+        let return_ty = self.parse_type();
+        self.expect(&TokenKind::LBrace);
+        let mut body = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            body.push(self.parse_stmt());
+        }
+        self.expect(&TokenKind::RBrace);
+        Stmt::FnDecl {
+            name,
+            params,
+            return_ty,
+            body,
+        }
+    }
+
+    fn parse_return(&mut self) -> Stmt {
+        self.advance(); // consume 返す
+        let expr = self.parse_expr();
+        self.expect(&TokenKind::Semi);
+        Stmt::Return(expr)
+    }
+
+    // Parses additive expressions (lowest precedence we need for now).
+    fn parse_expr(&mut self) -> Expr {
+        self.parse_additive()
+    }
+
+    fn parse_additive(&mut self) -> Expr {
+        let mut lhs = self.parse_multiplicative();
+        loop {
+            let op = match self.peek() {
+                TokenKind::Plus => BinOpKind::Add,
+                TokenKind::Minus => BinOpKind::Sub,
+                _ => break,
+            };
+            self.advance();
+            let rhs = self.parse_multiplicative();
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        lhs
+    }
+
+    fn parse_multiplicative(&mut self) -> Expr {
+        let mut lhs = self.parse_primary();
+        loop {
+            let op = match self.peek() {
+                TokenKind::Star => BinOpKind::Mul,
+                TokenKind::Slash => BinOpKind::Div,
+                _ => break,
+            };
+            self.advance();
+            let rhs = self.parse_primary();
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        lhs
+    }
+
+    fn parse_primary(&mut self) -> Expr {
+        match self.advance().clone() {
+            TokenKind::LitInt(n) => Expr::LitInt(n),
+            TokenKind::LitFloat(f) => Expr::LitFloat(f),
+            TokenKind::LitString(s) => Expr::LitString(s),
+            TokenKind::LitTrue => Expr::LitBool(true),
+            TokenKind::LitFalse => Expr::LitBool(false),
+            TokenKind::Ident(name) => {
+                if self.peek() == &TokenKind::LParen {
+                    self.advance(); // consume （
+                    let mut args = Vec::new();
+                    while self.peek() != &TokenKind::RParen {
+                        args.push(self.parse_expr());
+                    }
+                    self.advance(); // consume ）
+                    Expr::Call { name, args }
+                } else {
+                    Expr::Ident(name)
+                }
+            }
+            TokenKind::LParen => {
+                let expr = self.parse_expr();
+                self.expect(&TokenKind::RParen);
+                expr
+            }
+            other => panic!("unexpected token in expression: {:?}", other),
+        }
+    }
+
+    fn parse_type(&mut self) -> HikariType {
+        match self.advance().clone() {
+            TokenKind::TyInt => HikariType::Int,
+            TokenKind::TyFloat => HikariType::Float,
+            TokenKind::TyString => HikariType::String,
+            TokenKind::TyBool => HikariType::Bool,
+            TokenKind::TyVoid => HikariType::Void,
+            other => panic!("expected type, got {:?}", other),
+        }
+    }
+}
+
+fn is_type_token(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::TyInt
+            | TokenKind::TyFloat
+            | TokenKind::TyString
+            | TokenKind::TyBool
+            | TokenKind::TyVoid
+    )
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    #[test]
+    fn test_parse_var_decl() {
+        let tokens = Lexer::new("整数 年齢 ＝ ２０；").tokenize();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse();
+        assert_eq!(ast.len(), 1);
+        assert!(matches!(
+            &ast[0],
+            Stmt::VarDecl { ty: HikariType::Int, name, value: Expr::LitInt(20) }
+            if name == "年齢"
+        ));
+    }
+
+    #[test]
+    fn test_parse_binary_expression() {
+        // 整数 結果 ＝ １ ＋ ２；
+        let tokens = Lexer::new("整数 結果 ＝ １ ＋ ２；").tokenize();
+        let ast = Parser::new(tokens).parse();
+        assert!(matches!(
+            &ast[0],
+            Stmt::VarDecl {
+                ty: HikariType::Int,
+                name,
+                value: Expr::BinOp { op: BinOpKind::Add, lhs, rhs }
+            }
+            if name == "結果"
+                && matches!(lhs.as_ref(), Expr::LitInt(1))
+                && matches!(rhs.as_ref(), Expr::LitInt(2))
+        ));
+    }
+
+    #[test]
+    fn test_parse_operator_precedence() {
+        // 整数 結果 ＝ ２ ＋ ３ ＊ ４；
+        // Should parse as 2 + (3 * 4), not (2 + 3) * 4
+        let tokens = Lexer::new("整数 結果 ＝ ２ ＋ ３ ＊ ４；").tokenize();
+        let ast = Parser::new(tokens).parse();
+        let Stmt::VarDecl { value, .. } = &ast[0] else {
+            panic!()
+        };
+        // outer op must be Add
+        let Expr::BinOp { op, lhs, rhs } = value else {
+            panic!()
+        };
+        assert_eq!(op, &BinOpKind::Add);
+        assert!(matches!(lhs.as_ref(), Expr::LitInt(2)));
+        // rhs must be Mul(3, 4)
+        let Expr::BinOp {
+            op: inner_op,
+            lhs: il,
+            rhs: ir,
+        } = rhs.as_ref()
+        else {
+            panic!()
+        };
+        assert_eq!(inner_op, &BinOpKind::Mul);
+        assert!(matches!(il.as_ref(), Expr::LitInt(3)));
+        assert!(matches!(ir.as_ref(), Expr::LitInt(4)));
+    }
+
+    #[test]
+    fn test_parse_return_stmt() {
+        // 返す 年齢 ＋ １；
+        let tokens = Lexer::new("返す 年齢 ＋ １；").tokenize();
+        let ast = Parser::new(tokens).parse();
+        assert!(matches!(
+            &ast[0],
+            Stmt::Return(Expr::BinOp { op: BinOpKind::Add, lhs, rhs })
+            if matches!(lhs.as_ref(), Expr::Ident(n) if n == "年齢")
+                && matches!(rhs.as_ref(), Expr::LitInt(1))
+        ));
+    }
+
+    #[test]
+    fn test_parse_fn_decl() {
+        // 関数 計算（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝
+        let src = "関数 計算（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝";
+        let tokens = Lexer::new(src).tokenize();
+        let ast = Parser::new(tokens).parse();
+        assert_eq!(ast.len(), 1);
+        let Stmt::FnDecl {
+            name,
+            params,
+            return_ty,
+            body,
+        } = &ast[0]
+        else {
+            panic!("expected FnDecl")
+        };
+        assert_eq!(name, "計算");
+        assert_eq!(params, &[(HikariType::Int, "Ａ".to_string())]);
+        assert_eq!(return_ty, &HikariType::Int);
+        assert_eq!(body.len(), 1);
+        assert!(matches!(
+            &body[0],
+            Stmt::Return(Expr::BinOp {
+                op: BinOpKind::Add,
+                ..
+            })
+        ));
+    }
+}
