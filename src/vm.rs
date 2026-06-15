@@ -1,67 +1,127 @@
-use crate::compiler::{Instruction, Value};
+use crate::compiler::{Chunk, Instruction, Value};
+
+// ── Call frame ────────────────────────────────────────────────────────────────
+
+struct Frame {
+    instructions: Vec<Instruction>,
+    ip: usize,
+    locals: Vec<Option<Value>>,
+}
+
+impl Frame {
+    fn new(chunk: &Chunk, args: Vec<Value>) -> Self {
+        let mut locals: Vec<Option<Value>> = vec![None; 256];
+        // Seed parameter slots from args (left-to-right = slot 0, 1, …).
+        for (i, arg) in args.into_iter().enumerate() {
+            locals[i] = Some(arg);
+        }
+        Self {
+            instructions: chunk.instructions.clone(),
+            ip: 0,
+            locals,
+        }
+    }
+}
 
 // ── VM ────────────────────────────────────────────────────────────────────────
 
 pub struct Vm {
     constants: Vec<Value>,
-    instructions: Vec<Instruction>,
+    chunks: Vec<Chunk>,
     stack: Vec<Value>,
-    locals: Vec<Option<Value>>,
-    ip: usize,
+    frames: Vec<Frame>,
 }
 
 impl Vm {
+    /// Construct from a script chunk (no named functions).
     pub fn new(constants: Vec<Value>, instructions: Vec<Instruction>) -> Self {
+        let script_chunk = Chunk {
+            instructions,
+            param_count: 0,
+        };
+        let frame = Frame::new(&script_chunk, vec![]);
         Self {
             constants,
-            instructions,
+            chunks: vec![script_chunk],
             stack: Vec::new(),
-            locals: vec![None; 256],
-            ip: 0,
+            frames: vec![frame],
+        }
+    }
+
+    /// Construct with a full set of chunks (script + named functions).
+    pub fn with_chunks(
+        constants: Vec<Value>,
+        chunks: Vec<Chunk>,
+        script: Vec<Instruction>,
+    ) -> Self {
+        let script_chunk = Chunk {
+            instructions: script,
+            param_count: 0,
+        };
+        let frame = Frame::new(&script_chunk, vec![]);
+        Self {
+            constants,
+            chunks,
+            stack: Vec::new(),
+            frames: vec![frame],
         }
     }
 
     pub fn run(&mut self) -> Option<Value> {
         loop {
-            let instr = self.instructions[self.ip].clone();
-            self.ip += 1;
+            let frame = self.frames.last_mut().expect("no active frame");
+            let instr = frame.instructions[frame.ip].clone();
+            frame.ip += 1;
 
             match instr {
                 Instruction::LoadConst(idx) => {
                     self.stack.push(self.constants[idx as usize].clone());
                 }
                 Instruction::LoadLocal(slot) => {
-                    let val = self.locals[slot as usize]
+                    let val = self.frames.last().unwrap().locals[slot as usize]
                         .clone()
                         .expect("load of uninitialised local");
                     self.stack.push(val);
                 }
                 Instruction::StoreLocal(slot) => {
                     let val = self.stack.pop().expect("stack underflow on StoreLocal");
-                    self.locals[slot as usize] = Some(val);
+                    self.frames.last_mut().unwrap().locals[slot as usize] = Some(val);
                 }
                 Instruction::Add => {
-                    let (lhs, rhs) = self.pop2();
-                    self.stack.push(arith(lhs, rhs, |a, b| a + b, |a, b| a + b));
+                    let (l, r) = self.pop2();
+                    self.stack.push(arith(l, r, |a, b| a + b, |a, b| a + b));
                 }
                 Instruction::Sub => {
-                    let (lhs, rhs) = self.pop2();
-                    self.stack.push(arith(lhs, rhs, |a, b| a - b, |a, b| a - b));
+                    let (l, r) = self.pop2();
+                    self.stack.push(arith(l, r, |a, b| a - b, |a, b| a - b));
                 }
                 Instruction::Mul => {
-                    let (lhs, rhs) = self.pop2();
-                    self.stack.push(arith(lhs, rhs, |a, b| a * b, |a, b| a * b));
+                    let (l, r) = self.pop2();
+                    self.stack.push(arith(l, r, |a, b| a * b, |a, b| a * b));
                 }
                 Instruction::Div => {
-                    let (lhs, rhs) = self.pop2();
-                    self.stack.push(arith(lhs, rhs, |a, b| a / b, |a, b| a / b));
+                    let (l, r) = self.pop2();
+                    self.stack.push(arith(l, r, |a, b| a / b, |a, b| a / b));
+                }
+                Instruction::Call(fn_idx, arg_count) => {
+                    let chunk = &self.chunks[fn_idx as usize];
+                    // Pop args off the stack (they were pushed left-to-right).
+                    let stack_len = self.stack.len();
+                    let args = self.stack.split_off(stack_len - arg_count as usize);
+                    let new_frame = Frame::new(chunk, args);
+                    self.frames.push(new_frame);
+                    // Execution continues inside the new frame on the next iteration.
                 }
                 Instruction::Return => {
-                    return self.stack.pop();
-                }
-                Instruction::Call(_, _) => {
-                    // Full call-frame dispatch is a future enhancement.
-                    // For now, a Call with no matching definition is a no-op.
+                    let return_val = self.stack.pop();
+                    self.frames.pop();
+                    if self.frames.is_empty() {
+                        return return_val;
+                    }
+                    // Push return value back onto the caller's stack.
+                    if let Some(val) = return_val {
+                        self.stack.push(val);
+                    }
                 }
             }
         }
@@ -99,8 +159,8 @@ mod tests {
     fn run(src: &str) -> Option<Value> {
         let ast = Parser::new(Lexer::new(src).tokenize()).parse();
         let mut compiler = Compiler::new();
-        let instructions = compiler.compile(&ast);
-        Vm::new(compiler.constants, instructions).run()
+        let script = compiler.compile(&ast);
+        Vm::with_chunks(compiler.constants, compiler.chunks, script).run()
     }
 
     #[test]
@@ -113,31 +173,43 @@ mod tests {
 
     #[test]
     fn test_vm_store_and_load_local() {
-        // 整数 年齢 ＝ ２０；  then 返す 年齢；
         let result = run("整数 年齢 ＝ ２０；返す 年齢；");
         assert_eq!(result, Some(Value::Int(20)));
     }
 
     #[test]
     fn test_vm_addition() {
-        // 整数 結果 ＝ ３ ＋ ４；  返す 結果；
         let result = run("整数 結果 ＝ ３ ＋ ４；返す 結果；");
         assert_eq!(result, Some(Value::Int(7)));
     }
 
     #[test]
     fn test_vm_operator_precedence() {
-        // 整数 結果 ＝ ２ ＋ ３ ＊ ４；  返す 結果；  → 2 + 12 = 14
         let result = run("整数 結果 ＝ ２ ＋ ３ ＊ ４；返す 結果；");
         assert_eq!(result, Some(Value::Int(14)));
     }
 
     #[test]
-    fn test_vm_function_body() {
-        // 関数 計算（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝
-        // The function body is compiled inline; param Ａ has no slot pre-loaded,
-        // so we seed it manually via a preceding VarDecl.
-        let result = run("整数 Ａ ＝ ９；関数 計算（整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝");
-        assert_eq!(result, Some(Value::Int(10)));
+    fn test_vm_function_body_via_call() {
+        // 関数 加算一（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝
+        // 返す 加算一（９）；  →  10
+        let src = "関数 加算一（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝返す 加算一（９）；";
+        assert_eq!(run(src), Some(Value::Int(10)));
+    }
+
+    #[test]
+    fn test_vm_call_function() {
+        // 関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝
+        // 返す 二倍（５）；  →  10
+        let src = "関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝返す 二倍（５）；";
+        assert_eq!(run(src), Some(Value::Int(10)));
+    }
+
+    #[test]
+    fn test_vm_call_with_expression_arg() {
+        // 関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝
+        // 返す 二倍（３ ＋ ４）；  →  14
+        let src = "関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝返す 二倍（３ ＋ ４）；";
+        assert_eq!(run(src), Some(Value::Int(14)));
     }
 }

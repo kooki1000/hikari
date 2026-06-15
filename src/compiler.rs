@@ -23,36 +23,84 @@ pub enum Instruction {
     Sub,
     Mul,
     Div,
-    Call(u16, u8), // Call(fn_idx, arg_count) — future use
+    Call(u16, u8), // Call(fn_idx, arg_count)
     Return,
+}
+
+// ── Function chunk ────────────────────────────────────────────────────────────
+
+// One compiled function: its instructions and the number of parameters
+// (params occupy locals[0..param_count]).
+#[derive(Debug, Clone)]
+pub struct Chunk {
+    pub instructions: Vec<Instruction>,
+    #[allow(dead_code)] // reserved for arity checking in the type checker
+    pub param_count: u8,
 }
 
 // ── Compiler ──────────────────────────────────────────────────────────────────
 
 pub struct Compiler {
     pub constants: Vec<Value>,
-    pub instructions: Vec<Instruction>,
-    locals: HashMap<String, u16>,
+    pub chunks: Vec<Chunk>,         // chunks[0] is the top-level script
+    fn_index: HashMap<String, u16>, // function name → chunk index
 }
 
 impl Compiler {
     pub fn new() -> Self {
         Self {
             constants: Vec::new(),
-            instructions: Vec::new(),
-            locals: HashMap::new(),
+            chunks: Vec::new(),
+            fn_index: HashMap::new(),
         }
     }
 
     pub fn compile(&mut self, stmts: &[Stmt]) -> Vec<Instruction> {
+        // First pass: register all function names so forward calls resolve.
         for stmt in stmts {
-            self.emit_stmt(stmt);
+            if let Stmt::FnDecl { name, params, .. } = stmt {
+                // Reserve a chunk slot; the body is compiled below.
+                let idx = self.chunks.len() as u16;
+                self.fn_index.insert(name.clone(), idx);
+                self.chunks.push(Chunk {
+                    instructions: Vec::new(),
+                    param_count: params.len() as u8,
+                });
+            }
         }
-        self.instructions.clone()
+
+        // Second pass: compile function bodies and the top-level script.
+        let mut script_instrs: Vec<Instruction> = Vec::new();
+        let mut script_locals: HashMap<String, u16> = HashMap::new();
+
+        for stmt in stmts {
+            match stmt {
+                Stmt::FnDecl {
+                    name, params, body, ..
+                } => {
+                    let idx = self.fn_index[name] as usize;
+                    let mut fn_locals: HashMap<String, u16> = HashMap::new();
+                    // Parameters occupy the first local slots in order.
+                    for (_, pname) in params {
+                        let slot = fn_locals.len() as u16;
+                        fn_locals.insert(pname.clone(), slot);
+                    }
+                    let mut fn_instrs = Vec::new();
+                    for s in body {
+                        self.emit_stmt(s, &mut fn_instrs, &mut fn_locals);
+                    }
+                    self.chunks[idx].instructions = fn_instrs;
+                }
+                other => {
+                    self.emit_stmt(other, &mut script_instrs, &mut script_locals);
+                }
+            }
+        }
+
+        script_instrs
     }
 
     fn add_constant(&mut self, val: Value) -> u16 {
-        // Reuse existing constant if identical (simple deduplication).
         if let Some(idx) = self.constants.iter().position(|c| c == &val) {
             return idx as u16;
         }
@@ -61,84 +109,86 @@ impl Compiler {
         idx
     }
 
-    fn local_slot(&mut self, name: &str) -> u16 {
-        if let Some(&slot) = self.locals.get(name) {
+    fn local_slot(locals: &mut HashMap<String, u16>, name: &str) -> u16 {
+        if let Some(&slot) = locals.get(name) {
             return slot;
         }
-        let slot = self.locals.len() as u16;
-        self.locals.insert(name.to_string(), slot);
+        let slot = locals.len() as u16;
+        locals.insert(name.to_string(), slot);
         slot
     }
 
-    fn emit(&mut self, instr: Instruction) {
-        self.instructions.push(instr);
-    }
-
-    fn emit_stmt(&mut self, stmt: &Stmt) {
+    fn emit_stmt(
+        &mut self,
+        stmt: &Stmt,
+        instrs: &mut Vec<Instruction>,
+        locals: &mut HashMap<String, u16>,
+    ) {
         match stmt {
             Stmt::VarDecl { name, value, .. } => {
-                self.emit_expr(value);
-                let slot = self.local_slot(name);
-                self.emit(Instruction::StoreLocal(slot));
+                self.emit_expr(value, instrs, locals);
+                let slot = Self::local_slot(locals, name);
+                instrs.push(Instruction::StoreLocal(slot));
             }
-
-            Stmt::FnDecl { body, .. } => {
-                // For now compile the body inline (full call-frame support comes in the VM).
-                for s in body {
-                    self.emit_stmt(s);
-                }
+            Stmt::FnDecl { .. } => {
+                // Nested fn decls are not yet supported; top-level ones are
+                // handled in compile() directly.
             }
-
             Stmt::Return(expr) => {
-                self.emit_expr(expr);
-                self.emit(Instruction::Return);
+                self.emit_expr(expr, instrs, locals);
+                instrs.push(Instruction::Return);
             }
-
             Stmt::ExprStmt(expr) => {
-                self.emit_expr(expr);
+                self.emit_expr(expr, instrs, locals);
             }
         }
     }
 
-    fn emit_expr(&mut self, expr: &Expr) {
+    fn emit_expr(
+        &mut self,
+        expr: &Expr,
+        instrs: &mut Vec<Instruction>,
+        locals: &mut HashMap<String, u16>,
+    ) {
         match expr {
             Expr::LitInt(n) => {
                 let idx = self.add_constant(Value::Int(*n));
-                self.emit(Instruction::LoadConst(idx));
+                instrs.push(Instruction::LoadConst(idx));
             }
             Expr::LitFloat(f) => {
                 let idx = self.add_constant(Value::Float(*f));
-                self.emit(Instruction::LoadConst(idx));
+                instrs.push(Instruction::LoadConst(idx));
             }
             Expr::LitString(s) => {
                 let idx = self.add_constant(Value::Str(s.clone()));
-                self.emit(Instruction::LoadConst(idx));
+                instrs.push(Instruction::LoadConst(idx));
             }
             Expr::LitBool(b) => {
                 let idx = self.add_constant(Value::Bool(*b));
-                self.emit(Instruction::LoadConst(idx));
+                instrs.push(Instruction::LoadConst(idx));
             }
             Expr::Ident(name) => {
-                let slot = self.local_slot(name);
-                self.emit(Instruction::LoadLocal(slot));
+                let slot = Self::local_slot(locals, name);
+                instrs.push(Instruction::LoadLocal(slot));
             }
             Expr::BinOp { op, lhs, rhs } => {
-                self.emit_expr(lhs);
-                self.emit_expr(rhs);
+                self.emit_expr(lhs, instrs, locals);
+                self.emit_expr(rhs, instrs, locals);
                 let instr = match op {
                     BinOpKind::Add => Instruction::Add,
                     BinOpKind::Sub => Instruction::Sub,
                     BinOpKind::Mul => Instruction::Mul,
                     BinOpKind::Div => Instruction::Div,
                 };
-                self.emit(instr);
+                instrs.push(instr);
             }
-            Expr::Call { name: _, args } => {
+            Expr::Call { name, args } => {
+                // Push arguments left-to-right; the VM seeds locals from them.
                 for arg in args {
-                    self.emit_expr(arg);
+                    self.emit_expr(arg, instrs, locals);
                 }
-                // Placeholder: full function dispatch handled by the VM in Phase 5.
-                self.emit(Instruction::Call(0, args.len() as u8));
+                let fn_idx = self.fn_index[name];
+                instrs.push(Instruction::Call(fn_idx, args.len() as u8));
             }
         }
     }
@@ -161,7 +211,6 @@ mod tests {
 
     #[test]
     fn test_compile_integer_literal() {
-        // 整数 年齢 ＝ ２０；
         let (instrs, constants) = compile("整数 年齢 ＝ ２０；");
         assert_eq!(instrs[0], Instruction::LoadConst(0));
         assert_eq!(instrs[1], Instruction::StoreLocal(0));
@@ -170,10 +219,9 @@ mod tests {
 
     #[test]
     fn test_compile_binary_add() {
-        // 整数 結果 ＝ １ ＋ ２；
         let (instrs, constants) = compile("整数 結果 ＝ １ ＋ ２；");
-        assert_eq!(instrs[0], Instruction::LoadConst(0)); // 1
-        assert_eq!(instrs[1], Instruction::LoadConst(1)); // 2
+        assert_eq!(instrs[0], Instruction::LoadConst(0));
+        assert_eq!(instrs[1], Instruction::LoadConst(1));
         assert_eq!(instrs[2], Instruction::Add);
         assert_eq!(instrs[3], Instruction::StoreLocal(0));
         assert_eq!(constants, vec![Value::Int(1), Value::Int(2)]);
@@ -181,9 +229,7 @@ mod tests {
 
     #[test]
     fn test_compile_constant_deduplication() {
-        // The same literal appearing twice must reuse the same constant pool slot.
         let (instrs, constants) = compile("整数 Ａ ＝ ５；整数 Ｂ ＝ ５；");
-        // Both VarDecls should LoadConst(0) — only one entry in the pool.
         assert_eq!(constants, vec![Value::Int(5)]);
         assert_eq!(instrs[0], Instruction::LoadConst(0));
         assert_eq!(instrs[2], Instruction::LoadConst(0));
@@ -191,19 +237,32 @@ mod tests {
 
     #[test]
     fn test_compile_load_local() {
-        // 整数 Ａ ＝ １０；  整数 Ｂ ＝ Ａ；
-        // Second decl must emit LoadLocal(0) to read Ａ.
         let (instrs, _) = compile("整数 Ａ ＝ １０；整数 Ｂ ＝ Ａ；");
-        assert_eq!(instrs[2], Instruction::LoadLocal(0)); // Ａ is slot 0
-        assert_eq!(instrs[3], Instruction::StoreLocal(1)); // Ｂ is slot 1
+        assert_eq!(instrs[2], Instruction::LoadLocal(0));
+        assert_eq!(instrs[3], Instruction::StoreLocal(1));
     }
 
     #[test]
     fn test_compile_return() {
-        // 関数 計算（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝
         let src = "関数 計算（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝";
-        let (instrs, _) = compile(src);
-        // Last instruction must be Return.
-        assert_eq!(instrs.last().unwrap(), &Instruction::Return);
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse();
+        let mut c = Compiler::new();
+        c.compile(&ast);
+        // The function chunk (index 0) must end with Return.
+        assert_eq!(
+            c.chunks[0].instructions.last().unwrap(),
+            &Instruction::Return
+        );
+    }
+
+    #[test]
+    fn test_compile_call_emits_correct_fn_idx() {
+        // 関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝ 返す 二倍（５）；
+        let src = "関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝返す 二倍（５）；";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse();
+        let mut c = Compiler::new();
+        let script = c.compile(&ast);
+        // Script: LoadConst(5), Call(0, 1), Return
+        assert!(matches!(script[1], Instruction::Call(0, 1)));
     }
 }
