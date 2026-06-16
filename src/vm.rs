@@ -695,16 +695,13 @@ mod tests {
 
     #[test]
     fn test_vm_uninitialized_local_returns_error() {
-        // もし １ ＝＝ ２ ならば ｛ 整数 Ａ ＝ １； ｝ 返す Ａ；
-        // The then-branch never runs, so Ａ's slot is never stored before the load.
-        let ast = Parser::new(
-            Lexer::new("もし １ ＝＝ ２ ならば ｛ 整数 Ａ ＝ １； ｝返す Ａ；").tokenize(),
-        )
-        .parse()
-        .unwrap();
-        let mut compiler = Compiler::new();
-        let script = compiler.compile(&ast);
-        let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
+        // A hand-built program that reads local slot 0 without ever storing
+        // into it first; this can't be produced by the compiler from valid
+        // Hikari source (every declared variable is stored immediately), so
+        // the instruction stream is constructed directly to exercise the
+        // VM's own guard against reading an uninitialized local.
+        let instructions = vec![Instruction::LoadLocal(0), Instruction::Return];
+        let result = Vm::new(vec![], instructions).run();
         assert_eq!(result, Err(RuntimeError::UninitializedLocal(0)));
     }
 
@@ -778,5 +775,19 @@ mod tests {
     fn test_vm_print_array() {
         let result = run("印刷（【１、２、３】）；");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_vm_if_body_var_does_not_shadow_outer_slot() {
+        let src = "整数 Ｎ ＝ １０；もし 真 ならば ｛ 整数 Ｎ ＝ ５； ｝返す Ｎ；";
+        let result = run(src);
+        assert_eq!(result, Some(Value::Int(10)));
+    }
+
+    #[test]
+    fn test_vm_while_body_var_does_not_leak_into_outer_slot() {
+        let src = "整数 Ｎ ＝ １０；整数 カウンタ ＝ ０；間 カウンタ ＜ ３ ならば ｛ 整数 Ｎ ＝ ９９；カウンタ ＝ カウンタ ＋ １； ｝返す Ｎ；";
+        let result = run(src);
+        assert_eq!(result, Some(Value::Int(10)));
     }
 }
