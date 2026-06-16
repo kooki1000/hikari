@@ -15,6 +15,9 @@ pub enum TokenKind {
     KwThen,   // ならば
     KwElse,   // 違えば
     KwWhile,  // 間
+    KwAnd,    // かつ
+    KwOr,     // または
+    KwNot,    // 否定
 
     // Literals
     LitInt(i64),
@@ -24,20 +27,24 @@ pub enum TokenKind {
     LitFalse, // 偽
 
     // Operators & punctuation
-    Assign, // ＝
-    EqEq,   // ＝＝
-    Lt,     // ＜
-    Gt,     // ＞
-    Semi,   // ；
-    Plus,   // ＋
-    Minus,  // ー  (also prefix of arrow)
-    Star,   // ＊
-    Slash,  // ／
-    LBrace, // ｛
-    RBrace, // ｝
-    LParen, // （
-    RParen, // ）
-    Arrow,  // ー＞
+    Assign,  // ＝
+    EqEq,    // ＝＝
+    Lt,      // ＜
+    Gt,      // ＞
+    LtEq,    // ≦
+    GtEq,    // ≧
+    NotEq,   // ≠
+    Semi,    // ；
+    Plus,    // ＋
+    Minus,   // ー  (also prefix of arrow)
+    Star,    // ＊
+    Slash,   // ／
+    LBrace,  // ｛
+    RBrace,  // ｝
+    LParen,  // （
+    RParen,  // ）
+    Comma,   // 、
+    Arrow,   // ー＞
 
     // Identifier (user-defined name)
     Ident(String),
@@ -94,8 +101,20 @@ impl Lexer {
     }
 
     fn skip_whitespace(&mut self) {
-        while self.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
-            self.advance();
+        loop {
+            while self.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+                self.advance();
+            }
+            if self.peek() == Some('＃') {
+                while let Some(c) = self.peek() {
+                    if c == '\n' {
+                        break;
+                    }
+                    self.advance();
+                }
+            } else {
+                break;
+            }
         }
     }
 
@@ -160,6 +179,9 @@ impl Lexer {
             "ならば" => TokenKind::KwThen,
             "違えば" => TokenKind::KwElse,
             "間" => TokenKind::KwWhile,
+            "かつ" => TokenKind::KwAnd,
+            "または" => TokenKind::KwOr,
+            "否定" => TokenKind::KwNot,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -210,6 +232,22 @@ impl Lexer {
                 '＞' => {
                     self.advance();
                     TokenKind::Gt
+                }
+                '≦' => {
+                    self.advance();
+                    TokenKind::LtEq
+                }
+                '≧' => {
+                    self.advance();
+                    TokenKind::GtEq
+                }
+                '≠' => {
+                    self.advance();
+                    TokenKind::NotEq
+                }
+                '、' => {
+                    self.advance();
+                    TokenKind::Comma
                 }
                 '；' => {
                     self.advance();
@@ -300,6 +338,10 @@ fn is_symbol(ch: char) -> bool {
             | '」'
             | '＜'
             | '＞'
+            | '≦'
+            | '≧'
+            | '≠'
+            | '、'
     )
 }
 
@@ -478,6 +520,70 @@ mod tests {
                 &TokenKind::EqEq,
                 &TokenKind::Lt,
                 &TokenKind::Gt,
+                &TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_comment_skipped() {
+        let src = "＃ これはコメントです\n整数 年齢 ＝ ２０；";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::TyInt,
+                TokenKind::Ident("年齢".to_string()),
+                TokenKind::Assign,
+                TokenKind::LitInt(20),
+                TokenKind::Semi,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_comment_at_eof_with_no_trailing_newline() {
+        let tokens = Lexer::new("＃ comment only").tokenize();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_lex_comma_token() {
+        let tokens = Lexer::new("、").tokenize();
+        assert_eq!(tokens[0].kind, TokenKind::Comma);
+        assert_eq!(tokens[1].kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_lex_extended_comparison_operators() {
+        let src = "≦ ≧ ≠";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                &TokenKind::LtEq,
+                &TokenKind::GtEq,
+                &TokenKind::NotEq,
+                &TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_logical_keywords() {
+        let src = "かつ または 否定";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                &TokenKind::KwAnd,
+                &TokenKind::KwOr,
+                &TokenKind::KwNot,
                 &TokenKind::Eof,
             ]
         );

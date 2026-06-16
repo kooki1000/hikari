@@ -165,11 +165,50 @@ impl Vm {
                     let (l, r) = self.pop2()?;
                     self.stack.push(Value::Bool(cmp_gt(l, r)?));
                 }
+                Instruction::LessEqual => {
+                    let (l, r) = self.pop2()?;
+                    self.stack.push(Value::Bool(cmp_le(l, r)?));
+                }
+                Instruction::GreaterEqual => {
+                    let (l, r) = self.pop2()?;
+                    self.stack.push(Value::Bool(cmp_ge(l, r)?));
+                }
+                Instruction::NotEqual => {
+                    let (l, r) = self.pop2()?;
+                    self.stack.push(Value::Bool(l != r));
+                }
+                Instruction::Negate => {
+                    let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    let result = match val {
+                        Value::Int(n) => Value::Int(-n),
+                        Value::Float(f) => Value::Float(-f),
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    };
+                    self.stack.push(result);
+                }
+                Instruction::Not => {
+                    let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    match val {
+                        Value::Bool(b) => self.stack.push(Value::Bool(!b)),
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    }
+                }
                 Instruction::JumpIfFalse(offset) => {
                     let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                     match val {
                         Value::Bool(b) => {
                             if !b {
+                                self.frames.last_mut().unwrap().ip = offset as usize;
+                            }
+                        }
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    }
+                }
+                Instruction::JumpIfTrue(offset) => {
+                    let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    match val {
+                        Value::Bool(b) => {
+                            if b {
                                 self.frames.last_mut().unwrap().ip = offset as usize;
                             }
                         }
@@ -226,6 +265,22 @@ fn cmp_gt(lhs: Value, rhs: Value) -> Result<bool, RuntimeError> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok(a > b),
         (Value::Float(a), Value::Float(b)) => Ok(a > b),
+        _ => Err(RuntimeError::TypeMismatch),
+    }
+}
+
+fn cmp_le(lhs: Value, rhs: Value) -> Result<bool, RuntimeError> {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => Ok(a <= b),
+        (Value::Float(a), Value::Float(b)) => Ok(a <= b),
+        _ => Err(RuntimeError::TypeMismatch),
+    }
+}
+
+fn cmp_ge(lhs: Value, rhs: Value) -> Result<bool, RuntimeError> {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => Ok(a >= b),
+        (Value::Float(a), Value::Float(b)) => Ok(a >= b),
         _ => Err(RuntimeError::TypeMismatch),
     }
 }
@@ -393,6 +448,58 @@ mod tests {
         let script = compiler.compile(&ast);
         let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
         assert_eq!(result, Err(RuntimeError::DivisionByZero));
+    }
+
+    #[test]
+    fn test_vm_reassignment() {
+        // 整数 年齢 ＝ ２０；年齢 ＝ ３０；返す 年齢；
+        let result = run("整数 年齢 ＝ ２０；年齢 ＝ ３０；返す 年齢；");
+        assert_eq!(result, Some(Value::Int(30)));
+    }
+
+    #[test]
+    fn test_vm_multi_param_call() {
+        // 関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝
+        // 返す 加算（３、４）；  →  7
+        let src = "関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝返す 加算（３、４）；";
+        assert_eq!(run(src), Some(Value::Int(7)));
+    }
+
+    #[test]
+    fn test_vm_unary_minus() {
+        let result = run("整数 結果 ＝ ー５；返す 結果；");
+        assert_eq!(result, Some(Value::Int(-5)));
+    }
+
+    #[test]
+    fn test_vm_unary_minus_in_expression() {
+        let result = run("整数 結果 ＝ １０ ＋ ー３；返す 結果；");
+        assert_eq!(result, Some(Value::Int(7)));
+    }
+
+    #[test]
+    fn test_vm_logical_and() {
+        assert_eq!(run("返す 真 かつ 偽；"), Some(Value::Bool(false)));
+        assert_eq!(run("返す 真 かつ 真；"), Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_vm_logical_or() {
+        assert_eq!(run("返す 真 または 偽；"), Some(Value::Bool(true)));
+        assert_eq!(run("返す 偽 または 偽；"), Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_vm_logical_not() {
+        assert_eq!(run("返す 否定 真；"), Some(Value::Bool(false)));
+        assert_eq!(run("返す 否定 偽；"), Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_vm_additional_comparison_operators() {
+        assert_eq!(run("返す ３ ≦ ３；"), Some(Value::Bool(true)));
+        assert_eq!(run("返す ５ ≧ １０；"), Some(Value::Bool(false)));
+        assert_eq!(run("返す １ ≠ ２；"), Some(Value::Bool(true)));
     }
 
     #[test]
