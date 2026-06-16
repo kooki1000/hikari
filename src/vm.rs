@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::compiler::{BuiltinFn, Chunk, Instruction, Value};
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -9,6 +12,7 @@ pub enum RuntimeError {
     DivisionByZero,
     TypeMismatch,
     InvalidConversion(String),
+    IndexOutOfBounds { index: i64, len: usize },
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -28,6 +32,9 @@ impl std::fmt::Display for RuntimeError {
             ),
             RuntimeError::TypeMismatch => write!(f, "演算で扱う値の型が一致しません。"),
             RuntimeError::InvalidConversion(msg) => write!(f, "変換に失敗しました: {}", msg),
+            RuntimeError::IndexOutOfBounds { index, len } => {
+                write!(f, "添字 {} は範囲外です（配列の長さ: {}）。", index, len)
+            }
         }
     }
 }
@@ -248,6 +255,56 @@ impl Vm {
                         self.stack.push(val);
                     }
                 }
+                Instruction::MakeArray(n) => {
+                    let stack_len = self.stack.len();
+                    let elements = self.stack.split_off(stack_len - n as usize);
+                    self.stack
+                        .push(Value::Array(Rc::new(RefCell::new(elements))));
+                }
+                Instruction::GetIndex => {
+                    let index = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
+                        Value::Int(i) => i,
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    };
+                    let arr = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
+                        Value::Array(a) => a,
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    };
+                    let borrowed = arr.borrow();
+                    if index < 0 || index as usize >= borrowed.len() {
+                        return Err(RuntimeError::IndexOutOfBounds {
+                            index,
+                            len: borrowed.len(),
+                        });
+                    }
+                    self.stack.push(borrowed[index as usize].clone());
+                }
+                Instruction::SetIndex => {
+                    let value = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    let index = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
+                        Value::Int(i) => i,
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    };
+                    let arr = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
+                        Value::Array(a) => a,
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    };
+                    let mut borrowed = arr.borrow_mut();
+                    if index < 0 || index as usize >= borrowed.len() {
+                        return Err(RuntimeError::IndexOutOfBounds {
+                            index,
+                            len: borrowed.len(),
+                        });
+                    }
+                    borrowed[index as usize] = value;
+                }
+                Instruction::ArrayLen => {
+                    let arr = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
+                        Value::Array(a) => a,
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    };
+                    self.stack.push(Value::Int(arr.borrow().len() as i64));
+                }
             }
         }
     }
@@ -265,6 +322,14 @@ pub fn display_value(val: &Value) -> String {
         Value::Float(f) => f.to_string(),
         Value::Str(s) => s.clone(),
         Value::Bool(b) => if *b { "真" } else { "偽" }.to_string(),
+        Value::Array(arr) => format!(
+            "【{}】",
+            arr.borrow()
+                .iter()
+                .map(display_value)
+                .collect::<Vec<_>>()
+                .join("、")
+        ),
     }
 }
 
@@ -641,5 +706,77 @@ mod tests {
         let script = compiler.compile(&ast);
         let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
         assert_eq!(result, Err(RuntimeError::UninitializedLocal(0)));
+    }
+
+    #[test]
+    fn test_vm_array_literal_and_index() {
+        let result = run("整数列 数字 ＝ 【１、２、３】；返す 数字【１】；");
+        assert_eq!(result, Some(Value::Int(2)));
+    }
+
+    #[test]
+    fn test_vm_index_assign_mutates_array() {
+        let result = run("整数列 数字 ＝ 【１、２、３】；数字【０】＝ ９；返す 数字【０】；");
+        assert_eq!(result, Some(Value::Int(9)));
+    }
+
+    #[test]
+    fn test_vm_array_aliasing_reference_semantics() {
+        // Assigning Ａ to Ｂ shares the same underlying Rc<RefCell<>>, so
+        // mutating through Ｂ must be visible through Ａ.
+        let src = "整数列 Ａ ＝ 【１、２、３】；整数列 Ｂ ＝ Ａ；Ｂ【０】＝ ９９；返す Ａ【０】；";
+        let result = run(src);
+        assert_eq!(result, Some(Value::Int(99)));
+    }
+
+    #[test]
+    fn test_vm_index_out_of_bounds_returns_error() {
+        let ast =
+            Parser::new(Lexer::new("整数列 数字 ＝ 【１、２】；返す 数字【５】；").tokenize())
+                .parse()
+                .unwrap();
+        let mut compiler = Compiler::new();
+        let script = compiler.compile(&ast);
+        let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
+        assert_eq!(
+            result,
+            Err(RuntimeError::IndexOutOfBounds { index: 5, len: 2 })
+        );
+    }
+
+    #[test]
+    fn test_vm_for_range_sums_to_ten() {
+        // 繰り返す カウンタ ＝ ０ から ５ ならば ｛ 合計 ＝ 合計 ＋ カウンタ； ｝
+        let src = "整数 合計 ＝ ０；繰り返す カウンタ ＝ ０ から ５ ならば ｛ 合計 ＝ 合計 ＋ カウンタ； ｝返す 合計；";
+        let result = run(src);
+        assert_eq!(result, Some(Value::Int(0 + 1 + 2 + 3 + 4)));
+    }
+
+    #[test]
+    fn test_vm_for_each_sums_array_elements() {
+        let src = "整数列 数字 ＝ 【１、２、３】；整数 合計 ＝ ０；各 要素 ： 数字 ならば ｛ 合計 ＝ 合計 ＋ 要素； ｝返す 合計；";
+        let result = run(src);
+        assert_eq!(result, Some(Value::Int(6)));
+    }
+
+    #[test]
+    fn test_vm_nested_for_each_loops_no_slot_collision() {
+        let src = "整数列 Ａ ＝ 【１、２】；整数列 Ｂ ＝ 【１０、２０、３０】；整数 合計 ＝ ０；各 外側 ： Ａ ならば ｛ 各 内側 ： Ｂ ならば ｛ 合計 ＝ 合計 ＋ 内側； ｝ ｝返す 合計；";
+        let result = run(src);
+        // Outer loop runs twice; inner sum (10+20+30=60) accumulates each time.
+        assert_eq!(result, Some(Value::Int(120)));
+    }
+
+    #[test]
+    fn test_vm_sequential_for_each_loops_no_slot_collision() {
+        let src = "整数列 Ａ ＝ 【１、２】；整数列 Ｂ ＝ 【１０、２０】；整数 合計 ＝ ０；各 要素 ： Ａ ならば ｛ 合計 ＝ 合計 ＋ 要素； ｝各 要素 ： Ｂ ならば ｛ 合計 ＝ 合計 ＋ 要素； ｝返す 合計；";
+        let result = run(src);
+        assert_eq!(result, Some(Value::Int(33)));
+    }
+
+    #[test]
+    fn test_vm_print_array() {
+        let result = run("印刷（【１、２、３】）；");
+        assert_eq!(result, None);
     }
 }

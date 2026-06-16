@@ -10,6 +10,9 @@ pub enum Value {
     Float(f64),
     Str(String),
     Bool(bool),
+    // Rc<RefCell<>> gives arrays reference semantics so mutations via
+    // index-assignment are visible through aliased variables.
+    Array(std::rc::Rc<std::cell::RefCell<Vec<Value>>>),
 }
 
 // ── Built-in functions ────────────────────────────────────────────────────────
@@ -49,6 +52,10 @@ pub enum Instruction {
     CallBuiltin(BuiltinFn, u8), // CallBuiltin(builtin, arg_count)
     Print,                      // pop and print top of stack
     Return,
+    MakeArray(u16), // pop n values (in order), push a new Value::Array
+    GetIndex,       // pop index, pop array, push the element at index
+    SetIndex,       // pop value, pop index, pop array, mutate array in place
+    ArrayLen,       // pop array, push its length as Value::Int
 }
 
 pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
@@ -79,6 +86,7 @@ pub struct Compiler {
     pub constants: Vec<Value>,
     pub chunks: Vec<Chunk>,         // chunks[0] is the top-level script
     fn_index: HashMap<String, u16>, // function name → chunk index
+    synthetic_counter: u32,         // disambiguates ForEach's hidden locals
 }
 
 impl Compiler {
@@ -87,6 +95,7 @@ impl Compiler {
             constants: Vec::new(),
             chunks: Vec::new(),
             fn_index: HashMap::new(),
+            synthetic_counter: 0,
         }
     }
 
@@ -234,6 +243,79 @@ impl Compiler {
                 let slot = Self::local_slot(locals, name);
                 instrs.push(Instruction::StoreLocal(slot));
             }
+            Stmt::IndexAssign {
+                name, index, value, ..
+            } => {
+                let slot = Self::local_slot(locals, name);
+                instrs.push(Instruction::LoadLocal(slot));
+                self.emit_expr(index, instrs, locals);
+                self.emit_expr(value, instrs, locals);
+                instrs.push(Instruction::SetIndex);
+            }
+            Stmt::ForRange {
+                var,
+                from,
+                to,
+                body,
+                ..
+            } => {
+                self.emit_expr(from, instrs, locals);
+                let slot = Self::local_slot(locals, var);
+                instrs.push(Instruction::StoreLocal(slot));
+                let loop_start = instrs.len() as u16;
+                instrs.push(Instruction::LoadLocal(slot));
+                self.emit_expr(to, instrs, locals);
+                instrs.push(Instruction::LessThan);
+                let jif_idx = instrs.len();
+                instrs.push(Instruction::JumpIfFalse(0));
+                for s in body {
+                    self.emit_stmt(s, instrs, locals);
+                }
+                instrs.push(Instruction::LoadLocal(slot));
+                let one_idx = self.add_constant(Value::Int(1));
+                instrs.push(Instruction::LoadConst(one_idx));
+                instrs.push(Instruction::Add);
+                instrs.push(Instruction::StoreLocal(slot));
+                instrs.push(Instruction::Jump(loop_start));
+                let after_loop = instrs.len() as u16;
+                instrs[jif_idx] = Instruction::JumpIfFalse(after_loop);
+            }
+            Stmt::ForEach {
+                var, array, body, ..
+            } => {
+                let id = self.synthetic_counter;
+                self.synthetic_counter += 1;
+                self.emit_expr(array, instrs, locals);
+                let arr_slot = Self::local_slot(locals, &format!("__foreach_arr_{}", id));
+                instrs.push(Instruction::StoreLocal(arr_slot));
+                let idx_slot = Self::local_slot(locals, &format!("__foreach_idx_{}", id));
+                let zero_idx = self.add_constant(Value::Int(0));
+                instrs.push(Instruction::LoadConst(zero_idx));
+                instrs.push(Instruction::StoreLocal(idx_slot));
+                let loop_start = instrs.len() as u16;
+                instrs.push(Instruction::LoadLocal(idx_slot));
+                instrs.push(Instruction::LoadLocal(arr_slot));
+                instrs.push(Instruction::ArrayLen);
+                instrs.push(Instruction::LessThan);
+                let jif_idx = instrs.len();
+                instrs.push(Instruction::JumpIfFalse(0));
+                instrs.push(Instruction::LoadLocal(arr_slot));
+                instrs.push(Instruction::LoadLocal(idx_slot));
+                instrs.push(Instruction::GetIndex);
+                let var_slot = Self::local_slot(locals, var);
+                instrs.push(Instruction::StoreLocal(var_slot));
+                for s in body {
+                    self.emit_stmt(s, instrs, locals);
+                }
+                instrs.push(Instruction::LoadLocal(idx_slot));
+                let one_idx = self.add_constant(Value::Int(1));
+                instrs.push(Instruction::LoadConst(one_idx));
+                instrs.push(Instruction::Add);
+                instrs.push(Instruction::StoreLocal(idx_slot));
+                instrs.push(Instruction::Jump(loop_start));
+                let after_loop = instrs.len() as u16;
+                instrs[jif_idx] = Instruction::JumpIfFalse(after_loop);
+            }
         }
     }
 
@@ -337,6 +419,17 @@ impl Compiler {
                     let fn_idx = self.fn_index[name];
                     instrs.push(Instruction::Call(fn_idx, args.len() as u8));
                 }
+            }
+            Expr::Array(elems) => {
+                for elem in elems {
+                    self.emit_expr(elem, instrs, locals);
+                }
+                instrs.push(Instruction::MakeArray(elems.len() as u16));
+            }
+            Expr::Index { array, index } => {
+                self.emit_expr(array, instrs, locals);
+                self.emit_expr(index, instrs, locals);
+                instrs.push(Instruction::GetIndex);
             }
         }
     }
@@ -477,5 +570,58 @@ mod tests {
         let script = c.compile(&ast);
         // Script: LoadConst(5), Call(0, 1), Return
         assert!(matches!(script[1], Instruction::Call(0, 1)));
+    }
+
+    #[test]
+    fn test_compile_array_literal_emits_make_array() {
+        let (instrs, constants) = compile("整数列 数字 ＝ 【１、２、３】；");
+        assert_eq!(instrs[0], Instruction::LoadConst(0));
+        assert_eq!(instrs[1], Instruction::LoadConst(1));
+        assert_eq!(instrs[2], Instruction::LoadConst(2));
+        assert_eq!(instrs[3], Instruction::MakeArray(3));
+        assert_eq!(instrs[4], Instruction::StoreLocal(0));
+        assert_eq!(constants, vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+    }
+
+    #[test]
+    fn test_compile_index_expr_emits_get_index() {
+        let (instrs, _) = compile("整数列 数字 ＝ 【１】；返す 数字【０】；");
+        assert!(instrs.contains(&Instruction::GetIndex));
+    }
+
+    #[test]
+    fn test_compile_index_assign_emits_set_index() {
+        let (instrs, _) = compile("整数列 数字 ＝ 【１】；数字【０】＝ ２；");
+        assert!(instrs.contains(&Instruction::SetIndex));
+    }
+
+    #[test]
+    fn test_compile_for_range_loop() {
+        let (instrs, _) =
+            compile("繰り返す カウンタ ＝ ０ から ５ ならば ｛ 印刷（カウンタ）； ｝");
+        assert!(instrs.iter().any(|i| matches!(i, Instruction::Jump(_))));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::JumpIfFalse(_)))
+        );
+    }
+
+    #[test]
+    fn test_compile_for_each_loop_emits_array_len() {
+        let src = "整数列 数字 ＝ 【１、２】；各 要素 ： 数字 ならば ｛ 印刷（要素）； ｝";
+        let (instrs, _) = compile(src);
+        assert!(instrs.contains(&Instruction::ArrayLen));
+    }
+
+    #[test]
+    fn test_compile_nested_for_each_unique_synthetic_slots() {
+        let src = "整数列 Ａ ＝ 【１】；整数列 Ｂ ＝ 【２】；各 要素 ： Ａ ならば ｛ 各 内側 ： Ｂ ならば ｛ 印刷（内側）； ｝ ｝";
+        let (instrs, _) = compile(src);
+        let array_len_count = instrs
+            .iter()
+            .filter(|i| matches!(i, Instruction::ArrayLen))
+            .count();
+        assert_eq!(array_len_count, 2);
     }
 }

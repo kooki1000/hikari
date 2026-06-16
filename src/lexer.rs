@@ -1,23 +1,30 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenKind {
     // Type keywords
-    TyInt,    // 整数
-    TyFloat,  // 小数
-    TyString, // 文字列
-    TyBool,   // 真偽
-    TyVoid,   // 無
+    TyInt,         // 整数
+    TyFloat,       // 小数
+    TyString,      // 文字列
+    TyBool,        // 真偽
+    TyVoid,        // 無
+    TyIntArray,    // 整数列
+    TyFloatArray,  // 小数列
+    TyStringArray, // 文字列列
+    TyBoolArray,   // 真偽列
 
     // Statement keywords
-    KwFn,     // 関数
-    KwReturn, // 返す
-    KwPrint,  // 印刷
-    KwIf,     // もし
-    KwThen,   // ならば
-    KwElse,   // 違えば
-    KwWhile,  // 間
-    KwAnd,    // かつ
-    KwOr,     // または
-    KwNot,    // 否定
+    KwFn,       // 関数
+    KwReturn,   // 返す
+    KwPrint,    // 印刷
+    KwIf,       // もし
+    KwThen,     // ならば
+    KwElse,     // 違えば
+    KwWhile,    // 間
+    KwAnd,      // かつ
+    KwOr,       // または
+    KwNot,      // 否定
+    KwForRange, // 繰り返す
+    KwFrom,     // から
+    KwEach,     // 各
 
     // Literals
     LitInt(i64),
@@ -27,24 +34,27 @@ pub enum TokenKind {
     LitFalse, // 偽
 
     // Operators & punctuation
-    Assign, // ＝
-    EqEq,   // ＝＝
-    Lt,     // ＜
-    Gt,     // ＞
-    LtEq,   // ≦
-    GtEq,   // ≧
-    NotEq,  // ≠
-    Semi,   // ；
-    Plus,   // ＋
-    Minus,  // ー  (also prefix of arrow)
-    Star,   // ＊
-    Slash,  // ／
-    LBrace, // ｛
-    RBrace, // ｝
-    LParen, // （
-    RParen, // ）
-    Comma,  // 、
-    Arrow,  // ー＞
+    Assign,   // ＝
+    EqEq,     // ＝＝
+    Lt,       // ＜
+    Gt,       // ＞
+    LtEq,     // ≦
+    GtEq,     // ≧
+    NotEq,    // ≠
+    Semi,     // ；
+    Plus,     // ＋
+    Minus,    // ー  (also prefix of arrow)
+    Star,     // ＊
+    Slash,    // ／
+    LBrace,   // ｛
+    RBrace,   // ｝
+    LParen,   // （
+    RParen,   // ）
+    Comma,    // 、
+    Arrow,    // ー＞
+    LBracket, // 【
+    RBracket, // 】
+    Colon,    // ：
 
     // Identifier (user-defined name)
     Ident(String),
@@ -172,6 +182,10 @@ impl Lexer {
             "文字列" => TokenKind::TyString,
             "真偽" => TokenKind::TyBool,
             "無" => TokenKind::TyVoid,
+            "整数列" => TokenKind::TyIntArray,
+            "小数列" => TokenKind::TyFloatArray,
+            "文字列列" => TokenKind::TyStringArray,
+            "真偽列" => TokenKind::TyBoolArray,
             "関数" => TokenKind::KwFn,
             "返す" => TokenKind::KwReturn,
             "印刷" => TokenKind::KwPrint,
@@ -182,6 +196,9 @@ impl Lexer {
             "かつ" => TokenKind::KwAnd,
             "または" => TokenKind::KwOr,
             "否定" => TokenKind::KwNot,
+            "繰り返す" => TokenKind::KwForRange,
+            "から" => TokenKind::KwFrom,
+            "各" => TokenKind::KwEach,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -281,6 +298,18 @@ impl Lexer {
                     self.advance();
                     TokenKind::RParen
                 }
+                '【' => {
+                    self.advance();
+                    TokenKind::LBracket
+                }
+                '】' => {
+                    self.advance();
+                    TokenKind::RBracket
+                }
+                '：' => {
+                    self.advance();
+                    TokenKind::Colon
+                }
                 '「' => {
                     self.advance();
                     TokenKind::LitString(self.read_string_literal())
@@ -342,6 +371,9 @@ fn is_symbol(ch: char) -> bool {
             | '≧'
             | '≠'
             | '、'
+            | '【'
+            | '】'
+            | '：'
     )
 }
 
@@ -584,6 +616,57 @@ mod tests {
                 &TokenKind::KwAnd,
                 &TokenKind::KwOr,
                 &TokenKind::KwNot,
+                &TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_array_type_keywords() {
+        let src = "整数列 小数列 文字列列 真偽列";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                &TokenKind::TyIntArray,
+                &TokenKind::TyFloatArray,
+                &TokenKind::TyStringArray,
+                &TokenKind::TyBoolArray,
+                &TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_bracket_tokens() {
+        let tokens = Lexer::new("【１、２】").tokenize();
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::LBracket,
+                TokenKind::LitInt(1),
+                TokenKind::Comma,
+                TokenKind::LitInt(2),
+                TokenKind::RBracket,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_for_range_and_each_keywords() {
+        let src = "繰り返す から 各 ：";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                &TokenKind::KwForRange,
+                &TokenKind::KwFrom,
+                &TokenKind::KwEach,
+                &TokenKind::Colon,
                 &TokenKind::Eof,
             ]
         );
