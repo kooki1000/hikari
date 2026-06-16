@@ -364,6 +364,57 @@ impl Vm {
         }
     }
 
+    pub fn run_repl_line(
+        &mut self,
+        new_instrs: Vec<Instruction>,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let start_ip = self.frames[0].instructions.len();
+        self.frames[0].instructions.extend(new_instrs);
+        self.frames[0].ip = start_ip;
+
+        loop {
+            if self.frames.len() == 1 && self.frames[0].ip >= self.frames[0].instructions.len() {
+                return Ok(self.stack.pop());
+            }
+            match self.step() {
+                Ok(StepResult::Continue) => {}
+                Ok(StepResult::Halt(v)) => {
+                    // A top-level 返す in REPL input ends frame 0 (matching
+                    // ordinary script semantics) — restart a fresh, empty
+                    // frame 0 so the session can keep going, at the cost of
+                    // losing this session's variable bindings.
+                    if self.frames.is_empty() {
+                        self.frames.push(Frame {
+                            instructions: Vec::new(),
+                            ip: 0,
+                            locals: vec![None; 256],
+                        });
+                    }
+                    return Ok(v);
+                }
+                Err(e) => {
+                    if let Some(handler) = self.try_stack.pop() {
+                        self.frames.truncate(handler.frame_depth);
+                        self.stack.truncate(handler.stack_len);
+                        let frame = self
+                            .frames
+                            .last_mut()
+                            .expect("try handler's frame must still be on the stack");
+                        frame.locals[handler.error_slot as usize] = Some(Value::Str(e.to_string()));
+                        frame.ip = handler.catch_target;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn sync_program(&mut self, constants: Vec<Value>, chunks: Vec<Chunk>) {
+        self.constants = constants;
+        self.chunks = chunks;
+    }
+
     fn pop2(&mut self) -> Result<(Value, Value), RuntimeError> {
         let rhs = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
         let lhs = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
@@ -1080,6 +1131,62 @@ mod tests {
 
         let result = run("取り込む 「文字列」；返す 含む（「あいう」、「え」）；");
         assert_eq!(result, Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_vm_repl_persists_locals_across_lines() {
+        let mut compiler = Compiler::new();
+        let mut vm = Vm::with_chunks(Vec::new(), Vec::new(), Vec::new());
+
+        let ast1 = Parser::new(Lexer::new("整数 値 ＝ １０；").tokenize())
+            .parse()
+            .unwrap();
+        let instrs1 = compiler.compile(&ast1);
+        vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
+        let result1 = vm.run_repl_line(instrs1).unwrap();
+        assert_eq!(result1, None);
+
+        let ast2 = Parser::new(Lexer::new("値；").tokenize()).parse().unwrap();
+        let instrs2 = compiler.compile(&ast2);
+        vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
+        let result2 = vm.run_repl_line(instrs2).unwrap();
+        assert_eq!(result2, Some(Value::Int(10)));
+    }
+
+    #[test]
+    fn test_vm_repl_line_with_explicit_return_resets_frame_without_panicking() {
+        let mut compiler = Compiler::new();
+        let mut vm = Vm::with_chunks(Vec::new(), Vec::new(), Vec::new());
+
+        let ast1 = Parser::new(Lexer::new("返す １；").tokenize())
+            .parse()
+            .unwrap();
+        let instrs1 = compiler.compile(&ast1);
+        vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
+        let result1 = vm.run_repl_line(instrs1).unwrap();
+        assert_eq!(result1, Some(Value::Int(1)));
+
+        let ast2 = Parser::new(Lexer::new("印刷（２）；").tokenize())
+            .parse()
+            .unwrap();
+        let instrs2 = compiler.compile(&ast2);
+        vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
+        let result2 = vm.run_repl_line(instrs2);
+        assert!(result2.is_ok());
+    }
+
+    #[test]
+    fn test_vm_repl_line_bare_expression_surfaces_value() {
+        let mut compiler = Compiler::new();
+        let mut vm = Vm::with_chunks(Vec::new(), Vec::new(), Vec::new());
+
+        let ast = Parser::new(Lexer::new("１ ＋ １；").tokenize())
+            .parse()
+            .unwrap();
+        let instrs = compiler.compile(&ast);
+        vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
+        let result = vm.run_repl_line(instrs).unwrap();
+        assert_eq!(result, Some(Value::Int(2)));
     }
 
     #[test]

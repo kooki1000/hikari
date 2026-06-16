@@ -189,11 +189,54 @@ Every `｛ ... ｝` block (`もし`/`違えば`, `間`, `繰り返す`, `各`, f
 
 If the try-body completes without error, the catch-body is skipped entirely. Errors raised deep inside a nested function call invoked from the try-body are also caught (the VM unwinds call frames and the stack back to where the try-block started). This only catches *runtime* errors — a type error inside a try-body is still rejected at compile time, unaffected by try/catch.
 
+### Modules
+
+`取り込む 「name」；` imports a module. If `name` matches a recognized standard-library module (`数学`, `文字列`, see below), it unlocks that module's builtin functions for the rest of the program — calling one before importing it is a compile-time error. Otherwise `name` is treated as a relative path to another `.hkr` file: it's parsed and only its top-level `関数` declarations are merged into the program (imports inside the imported file resolve relative to *that* file; cyclic imports are deduplicated, not an error).
+
+```
+取り込む 「utils.hkr」；
+取り込む 「数学」；
+
+印刷（二倍（２１））；        （二倍 declared in utils.hkr）
+印刷（絶対値（ー５））；      （from the 数学 stdlib module）
+```
+
+### Standard Library
+
+| Module | Function | Signature | Description |
+|--------|----------|-----------|--------------|
+| `数学` | `絶対値（n）` | `整数｜小数 → 同じ型` | Absolute value |
+| `数学` | `平方根（n）` | `整数｜小数 → 小数` | Square root |
+| `数学` | `乱数（min、max）` | `整数、整数 → 整数` | Random integer in `[min, max]` |
+| `数学` | `最大（a、b）` | `整数｜小数 → 同じ型` | Larger of two values |
+| `数学` | `最小（a、b）` | `整数｜小数 → 同じ型` | Smaller of two values |
+| `文字列` | `分割（s、区切り）` | `文字列、文字列 → 文字列列` | Split a string |
+| `文字列` | `結合（配列、区切り）` | `文字列列、文字列 → 文字列` | Join a string array |
+| `文字列` | `含む（s、部分）` | `文字列、文字列 → 真偽` | Substring check |
+| `文字列` | `置換（s、旧、新）` | `文字列、文字列、文字列 → 文字列` | Replace all occurrences |
+
+### REPL
+
+Running `hikari` with no arguments starts an interactive session. Variables, functions, and imported modules all persist across lines:
+
+```
+$ hikari
+Hikari 対話モード (Ctrl+D で終了)
+> 整数 値 ＝ １０；
+> 印刷（値）；
+10
+> 値 ＝ 値 ＋ ５；
+> 印刷（値）；
+15
+```
+
+A bad line (parse, type, or runtime error) is reported and the session keeps going rather than exiting.
+
 ---
 
 ## Architecture
 
-The implementation follows a classic pipeline, built strictly with TDD (170+ tests, all passing):
+The implementation follows a classic pipeline, built strictly with TDD (200+ tests, all passing):
 
 ```
 Source (.hkr)
@@ -225,6 +268,7 @@ Diagnostics    src/diagnostic.rs   — Renders Japanese errors with source snipp
 cargo build
 cargo run -- examples/if.hkr
 cargo run -- examples/print.hkr
+cargo run            # no file argument — starts the REPL
 ```
 
 ## Testing
@@ -267,16 +311,13 @@ cargo check
 | Built-ins (`文字数` `入力` `整数化` `小数化` `文字列化`) | ✅ Done |
 | Block scoping (shadowing, no leakage, isolated functions) | ✅ Done |
 | `試す…失敗…` (try/catch with stack unwinding) | ✅ Done |
+| Modules (`取り込む`), file-based and stdlib | ✅ Done |
+| Standard library (`数学`, `文字列` modules) | ✅ Done |
+| REPL (`hikari` with no args), persistent state | ✅ Done |
 | Error recovery (`Result`-based parser/typechecker/VM errors) | ✅ Done |
 | Japanese diagnostics with source snippets | ✅ Done |
 | `真` / `偽` boolean literals in programs | ✅ Done |
 
 ---
 
-## Next Steps
-
-| Feature | Notes |
-|---------|-------|
-| Modules (`取り込む`) | Import other `.hkr` files |
-| Standard library (`数学`, `文字列` modules) | `絶対値`, `平方根`, `乱数`, `分割`, `結合`, etc. |
-| REPL (`hikari` with no args) | Interactive mode with persistent state |
+This completes every phase of the original roadmap (フェーズ０〜６).

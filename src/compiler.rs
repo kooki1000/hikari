@@ -107,6 +107,7 @@ pub struct Compiler {
     pub chunks: Vec<Chunk>,         // chunks[0] is the top-level script
     fn_index: HashMap<String, u16>, // function name → chunk index
     synthetic_counter: u32,         // disambiguates ForEach's hidden locals
+    script_scopes: Scopes,          // persists slots across repeated compile() calls (REPL)
 }
 
 struct Scopes {
@@ -158,6 +159,7 @@ impl Compiler {
             chunks: Vec::new(),
             fn_index: HashMap::new(),
             synthetic_counter: 0,
+            script_scopes: Scopes::new(),
         }
     }
 
@@ -177,7 +179,7 @@ impl Compiler {
 
         // Second pass: compile function bodies and the top-level script.
         let mut script_instrs: Vec<Instruction> = Vec::new();
-        let mut script_scopes = Scopes::new();
+        let mut script_scopes = std::mem::replace(&mut self.script_scopes, Scopes::new());
 
         for stmt in stmts {
             match stmt {
@@ -202,6 +204,7 @@ impl Compiler {
             }
         }
 
+        self.script_scopes = script_scopes;
         script_instrs
     }
 
@@ -740,6 +743,22 @@ mod tests {
         // Final read of outer Ｎ after the if-block must load slot 0, not 1.
         assert!(instrs.contains(&Instruction::LoadLocal(0)));
         assert!(!instrs.contains(&Instruction::LoadLocal(1)));
+    }
+
+    #[test]
+    fn test_compile_repl_persists_script_slots_across_calls() {
+        let ast1 = Parser::new(Lexer::new("整数 値 ＝ １０；").tokenize())
+            .parse()
+            .unwrap();
+        let mut c = Compiler::new();
+        let instrs1 = c.compile(&ast1);
+        assert_eq!(instrs1[1], Instruction::StoreLocal(0));
+
+        let ast2 = Parser::new(Lexer::new("印刷（値）；").tokenize())
+            .parse()
+            .unwrap();
+        let instrs2 = c.compile(&ast2);
+        assert_eq!(instrs2[0], Instruction::LoadLocal(0));
     }
 
     #[test]
