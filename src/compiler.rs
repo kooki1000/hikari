@@ -178,6 +178,18 @@ impl Compiler {
                     instrs[jump_if_false_idx] = Instruction::JumpIfFalse(after_then);
                 }
             }
+            Stmt::While { condition, body } => {
+                let loop_start = instrs.len() as u16;
+                self.emit_expr(condition, instrs, locals);
+                let jump_if_false_idx = instrs.len();
+                instrs.push(Instruction::JumpIfFalse(0));
+                for s in body {
+                    self.emit_stmt(s, instrs, locals);
+                }
+                instrs.push(Instruction::Jump(loop_start));
+                let after_loop = instrs.len() as u16;
+                instrs[jump_if_false_idx] = Instruction::JumpIfFalse(after_loop);
+            }
             Stmt::Return(expr) => {
                 self.emit_expr(expr, instrs, locals);
                 instrs.push(Instruction::Return);
@@ -300,6 +312,21 @@ mod tests {
             c.chunks[0].instructions.last().unwrap(),
             &Instruction::Return
         );
+    }
+
+    #[test]
+    fn test_compile_while_loop() {
+        // 整数 カウンタ ＝ ０；間 カウンタ ＜ ３ ならば ｛ 印刷（カウンタ）； ｝
+        let src = "整数 カウンタ ＝ ０；間 カウンタ ＜ ３ ならば ｛ 印刷（カウンタ）； ｝";
+        let (instrs, _) = compile(src);
+        // layout: LoadConst(0), StoreLocal(0),        ← var decl
+        //         [loop_start=2] LoadLocal(0), LoadConst(1), LessThan,  ← condition
+        //         JumpIfFalse(after),                  ← idx 5
+        //         LoadLocal(0), Print,                 ← body
+        //         Jump(2),                             ← back-edge
+        //         [after=9]
+        assert!(matches!(instrs[5], Instruction::JumpIfFalse(9)));
+        assert!(matches!(instrs[8], Instruction::Jump(2)));
     }
 
     #[test]
