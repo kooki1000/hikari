@@ -1,4 +1,4 @@
-use crate::compiler::{Chunk, Instruction, Value};
+use crate::compiler::{BuiltinFn, Chunk, Instruction, Value};
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
@@ -8,6 +8,7 @@ pub enum RuntimeError {
     UninitializedLocal(u16),
     DivisionByZero,
     TypeMismatch,
+    InvalidConversion(String),
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -26,6 +27,7 @@ impl std::fmt::Display for RuntimeError {
                 "ゼロで割ることはできません。（ヒント: 割る数が０にならないか確認してください）"
             ),
             RuntimeError::TypeMismatch => write!(f, "演算で扱う値の型が一致しません。"),
+            RuntimeError::InvalidConversion(msg) => write!(f, "変換に失敗しました: {}", msg),
         }
     }
 }
@@ -125,7 +127,14 @@ impl Vm {
                 }
                 Instruction::Add => {
                     let (l, r) = self.pop2()?;
-                    self.stack.push(arith(l, r, |a, b| a + b, |a, b| a + b)?);
+                    match (l, r) {
+                        (Value::Str(a), Value::Str(b)) => {
+                            self.stack.push(Value::Str(a + &b));
+                        }
+                        (l, r) => {
+                            self.stack.push(arith(l, r, |a, b| a + b, |a, b| a + b)?);
+                        }
+                    }
                 }
                 Instruction::Sub => {
                     let (l, r) = self.pop2()?;
@@ -152,6 +161,12 @@ impl Vm {
                     let new_frame = Frame::new(chunk, args);
                     self.frames.push(new_frame);
                     // Execution continues inside the new frame on the next iteration.
+                }
+                Instruction::CallBuiltin(builtin, argc) => {
+                    let stack_len = self.stack.len();
+                    let mut args = self.stack.split_off(stack_len - argc as usize);
+                    let result = call_builtin(builtin, &mut args)?;
+                    self.stack.push(result);
                 }
                 Instruction::Equal => {
                     let (l, r) = self.pop2()?;
@@ -282,6 +297,56 @@ fn cmp_ge(lhs: Value, rhs: Value) -> Result<bool, RuntimeError> {
         (Value::Int(a), Value::Int(b)) => Ok(a >= b),
         (Value::Float(a), Value::Float(b)) => Ok(a >= b),
         _ => Err(RuntimeError::TypeMismatch),
+    }
+}
+
+// 整数化/小数化 accept strings users naturally type with full-width digits
+// (e.g. from 入力), so normalize before handing off to Rust's ASCII parser.
+fn normalize_digits(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\u{FF10}'..='\u{FF19}' => {
+                char::from_u32(c as u32 - 0xFF10 + '0' as u32).unwrap_or(c)
+            }
+            '．' => '.',
+            'ー' => '-',
+            _ => c,
+        })
+        .collect()
+}
+
+fn call_builtin(builtin: BuiltinFn, args: &mut Vec<Value>) -> Result<Value, RuntimeError> {
+    match builtin {
+        BuiltinFn::Len => match args.pop() {
+            Some(Value::Str(s)) => Ok(Value::Int(s.chars().count() as i64)),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Input => {
+            let mut line = String::new();
+            std::io::stdin()
+                .read_line(&mut line)
+                .map_err(|e| RuntimeError::InvalidConversion(e.to_string()))?;
+            let trimmed = line.trim_end_matches(['\n', '\r']);
+            Ok(Value::Str(trimmed.to_string()))
+        }
+        BuiltinFn::ParseInt => match args.pop() {
+            Some(Value::Str(s)) => normalize_digits(&s)
+                .parse::<i64>()
+                .map(Value::Int)
+                .map_err(|_| RuntimeError::InvalidConversion(format!("「{}」は整数に変換できません。", s))),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::ParseFloat => match args.pop() {
+            Some(Value::Str(s)) => normalize_digits(&s)
+                .parse::<f64>()
+                .map(Value::Float)
+                .map_err(|_| RuntimeError::InvalidConversion(format!("「{}」は小数に変換できません。", s))),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::ToStr => match args.pop() {
+            Some(val) => Ok(Value::Str(display_value(&val))),
+            None => Err(RuntimeError::StackUnderflow),
+        },
     }
 }
 
@@ -500,6 +565,59 @@ mod tests {
         assert_eq!(run("返す ３ ≦ ３；"), Some(Value::Bool(true)));
         assert_eq!(run("返す ５ ≧ １０；"), Some(Value::Bool(false)));
         assert_eq!(run("返す １ ≠ ２；"), Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_vm_string_concatenation() {
+        let result = run("文字列 結果 ＝ 「あ」 ＋ 「い」；返す 結果；");
+        assert_eq!(result, Some(Value::Str("あい".to_string())));
+    }
+
+    #[test]
+    fn test_vm_builtin_strlen() {
+        let result = run("返す 文字数（「こんにちは」）；");
+        assert_eq!(result, Some(Value::Int(5)));
+    }
+
+    #[test]
+    fn test_vm_builtin_parse_int() {
+        let result = run("返す 整数化（「４２」）；");
+        assert_eq!(result, Some(Value::Int(42)));
+    }
+
+    #[test]
+    fn test_vm_builtin_parse_float() {
+        let result = run("返す 小数化（「３．５」）；");
+        assert_eq!(result, Some(Value::Float(3.5)));
+    }
+
+    #[test]
+    fn test_vm_builtin_to_str_int() {
+        let result = run("返す 文字列化（４２）；");
+        assert_eq!(result, Some(Value::Str("42".to_string())));
+    }
+
+    #[test]
+    fn test_vm_builtin_to_str_float() {
+        let result = run("返す 文字列化（３．５）；");
+        assert_eq!(result, Some(Value::Str("3.5".to_string())));
+    }
+
+    #[test]
+    fn test_vm_builtin_to_str_bool() {
+        let result = run("返す 文字列化（真）；");
+        assert_eq!(result, Some(Value::Str("真".to_string())));
+    }
+
+    #[test]
+    fn test_vm_builtin_parse_int_invalid_returns_error() {
+        let ast = Parser::new(Lexer::new("返す 整数化（「abc」）；").tokenize())
+            .parse()
+            .unwrap();
+        let mut compiler = Compiler::new();
+        let script = compiler.compile(&ast);
+        let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
+        assert!(matches!(result, Err(RuntimeError::InvalidConversion(_))));
     }
 
     #[test]

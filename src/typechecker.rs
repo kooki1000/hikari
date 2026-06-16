@@ -131,6 +131,34 @@ struct FnSig {
     return_ty: HikariType,
 }
 
+fn builtin_sig(name: &str) -> Option<FnSig> {
+    match name {
+        "文字数" => Some(FnSig {
+            params: vec![HikariType::String],
+            return_ty: HikariType::Int,
+        }),
+        "入力" => Some(FnSig {
+            params: vec![],
+            return_ty: HikariType::String,
+        }),
+        "整数化" => Some(FnSig {
+            params: vec![HikariType::String],
+            return_ty: HikariType::Int,
+        }),
+        "小数化" => Some(FnSig {
+            params: vec![HikariType::String],
+            return_ty: HikariType::Float,
+        }),
+        // 文字列化's single param is polymorphic (Int|Float|Bool); the param
+        // type here is unused since Expr::Call checks it inline.
+        "文字列化" => Some(FnSig {
+            params: vec![HikariType::Int],
+            return_ty: HikariType::String,
+        }),
+        _ => None,
+    }
+}
+
 pub struct TypeChecker {
     vars: HashMap<String, HikariType>,
     fns: HashMap<String, FnSig>,
@@ -341,6 +369,44 @@ impl TypeChecker {
             }
 
             Expr::Call { name, args } => {
+                if let Some(sig) = builtin_sig(name) {
+                    if args.len() != sig.params.len() {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: sig.params.len(),
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    if name == "文字列化" {
+                        let arg_ty = self.infer_expr(&args[0], span)?;
+                        if !matches!(
+                            arg_ty,
+                            HikariType::Int | HikariType::Float | HikariType::Bool
+                        ) {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Int,
+                                got: arg_ty,
+                                span,
+                            });
+                        }
+                    } else {
+                        for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
+                            let arg_ty = self.infer_expr(arg, span)?;
+                            if arg_ty != *param_ty {
+                                return Err(TypeError::ArgTypeMismatch {
+                                    name: name.clone(),
+                                    param: param_ty.clone(),
+                                    got: arg_ty,
+                                    span,
+                                });
+                            }
+                        }
+                    }
+                    return Ok(sig.return_ty);
+                }
+
                 let sig = self
                     .fns
                     .get(name)
@@ -473,6 +539,12 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_string_concat() {
+        let ast = parse("文字列 結果 ＝ 「あ」 ＋ 「い」；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
     fn test_typecheck_reassignment_type_mismatch() {
         // 整数 年齢 ＝ ２０； 年齢 ＝ 「太郎」；
         let ast = parse("整数 年齢 ＝ ２０；年齢 ＝ 「太郎」；");
@@ -481,6 +553,83 @@ mod tests {
             err,
             TypeError::VarDeclMismatch {
                 declared: HikariType::Int,
+                got: HikariType::String,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_builtin_strlen() {
+        let ast = parse("整数 結果 ＝ 文字数（「あ」）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_builtin_strlen_arg_type_mismatch() {
+        let ast = parse("整数 結果 ＝ 文字数（１）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ArgTypeMismatch {
+                param: HikariType::String,
+                got: HikariType::Int,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_builtin_input() {
+        let ast = parse("文字列 結果 ＝ 入力（）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_builtin_input_arg_count_mismatch() {
+        let ast = parse("文字列 結果 ＝ 入力（「余分」）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ArgCountMismatch {
+                expected: 0,
+                got: 1,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_builtin_parse_int() {
+        let ast = parse("整数 結果 ＝ 整数化（「４２」）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_builtin_parse_float() {
+        let ast = parse("小数 結果 ＝ 小数化（「３．５」）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_builtin_to_str_polymorphic() {
+        let ast = parse("文字列 結果 ＝ 文字列化（１）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("文字列 結果 ＝ 文字列化（１．５）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("文字列 結果 ＝ 文字列化（真）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_builtin_to_str_rejects_string_arg() {
+        let ast = parse("文字列 結果 ＝ 文字列化（「だめ」）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ArgTypeMismatch {
                 got: HikariType::String,
                 ..
             }

@@ -12,6 +12,17 @@ pub enum Value {
     Bool(bool),
 }
 
+// ── Built-in functions ────────────────────────────────────────────────────────
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum BuiltinFn {
+    Len,        // 文字数
+    Input,      // 入力
+    ParseInt,   // 整数化
+    ParseFloat, // 小数化
+    ToStr,      // 文字列化
+}
+
 // ── Instruction set ───────────────────────────────────────────────────────────
 
 #[derive(Debug, PartialEq, Clone)]
@@ -23,20 +34,32 @@ pub enum Instruction {
     Sub,
     Mul,
     Div,
-    Equal,            // pop two values, push Bool (==)
-    LessThan,         // pop two values, push Bool (<)
-    GreaterThan,      // pop two values, push Bool (>)
-    LessEqual,        // pop two values, push Bool (<=)
-    GreaterEqual,     // pop two values, push Bool (>=)
-    NotEqual,         // pop two values, push Bool (!=)
-    Negate,           // pop one value, push its arithmetic negation
-    Not,              // pop one Bool, push its negation
-    JumpIfFalse(u16), // pop Bool; jump to absolute offset if false
-    JumpIfTrue(u16),  // pop Bool; jump to absolute offset if true
-    Jump(u16),        // unconditional jump to absolute offset
-    Call(u16, u8),    // Call(fn_idx, arg_count)
-    Print,            // pop and print top of stack
+    Equal,                      // pop two values, push Bool (==)
+    LessThan,                   // pop two values, push Bool (<)
+    GreaterThan,                // pop two values, push Bool (>)
+    LessEqual,                  // pop two values, push Bool (<=)
+    GreaterEqual,               // pop two values, push Bool (>=)
+    NotEqual,                   // pop two values, push Bool (!=)
+    Negate,                     // pop one value, push its arithmetic negation
+    Not,                        // pop one Bool, push its negation
+    JumpIfFalse(u16),           // pop Bool; jump to absolute offset if false
+    JumpIfTrue(u16),            // pop Bool; jump to absolute offset if true
+    Jump(u16),                  // unconditional jump to absolute offset
+    Call(u16, u8),              // Call(fn_idx, arg_count)
+    CallBuiltin(BuiltinFn, u8), // CallBuiltin(builtin, arg_count)
+    Print,                      // pop and print top of stack
     Return,
+}
+
+pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
+    match name {
+        "文字数" => Some(BuiltinFn::Len),
+        "入力" => Some(BuiltinFn::Input),
+        "整数化" => Some(BuiltinFn::ParseInt),
+        "小数化" => Some(BuiltinFn::ParseFloat),
+        "文字列化" => Some(BuiltinFn::ToStr),
+        _ => None,
+    }
 }
 
 // ── Function chunk ────────────────────────────────────────────────────────────
@@ -306,8 +329,12 @@ impl Compiler {
                 for arg in args {
                     self.emit_expr(arg, instrs, locals);
                 }
-                let fn_idx = self.fn_index[name];
-                instrs.push(Instruction::Call(fn_idx, args.len() as u8));
+                if let Some(builtin) = builtin_name(name) {
+                    instrs.push(Instruction::CallBuiltin(builtin, args.len() as u8));
+                } else {
+                    let fn_idx = self.fn_index[name];
+                    instrs.push(Instruction::Call(fn_idx, args.len() as u8));
+                }
             }
         }
     }
@@ -410,6 +437,33 @@ mod tests {
         assert_eq!(instrs[0], Instruction::LoadConst(0));
         assert_eq!(instrs[1], Instruction::Negate);
         assert_eq!(instrs[2], Instruction::StoreLocal(0));
+    }
+
+    #[test]
+    fn test_compile_builtin_strlen_emits_call_builtin() {
+        let (instrs, _) = compile("整数 結果 ＝ 文字数（「あ」）；");
+        assert!(matches!(
+            instrs[1],
+            Instruction::CallBuiltin(BuiltinFn::Len, 1)
+        ));
+    }
+
+    #[test]
+    fn test_compile_builtin_input_emits_zero_args() {
+        let (instrs, _) = compile("文字列 結果 ＝ 入力（）；");
+        assert!(matches!(
+            instrs[0],
+            Instruction::CallBuiltin(BuiltinFn::Input, 0)
+        ));
+    }
+
+    #[test]
+    fn test_compile_builtin_to_str_emits_call_builtin() {
+        let (instrs, _) = compile("文字列 結果 ＝ 文字列化（１）；");
+        assert!(matches!(
+            instrs[1],
+            Instruction::CallBuiltin(BuiltinFn::ToStr, 1)
+        ));
     }
 
     #[test]
