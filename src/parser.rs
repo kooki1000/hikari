@@ -62,6 +62,10 @@ pub enum Stmt {
         then_body: Vec<Stmt>,
         else_body: Option<Vec<Stmt>>,
     },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+    },
     ExprStmt(Expr),
 }
 
@@ -114,6 +118,7 @@ impl Parser {
             TokenKind::KwReturn => self.parse_return(),
             TokenKind::KwPrint => self.parse_print(),
             TokenKind::KwIf => self.parse_if(),
+            TokenKind::KwWhile => self.parse_while(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
             _ => {
                 let expr = self.parse_expr();
@@ -203,6 +208,19 @@ impl Parser {
             then_body,
             else_body,
         }
+    }
+
+    fn parse_while(&mut self) -> Stmt {
+        self.advance(); // consume 間
+        let condition = self.parse_expr();
+        self.expect(&TokenKind::KwThen); // ならば
+        self.expect(&TokenKind::LBrace);
+        let mut body = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            body.push(self.parse_stmt());
+        }
+        self.expect(&TokenKind::RBrace);
+        Stmt::While { condition, body }
     }
 
     fn parse_print(&mut self) -> Stmt {
@@ -471,6 +489,26 @@ mod tests {
         };
         assert!(else_body.is_some());
         assert_eq!(else_body.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_parse_while_stmt() {
+        // 間 カウンタ ＜ ３ ならば ｛ 印刷（カウンタ）； ｝
+        let src = "間 カウンタ ＜ ３ ならば ｛ 印刷（カウンタ）； ｝";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse();
+        assert_eq!(ast.len(), 1);
+        let Stmt::While { condition, body } = &ast[0] else {
+            panic!("expected While stmt")
+        };
+        assert!(matches!(
+            condition,
+            Expr::BinOp {
+                op: BinOpKind::Lt,
+                ..
+            }
+        ));
+        assert_eq!(body.len(), 1);
+        assert!(matches!(body[0], Stmt::Print(_)));
     }
 
     #[test]

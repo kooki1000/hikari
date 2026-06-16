@@ -14,6 +14,7 @@ pub enum TokenKind {
     KwIf,     // もし
     KwThen,   // ならば
     KwElse,   // 違えば
+    KwWhile,  // 間
 
     // Literals
     LitInt(i64),
@@ -138,6 +139,7 @@ impl Lexer {
             "もし" => TokenKind::KwIf,
             "ならば" => TokenKind::KwThen,
             "違えば" => TokenKind::KwElse,
+            "間" => TokenKind::KwWhile,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -420,6 +422,14 @@ mod tests {
                 &TokenKind::Eof,
             ]
         );
+    }
+
+    #[test]
+    fn test_lex_while_keyword() {
+        let tokens = Lexer::new("間").tokenize();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::KwWhile);
+        assert_eq!(tokens[1].kind, TokenKind::Eof);
     }
 
     #[test]

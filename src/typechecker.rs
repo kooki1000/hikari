@@ -154,6 +154,19 @@ impl TypeChecker {
                 Ok(())
             }
 
+            Stmt::While { condition, body } => {
+                let cond_ty = self.infer_expr(condition)?;
+                if cond_ty != HikariType::Bool {
+                    return Err(TypeError::VarDeclMismatch {
+                        name: "<間 condition>".to_string(),
+                        declared: HikariType::Bool,
+                        got: cond_ty,
+                    });
+                }
+                self.check(body)?;
+                Ok(())
+            }
+
             Stmt::ExprStmt(expr) => {
                 self.infer_expr(expr)?;
                 Ok(())
@@ -282,6 +295,28 @@ mod tests {
         let src = "関数 計算（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝";
         let ast = parse(src);
         assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_while_valid() {
+        let src = "整数 Ｎ ＝ ０；間 Ｎ ＜ ３ ならば ｛ 整数 Ｎ ＝ Ｎ ＋ １； ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_while_non_bool_condition() {
+        let src = "整数 Ｎ ＝ ０；間 Ｎ ならば ｛ 整数 Ｎ ＝ Ｎ ＋ １； ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::VarDeclMismatch {
+                declared: HikariType::Bool,
+                got: HikariType::Int,
+                ..
+            }
+        ));
     }
 
     #[test]
