@@ -255,8 +255,12 @@ fn builtin_sig(name: &str) -> Option<FnSig> {
 // they can be called. Phase-2 builtins are absent here, meaning ungated.
 fn builtin_module(name: &str) -> Option<&'static str> {
     match name {
-        "絶対値" | "平方根" | "乱数" | "最大" | "最小" => Some("数学"),
+        "絶対値" | "平方根" | "乱数" | "最大" | "最小" | "累乗" | "切り捨て" | "切り上げ"
+        | "四捨五入" | "余り" => Some("数学"),
         "分割" | "結合" | "含む" | "置換" => Some("文字列"),
+        "要素数" | "追加" | "取り出す" | "含む配列" | "位置" | "逆順" | "整列" | "部分列" => {
+            Some("配列")
+        }
         _ => None,
     }
 }
@@ -538,7 +542,7 @@ impl TypeChecker {
             }
 
             Stmt::Import { name, .. } => {
-                if name == "数学" || name == "文字列" {
+                if name == "数学" || name == "文字列" || name == "配列" {
                     self.imported_modules.insert(name.clone());
                 }
                 Ok(())
@@ -614,12 +618,8 @@ impl TypeChecker {
                             Err(mismatch())
                         }
                     }
-                    BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div => {
-                        if numeric {
-                            Ok(lty)
-                        } else {
-                            Err(mismatch())
-                        }
+                    BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div | BinOpKind::Mod => {
+                        if numeric { Ok(lty) } else { Err(mismatch()) }
                     }
                     BinOpKind::And | BinOpKind::Or => unreachable!("handled above"),
                 }
@@ -677,7 +677,7 @@ impl TypeChecker {
                     });
                 }
 
-                if name == "最大" || name == "最小" {
+                if name == "最大" || name == "最小" || name == "累乗" || name == "余り" {
                     if args.len() != 2 {
                         return Err(TypeError::ArgCountMismatch {
                             name: name.clone(),
@@ -705,6 +705,234 @@ impl TypeChecker {
                         });
                     }
                     return Ok(a_ty);
+                }
+
+                if name == "切り捨て" || name == "切り上げ" || name == "四捨五入" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    if arg_ty != HikariType::Float {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::Float,
+                            got: arg_ty,
+                            span,
+                        });
+                    }
+                    return Ok(HikariType::Int);
+                }
+
+                if name == "要素数" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    if !matches!(arg_ty, HikariType::Array(_)) {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::Array(Box::new(HikariType::Int)),
+                            got: arg_ty,
+                            span,
+                        });
+                    }
+                    return Ok(HikariType::Int);
+                }
+
+                if name == "追加" {
+                    if args.len() != 2 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let elem_ty = match arr_ty {
+                        HikariType::Array(inner) => *inner,
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: other,
+                                span,
+                            });
+                        }
+                    };
+                    let val_ty = self.infer_expr(&args[1], span)?;
+                    if val_ty != elem_ty {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: elem_ty,
+                            got: val_ty,
+                            span,
+                        });
+                    }
+                    return Ok(HikariType::Void);
+                }
+
+                if name == "取り出す" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let elem_ty = match arr_ty {
+                        HikariType::Array(inner) => *inner,
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: other,
+                                span,
+                            });
+                        }
+                    };
+                    return Ok(elem_ty);
+                }
+
+                if name == "含む配列" || name == "位置" {
+                    if args.len() != 2 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let elem_ty = match arr_ty {
+                        HikariType::Array(inner) => *inner,
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: other,
+                                span,
+                            });
+                        }
+                    };
+                    let val_ty = self.infer_expr(&args[1], span)?;
+                    if val_ty != elem_ty {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: elem_ty,
+                            got: val_ty,
+                            span,
+                        });
+                    }
+                    return Ok(if name == "位置" {
+                        HikariType::Int
+                    } else {
+                        HikariType::Bool
+                    });
+                }
+
+                if name == "逆順" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    match arr_ty {
+                        HikariType::Array(inner) => return Ok(HikariType::Array(inner)),
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: other,
+                                span,
+                            });
+                        }
+                    }
+                }
+
+                if name == "整列" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    match &arr_ty {
+                        HikariType::Array(inner)
+                            if matches!(
+                                inner.as_ref(),
+                                HikariType::Int | HikariType::Float | HikariType::String
+                            ) =>
+                        {
+                            return Ok(arr_ty);
+                        }
+                        _ => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: arr_ty,
+                                span,
+                            });
+                        }
+                    }
+                }
+
+                if name == "部分列" {
+                    if args.len() != 3 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 3,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    if !matches!(arr_ty, HikariType::Array(_)) {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::Array(Box::new(HikariType::Int)),
+                            got: arr_ty,
+                            span,
+                        });
+                    }
+                    let start_ty = self.infer_expr(&args[1], span)?;
+                    if start_ty != HikariType::Int {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::Int,
+                            got: start_ty,
+                            span,
+                        });
+                    }
+                    let end_ty = self.infer_expr(&args[2], span)?;
+                    if end_ty != HikariType::Int {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::Int,
+                            got: end_ty,
+                            span,
+                        });
+                    }
+                    return Ok(arr_ty);
                 }
 
                 if let Some(sig) = builtin_sig(name) {
@@ -805,6 +1033,8 @@ impl TypeChecker {
                 }
                 Ok(elem_ty)
             }
+
+            Expr::NewArray(ty) => Ok(HikariType::Array(Box::new(ty.clone()))),
         }
     }
 }
@@ -1425,5 +1655,174 @@ mod tests {
     fn test_typecheck_string_concatenation_still_allowed() {
         let ast = parse("文字列 結果 ＝ 「あ」 ＋ 「い」；");
         assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    // ── 7a: modulo ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_typecheck_modulo_numeric_only() {
+        let ast = parse("整数 結果 ＝ １０ ％ ３；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("文字列 結果 ＝ 「あ」 ％ 「い」；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::BinOpMismatch { .. }));
+    }
+
+    // ── 7b: array builtins ──────────────────────────────────────────────
+
+    #[test]
+    fn test_typecheck_array_builtins_require_import() {
+        let ast = parse("整数列 数字 ＝ 【１】；整数 結果 ＝ 要素数（数字）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ModuleNotImported { module, .. } if module == "配列"
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_array_len_happy_and_mismatch() {
+        let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整数 結果 ＝ 要素数（数字）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「配列」；整数 結果 ＝ 要素数（５）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_push_happy_and_mismatch() {
+        let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；追加（数字、２）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；追加（数字、「あ」）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_pop_happy_and_mismatch() {
+        let ast =
+            parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整数 結果 ＝ 取り出す（数字）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「配列」；整数 結果 ＝ 取り出す（５）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_contains_array_and_index_of_happy_and_mismatch() {
+        let ast =
+            parse("取り込む 「配列」；整数列 数字 ＝ 【１】；真偽 結果 ＝ 含む配列（数字、１）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast =
+            parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整数 結果 ＝ 位置（数字、１）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse(
+            "取り込む 「配列」；整数列 数字 ＝ 【１】；真偽 結果 ＝ 含む配列（数字、「あ」）；",
+        );
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_reverse_happy_and_mismatch() {
+        let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整数列 結果 ＝ 逆順（数字）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「配列」；整数 結果 ＝ 逆順（５）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_sort_happy_and_rejects_bool_array() {
+        let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整列（数字）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「配列」；真偽列 旗 ＝ 【真】；整列（旗）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_slice_happy_and_mismatch() {
+        let ast = parse(
+            "取り込む 「配列」；整数列 数字 ＝ 【１、２】；整数列 結果 ＝ 部分列（数字、０、１）；",
+        );
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse(
+            "取り込む 「配列」；整数列 数字 ＝ 【１】；整数列 結果 ＝ 部分列（数字、「あ」、１）；",
+        );
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_new_array_expr() {
+        let ast = parse("整数列 数字 ＝ 新配列＜整数＞；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("小数列 数字 ＝ 新配列＜小数＞；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("文字列列 文字 ＝ 新配列＜文字列＞；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("真偽列 旗 ＝ 新配列＜真偽＞；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    // ── 7c: more math builtins ─────────────────────────────────────────
+
+    #[test]
+    fn test_typecheck_pow_happy_and_mismatch() {
+        let ast = parse("取り込む 「数学」；整数 結果 ＝ 累乗（２、３）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「数学」；整数 結果 ＝ 累乗（２、「あ」）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_floor_ceil_round_happy_and_reject_int() {
+        let ast = parse("取り込む 「数学」；整数 結果 ＝ 切り捨て（３．５）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「数学」；整数 結果 ＝ 切り上げ（３．５）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「数学」；整数 結果 ＝ 四捨五入（３．５）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「数学」；整数 結果 ＝ 切り捨て（３）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_remainder_function_form() {
+        let ast = parse("取り込む 「数学」；整数 結果 ＝ 余り（１０、３）；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("取り込む 「数学」；整数 結果 ＝ 余り（１０、「あ」）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_math_builtins_without_import_fails() {
+        let ast = parse("整数 結果 ＝ 累乗（２、３）；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ModuleNotImported { module, .. } if module == "数学"
+        ));
     }
 }

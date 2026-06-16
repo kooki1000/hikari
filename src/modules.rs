@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::lexer::Lexer;
 use crate::parser::{Parser, Stmt};
 
-const STDLIB_MODULES: [&str; 2] = ["数学", "文字列"];
+const STDLIB_MODULES: [&str; 3] = ["数学", "文字列", "配列"];
 
 // Imports are only resolved at the top level of a file: the roadmap's
 // examples only ever show 取り込む as a top-level statement, so nested
