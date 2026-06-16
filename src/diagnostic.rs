@@ -3,7 +3,10 @@ use crate::lexer::Span;
 /// Render a rustc-style diagnostic pointing at `span` within `source`,
 /// prefixed by `message`.
 pub fn render(source: &str, span: Span, message: &str) -> String {
-    let line_text = source.lines().nth(span.line.saturating_sub(1)).unwrap_or("");
+    let line_text = source
+        .lines()
+        .nth(span.line.saturating_sub(1))
+        .unwrap_or("");
     let line_num_str = span.line.to_string();
     let gutter_width = line_num_str.len();
     let gutter = " ".repeat(gutter_width);

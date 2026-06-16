@@ -197,7 +197,12 @@ impl Parser {
         let ty = self.parse_type()?;
         let name = match (self.peek_span(), self.advance().clone()) {
             (_, TokenKind::Ident(n)) => n,
-            (s, other) => return Err(ParseError::ExpectedIdentifier { got: other, span: s }),
+            (s, other) => {
+                return Err(ParseError::ExpectedIdentifier {
+                    got: other,
+                    span: s,
+                });
+            }
         };
         self.expect(&TokenKind::Assign)?;
         let value = self.parse_expr()?;
@@ -227,7 +232,12 @@ impl Parser {
         self.advance(); // consume 関数
         let name = match (self.peek_span(), self.advance().clone()) {
             (_, TokenKind::Ident(n)) => n,
-            (s, other) => return Err(ParseError::ExpectedIdentifier { got: other, span: s }),
+            (s, other) => {
+                return Err(ParseError::ExpectedIdentifier {
+                    got: other,
+                    span: s,
+                });
+            }
         };
         self.expect(&TokenKind::LParen)?;
         let mut params = Vec::new();
@@ -235,7 +245,12 @@ impl Parser {
             let ty = self.parse_type()?;
             let pname = match (self.peek_span(), self.advance().clone()) {
                 (_, TokenKind::Ident(n)) => n,
-                (s, other) => return Err(ParseError::ExpectedIdentifier { got: other, span: s }),
+                (s, other) => {
+                    return Err(ParseError::ExpectedIdentifier {
+                        got: other,
+                        span: s,
+                    });
+                }
             };
             params.push((ty, pname));
             if self.peek() != &TokenKind::RParen {
@@ -743,7 +758,10 @@ mod tests {
         let src = "間 カウンタ ＜ ３ ならば ｛ 印刷（カウンタ）； ｝";
         let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
         assert_eq!(ast.len(), 1);
-        let Stmt::While { condition, body, .. } = &ast[0] else {
+        let Stmt::While {
+            condition, body, ..
+        } = &ast[0]
+        else {
             panic!("expected While stmt")
         };
         assert!(matches!(
@@ -858,7 +876,8 @@ mod tests {
     fn test_parse_multi_arg_call() {
         // 関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝
         // 返す 加算（１、２）；
-        let src = "関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝返す 加算（１、２）；";
+        let src =
+            "関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝返す 加算（１、２）；";
         let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
         let Stmt::Return(Expr::Call { name, args }, _) = &ast[1] else {
             panic!("expected Return(Call)")
@@ -908,11 +927,17 @@ mod tests {
         assert_eq!(op, &BinOpKind::And);
         assert!(matches!(
             lhs.as_ref(),
-            Expr::BinOp { op: BinOpKind::Eq, .. }
+            Expr::BinOp {
+                op: BinOpKind::Eq,
+                ..
+            }
         ));
         assert!(matches!(
             rhs.as_ref(),
-            Expr::BinOp { op: BinOpKind::Eq, .. }
+            Expr::BinOp {
+                op: BinOpKind::Eq,
+                ..
+            }
         ));
     }
 
@@ -933,7 +958,13 @@ mod tests {
         let ast = Parser::new(tokens).parse().unwrap();
         assert!(matches!(
             &ast[0],
-            Stmt::Return(Expr::BinOp { op: BinOpKind::LtEq, .. }, _)
+            Stmt::Return(
+                Expr::BinOp {
+                    op: BinOpKind::LtEq,
+                    ..
+                },
+                _
+            )
         ));
     }
 

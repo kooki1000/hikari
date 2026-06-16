@@ -27,24 +27,24 @@ pub enum TokenKind {
     LitFalse, // 偽
 
     // Operators & punctuation
-    Assign,  // ＝
-    EqEq,    // ＝＝
-    Lt,      // ＜
-    Gt,      // ＞
-    LtEq,    // ≦
-    GtEq,    // ≧
-    NotEq,   // ≠
-    Semi,    // ；
-    Plus,    // ＋
-    Minus,   // ー  (also prefix of arrow)
-    Star,    // ＊
-    Slash,   // ／
-    LBrace,  // ｛
-    RBrace,  // ｝
-    LParen,  // （
-    RParen,  // ）
-    Comma,   // 、
-    Arrow,   // ー＞
+    Assign, // ＝
+    EqEq,   // ＝＝
+    Lt,     // ＜
+    Gt,     // ＞
+    LtEq,   // ≦
+    GtEq,   // ≧
+    NotEq,  // ≠
+    Semi,   // ；
+    Plus,   // ＋
+    Minus,  // ー  (also prefix of arrow)
+    Star,   // ＊
+    Slash,  // ／
+    LBrace, // ｛
+    RBrace, // ｝
+    LParen, // （
+    RParen, // ）
+    Comma,  // 、
+    Arrow,  // ー＞
 
     // Identifier (user-defined name)
     Ident(String),
