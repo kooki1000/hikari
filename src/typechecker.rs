@@ -472,6 +472,23 @@ impl TypeChecker {
                 self.exit_scope();
                 Ok(())
             }
+
+            Stmt::TryCatch {
+                try_body,
+                error_var,
+                catch_body,
+                ..
+            } => {
+                self.enter_scope();
+                self.check(try_body)?;
+                self.exit_scope();
+
+                self.enter_scope();
+                self.declare_var(error_var, HikariType::String);
+                self.check(catch_body)?;
+                self.exit_scope();
+                Ok(())
+            }
         }
     }
 
@@ -1101,5 +1118,42 @@ mod tests {
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "Ａ"));
+    }
+
+    #[test]
+    fn test_typecheck_try_catch_error_var_is_string() {
+        let src = "試す ｛ 印刷（１）； ｝ 失敗 失敗内容 ｛ 印刷（失敗内容）； ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_try_body_var_does_not_leak() {
+        let src = "試す ｛ 整数 Ａ ＝ １； ｝ 失敗 失敗内容 ｛ 返す Ａ； ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "Ａ"));
+
+        let src2 = "試す ｛ 整数 Ａ ＝ １； ｝ 失敗 失敗内容 ｛ 印刷（失敗内容）； ｝返す Ａ；";
+        let ast2 = parse(src2);
+        let err2 = TypeChecker::new().check(&ast2).unwrap_err();
+        assert!(matches!(err2, TypeError::UndeclaredVariable(n, _) if n == "Ａ"));
+    }
+
+    #[test]
+    fn test_typecheck_try_catch_error_var_not_visible_after_block() {
+        let src =
+            "試す ｛ 印刷（１）； ｝ 失敗 失敗内容 ｛ 印刷（失敗内容）； ｝印刷（失敗内容）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "失敗内容"));
+    }
+
+    #[test]
+    fn test_typecheck_try_body_type_error_still_rejected() {
+        let src = "試す ｛ 整数 Ａ ＝ 「文字」； ｝ 失敗 失敗内容 ｛ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::VarDeclMismatch { .. }));
     }
 }

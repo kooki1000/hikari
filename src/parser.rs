@@ -108,6 +108,12 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    TryCatch {
+        try_body: Vec<Stmt>,
+        error_var: String,
+        catch_body: Vec<Stmt>,
+        span: Span,
+    },
 }
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -208,6 +214,7 @@ impl Parser {
             TokenKind::KwWhile => self.parse_while(),
             TokenKind::KwForRange => self.parse_for_range(),
             TokenKind::KwEach => self.parse_for_each(),
+            TokenKind::KwTry => self.parse_try_catch(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
             TokenKind::Ident(_) if self.peek_next() == &TokenKind::LBracket => {
                 self.parse_index_assign()
@@ -443,6 +450,39 @@ impl Parser {
         })
     }
 
+    fn parse_try_catch(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        self.advance(); // consume 試す
+        self.expect(&TokenKind::LBrace)?;
+        let mut try_body = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            try_body.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace)?;
+        self.expect(&TokenKind::KwCatch)?;
+        let error_var = match (self.peek_span(), self.advance().clone()) {
+            (_, TokenKind::Ident(n)) => n,
+            (s, other) => {
+                return Err(ParseError::ExpectedIdentifier {
+                    got: other,
+                    span: s,
+                });
+            }
+        };
+        self.expect(&TokenKind::LBrace)?;
+        let mut catch_body = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            catch_body.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Stmt::TryCatch {
+            try_body,
+            error_var,
+            catch_body,
+            span,
+        })
+    }
+
     fn parse_print(&mut self) -> Result<Stmt, ParseError> {
         let span = self.peek_span();
         self.advance(); // consume 印刷
@@ -653,6 +693,8 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwForRange => "「繰り返す」".to_string(),
         TokenKind::KwFrom => "「から」".to_string(),
         TokenKind::KwEach => "「各」".to_string(),
+        TokenKind::KwTry => "「試す」".to_string(),
+        TokenKind::KwCatch => "「失敗」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
@@ -1191,5 +1233,24 @@ mod tests {
             Stmt::ForEach { var, array: Expr::Ident(arr_name), body, .. }
             if var == "要素" && arr_name == "数字" && body.len() == 1
         ));
+    }
+
+    #[test]
+    fn test_parse_try_catch_stmt() {
+        let src = "試す ｛ 印刷（１）； ｝ 失敗 失敗内容 ｛ 印刷（失敗内容）； ｝";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::TryCatch { try_body, error_var, catch_body, .. }
+            if try_body.len() == 1 && error_var == "失敗内容" && catch_body.len() == 1
+        ));
+    }
+
+    #[test]
+    fn test_parse_try_catch_missing_error_var_returns_error() {
+        let src = "試す ｛ 印刷（１）； ｝ 失敗 ｛ 印刷（１）； ｝";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(err, ParseError::ExpectedIdentifier { .. }));
     }
 }

@@ -25,6 +25,8 @@ pub enum TokenKind {
     KwForRange, // 繰り返す
     KwFrom,     // から
     KwEach,     // 各
+    KwTry,      // 試す
+    KwCatch,    // 失敗
 
     // Literals
     LitInt(i64),
@@ -199,6 +201,8 @@ impl Lexer {
             "繰り返す" => TokenKind::KwForRange,
             "から" => TokenKind::KwFrom,
             "各" => TokenKind::KwEach,
+            "試す" => TokenKind::KwTry,
+            "失敗" => TokenKind::KwCatch,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -351,12 +355,15 @@ fn fw_digit_to_ascii(ch: char) -> char {
 }
 
 // Returns true for full-width punctuation that acts as a token boundary.
+// 'ー' (katakana long vowel mark, e.g. in エラー/コード) is deliberately
+// excluded: it's only a Minus/Arrow token when it STARTS a token (handled
+// by the dispatch in tokenize()), not when it appears inside a word already
+// being read by read_word().
 fn is_symbol(ch: char) -> bool {
     matches!(
         ch,
         '＝' | '；'
             | '＋'
-            | 'ー'
             | '＊'
             | '／'
             | '｛'
@@ -449,6 +456,16 @@ mod tests {
         // A lone ー (not followed by ＞) must remain Minus.
         let tokens = Lexer::new("ー").tokenize();
         assert_eq!(tokens[0].kind, TokenKind::Minus);
+    }
+
+    #[test]
+    fn test_lex_identifier_containing_long_vowel_mark() {
+        // ー is a common katakana long vowel mark in loanwords (エラー =
+        // "error"); it must stay part of the identifier when it's not the
+        // first character of a token.
+        let tokens = Lexer::new("エラー").tokenize();
+        assert_eq!(tokens[0].kind, TokenKind::Ident("エラー".to_string()));
+        assert_eq!(tokens[1].kind, TokenKind::Eof);
     }
 
     #[test]
@@ -652,6 +669,17 @@ mod tests {
                 TokenKind::RBracket,
                 TokenKind::Eof,
             ]
+        );
+    }
+
+    #[test]
+    fn test_lex_try_catch_keywords() {
+        let src = "試す 失敗";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![&TokenKind::KwTry, &TokenKind::KwCatch, &TokenKind::Eof,]
         );
     }
 
