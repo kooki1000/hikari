@@ -27,6 +27,7 @@ pub enum TokenKind {
     KwEach,     // 各
     KwTry,      // 試す
     KwCatch,    // 失敗
+    KwImport,   // 取り込む
 
     // Literals
     LitInt(i64),
@@ -203,6 +204,7 @@ impl Lexer {
             "各" => TokenKind::KwEach,
             "試す" => TokenKind::KwTry,
             "失敗" => TokenKind::KwCatch,
+            "取り込む" => TokenKind::KwImport,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -695,6 +697,22 @@ mod tests {
                 &TokenKind::KwFrom,
                 &TokenKind::KwEach,
                 &TokenKind::Colon,
+                &TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_import_keyword() {
+        let src = "取り込む 「数学」；";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                &TokenKind::KwImport,
+                &TokenKind::LitString("数学".to_string()),
+                &TokenKind::Semi,
                 &TokenKind::Eof,
             ]
         );

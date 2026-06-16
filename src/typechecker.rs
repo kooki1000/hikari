@@ -70,6 +70,12 @@ pub enum TypeError {
         got: HikariType,
         span: Span,
     },
+    // Stdlib builtin used without its module's 取り込む statement.
+    ModuleNotImported {
+        name: String,
+        module: String,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -88,6 +94,7 @@ impl TypeError {
             TypeError::ArrayElementTypeMismatch { span, .. } => *span,
             TypeError::NotIndexable { span, .. } => *span,
             TypeError::IndexNotInt { span, .. } => *span,
+            TypeError::ModuleNotImported { span, .. } => *span,
         }
     }
 }
@@ -176,6 +183,11 @@ impl std::fmt::Display for TypeError {
                 "添字は「整数」型である必要がありますが、「{}」が指定されました。",
                 hikari_type_japanese(got)
             ),
+            TypeError::ModuleNotImported { name, module, .. } => write!(
+                f,
+                "「{}」を使うには「取り込む 「{}」；」が必要です。",
+                name, module
+            ),
         }
     }
 }
@@ -212,6 +224,39 @@ fn builtin_sig(name: &str) -> Option<FnSig> {
             params: vec![HikariType::Int],
             return_ty: HikariType::String,
         }),
+        "乱数" => Some(FnSig {
+            params: vec![HikariType::Int, HikariType::Int],
+            return_ty: HikariType::Int,
+        }),
+        "分割" => Some(FnSig {
+            params: vec![HikariType::String, HikariType::String],
+            return_ty: HikariType::Array(Box::new(HikariType::String)),
+        }),
+        "結合" => Some(FnSig {
+            params: vec![
+                HikariType::Array(Box::new(HikariType::String)),
+                HikariType::String,
+            ],
+            return_ty: HikariType::String,
+        }),
+        "含む" => Some(FnSig {
+            params: vec![HikariType::String, HikariType::String],
+            return_ty: HikariType::Bool,
+        }),
+        "置換" => Some(FnSig {
+            params: vec![HikariType::String, HikariType::String, HikariType::String],
+            return_ty: HikariType::String,
+        }),
+        _ => None,
+    }
+}
+
+// Maps gated stdlib builtins to the module that must be 取り込む'd before
+// they can be called. Phase-2 builtins are absent here, meaning ungated.
+fn builtin_module(name: &str) -> Option<&'static str> {
+    match name {
+        "絶対値" | "平方根" | "乱数" | "最大" | "最小" => Some("数学"),
+        "分割" | "結合" | "含む" | "置換" => Some("文字列"),
         _ => None,
     }
 }
@@ -221,6 +266,7 @@ pub struct TypeChecker {
     fns: HashMap<String, FnSig>,
     // Return type expected by the function currently being checked.
     current_return_ty: Option<HikariType>,
+    imported_modules: std::collections::HashSet<String>,
 }
 
 impl TypeChecker {
@@ -229,6 +275,7 @@ impl TypeChecker {
             scopes: vec![HashMap::new()],
             fns: HashMap::new(),
             current_return_ty: None,
+            imported_modules: std::collections::HashSet::new(),
         }
     }
 
@@ -489,6 +536,13 @@ impl TypeChecker {
                 self.exit_scope();
                 Ok(())
             }
+
+            Stmt::Import { name, .. } => {
+                if name == "数学" || name == "文字列" {
+                    self.imported_modules.insert(name.clone());
+                }
+                Ok(())
+            }
         }
     }
 
@@ -561,6 +615,71 @@ impl TypeChecker {
             }
 
             Expr::Call { name, args } => {
+                if let Some(module) = builtin_module(name) {
+                    if !self.imported_modules.contains(module) {
+                        return Err(TypeError::ModuleNotImported {
+                            name: name.clone(),
+                            module: module.to_string(),
+                            span,
+                        });
+                    }
+                }
+
+                if name == "絶対値" || name == "平方根" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    if !matches!(arg_ty, HikariType::Int | HikariType::Float) {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::Int,
+                            got: arg_ty,
+                            span,
+                        });
+                    }
+                    return Ok(if name == "平方根" {
+                        HikariType::Float
+                    } else {
+                        arg_ty
+                    });
+                }
+
+                if name == "最大" || name == "最小" {
+                    if args.len() != 2 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let a_ty = self.infer_expr(&args[0], span)?;
+                    let b_ty = self.infer_expr(&args[1], span)?;
+                    if !matches!(a_ty, HikariType::Int | HikariType::Float) {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::Int,
+                            got: a_ty,
+                            span,
+                        });
+                    }
+                    if a_ty != b_ty {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: a_ty,
+                            got: b_ty,
+                            span,
+                        });
+                    }
+                    return Ok(a_ty);
+                }
+
                 if let Some(sig) = builtin_sig(name) {
                     if args.len() != sig.params.len() {
                         return Err(TypeError::ArgCountMismatch {
@@ -1155,5 +1274,92 @@ mod tests {
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(err, TypeError::VarDeclMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_math_builtins_after_import() {
+        let src = "取り込む 「数学」；整数 結果 ＝ 絶対値（ー５）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let src = "取り込む 「数学」；小数 結果 ＝ 平方根（９）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let src = "取り込む 「数学」；整数 結果 ＝ 乱数（１、１０）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let src = "取り込む 「数学」；整数 結果 ＝ 最大（１、２）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let src = "取り込む 「数学」；小数 結果 ＝ 最小（１．０、２．０）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_builtins_after_import() {
+        let src = "取り込む 「文字列」；文字列列 結果 ＝ 分割（「あ、い」、「、」）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let src = "取り込む 「文字列」；文字列 結果 ＝ 結合（【「あ」、「い」】、「、」）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let src = "取り込む 「文字列」；真偽 結果 ＝ 含む（「あいう」、「い」）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let src = "取り込む 「文字列」；文字列 結果 ＝ 置換（「あいう」、「い」、「え」）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_stdlib_builtin_without_import_fails() {
+        let src = "整数 結果 ＝ 絶対値（ー５）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ModuleNotImported { module, .. } if module == "数学"
+        ));
+
+        let src = "真偽 結果 ＝ 含む（「あ」、「い」）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ModuleNotImported { module, .. } if module == "文字列"
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_abs_sqrt_polymorphic_mismatch() {
+        let src = "取り込む 「数学」；整数 結果 ＝ 絶対値（「文字」）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+
+        let src = "取り込む 「数学」；小数 結果 ＝ 平方根（「文字」）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_max_min_polymorphic_mismatch() {
+        let src = "取り込む 「数学」；整数 結果 ＝ 最大（１、「あ」）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+
+        let src = "取り込む 「数学」；文字列 結果 ＝ 最小（「あ」、「い」）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
     }
 }

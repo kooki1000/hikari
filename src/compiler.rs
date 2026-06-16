@@ -24,6 +24,15 @@ pub enum BuiltinFn {
     ParseInt,   // 整数化
     ParseFloat, // 小数化
     ToStr,      // 文字列化
+    Abs,        // 絶対値
+    Sqrt,       // 平方根
+    Random,     // 乱数
+    Max,        // 最大
+    Min,        // 最小
+    Split,      // 分割
+    Join,       // 結合
+    Contains,   // 含む
+    Replace,    // 置換
 }
 
 // ── Instruction set ───────────────────────────────────────────────────────────
@@ -67,6 +76,15 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "整数化" => Some(BuiltinFn::ParseInt),
         "小数化" => Some(BuiltinFn::ParseFloat),
         "文字列化" => Some(BuiltinFn::ToStr),
+        "絶対値" => Some(BuiltinFn::Abs),
+        "平方根" => Some(BuiltinFn::Sqrt),
+        "乱数" => Some(BuiltinFn::Random),
+        "最大" => Some(BuiltinFn::Max),
+        "最小" => Some(BuiltinFn::Min),
+        "分割" => Some(BuiltinFn::Split),
+        "結合" => Some(BuiltinFn::Join),
+        "含む" => Some(BuiltinFn::Contains),
+        "置換" => Some(BuiltinFn::Replace),
         _ => None,
     }
 }
@@ -386,6 +404,11 @@ impl Compiler {
                 let after_catch = instrs.len() as u16;
                 instrs[jump_over_catch_idx] = Instruction::Jump(after_catch);
             }
+            Stmt::Import { .. } => {
+                // No bytecode: 数学/文字列 gating is enforced by the
+                // typechecker, and file-based imports are already
+                // flattened away before compilation.
+            }
         }
     }
 
@@ -625,6 +648,15 @@ mod tests {
         assert!(matches!(
             instrs[1],
             Instruction::CallBuiltin(BuiltinFn::ToStr, 1)
+        ));
+    }
+
+    #[test]
+    fn test_compile_stdlib_builtin_emits_call_builtin() {
+        let (instrs, _) = compile("取り込む 「数学」；整数 結果 ＝ 絶対値（ー５）；");
+        assert!(matches!(
+            instrs[2],
+            Instruction::CallBuiltin(BuiltinFn::Abs, 1)
         ));
     }
 

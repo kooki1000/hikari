@@ -114,6 +114,10 @@ pub enum Stmt {
         catch_body: Vec<Stmt>,
         span: Span,
     },
+    Import {
+        name: String,
+        span: Span,
+    },
 }
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -215,6 +219,7 @@ impl Parser {
             TokenKind::KwForRange => self.parse_for_range(),
             TokenKind::KwEach => self.parse_for_each(),
             TokenKind::KwTry => self.parse_try_catch(),
+            TokenKind::KwImport => self.parse_import(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
             TokenKind::Ident(_) if self.peek_next() == &TokenKind::LBracket => {
                 self.parse_index_assign()
@@ -483,6 +488,24 @@ impl Parser {
         })
     }
 
+    fn parse_import(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        self.advance(); // consume 取り込む
+        let name_span = self.peek_span();
+        let name = match self.advance().clone() {
+            TokenKind::LitString(s) => s,
+            other => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: TokenKind::LitString(String::new()),
+                    got: other,
+                    span: name_span,
+                });
+            }
+        };
+        self.expect(&TokenKind::Semi)?;
+        Ok(Stmt::Import { name, span })
+    }
+
     fn parse_print(&mut self) -> Result<Stmt, ParseError> {
         let span = self.peek_span();
         self.advance(); // consume 印刷
@@ -695,6 +718,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwEach => "「各」".to_string(),
         TokenKind::KwTry => "「試す」".to_string(),
         TokenKind::KwCatch => "「失敗」".to_string(),
+        TokenKind::KwImport => "「取り込む」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
@@ -1252,5 +1276,37 @@ mod tests {
         let tokens = Lexer::new(src).tokenize();
         let err = Parser::new(tokens).parse().unwrap_err();
         assert!(matches!(err, ParseError::ExpectedIdentifier { .. }));
+    }
+
+    #[test]
+    fn test_parse_import_stmt() {
+        let src = "取り込む 「数学」；";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::Import { name, .. } if name == "数学"
+        ));
+    }
+
+    #[test]
+    fn test_parse_import_missing_string_literal_returns_error() {
+        let src = "取り込む 数学；";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedToken { .. }));
+    }
+
+    #[test]
+    fn test_parse_import_missing_semi_returns_error() {
+        let src = "取り込む 「数学」";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::UnexpectedToken {
+                expected: TokenKind::Semi,
+                ..
+            }
+        ));
     }
 }

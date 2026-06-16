@@ -474,7 +474,110 @@ fn call_builtin(builtin: BuiltinFn, args: &mut Vec<Value>) -> Result<Value, Runt
             Some(val) => Ok(Value::Str(display_value(&val))),
             None => Err(RuntimeError::StackUnderflow),
         },
+        BuiltinFn::Abs => match args.pop() {
+            Some(Value::Int(n)) => Ok(Value::Int(n.wrapping_abs())),
+            Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Sqrt => match args.pop() {
+            Some(Value::Int(n)) => {
+                if n < 0 {
+                    Err(RuntimeError::InvalidConversion(
+                        "負の数の平方根は計算できません。".to_string(),
+                    ))
+                } else {
+                    Ok(Value::Float((n as f64).sqrt()))
+                }
+            }
+            Some(Value::Float(f)) => {
+                if f < 0.0 {
+                    Err(RuntimeError::InvalidConversion(
+                        "負の数の平方根は計算できません。".to_string(),
+                    ))
+                } else {
+                    Ok(Value::Float(f.sqrt()))
+                }
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Random => {
+            let (min, max) = match (args.first().cloned(), args.get(1).cloned()) {
+                (Some(Value::Int(min)), Some(Value::Int(max))) => (min, max),
+                _ => return Err(RuntimeError::TypeMismatch),
+            };
+            if min > max {
+                return Err(RuntimeError::InvalidConversion(
+                    "乱数の範囲が無効です（最小値が最大値より大きいです）。".to_string(),
+                ));
+            }
+            Ok(Value::Int(next_random_i64(min, max)))
+        }
+        BuiltinFn::Max => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Int(a.max(b))),
+            (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a.max(b))),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Min => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Int(a.min(b))),
+            (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a.min(b))),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Split => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Str(s)), Some(Value::Str(sep))) => {
+                let parts: Vec<Value> = s
+                    .split(sep.as_str())
+                    .map(|p| Value::Str(p.to_string()))
+                    .collect();
+                Ok(Value::Array(Rc::new(RefCell::new(parts))))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Join => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Array(arr)), Some(Value::Str(sep))) => {
+                let joined = arr
+                    .borrow()
+                    .iter()
+                    .map(display_value)
+                    .collect::<Vec<_>>()
+                    .join(&sep);
+                Ok(Value::Str(joined))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Contains => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Str(s)), Some(Value::Str(needle))) => Ok(Value::Bool(s.contains(&needle))),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Replace => {
+            match (
+                args.first().cloned(),
+                args.get(1).cloned(),
+                args.get(2).cloned(),
+            ) {
+                (Some(Value::Str(s)), Some(Value::Str(old)), Some(Value::Str(new))) => {
+                    Ok(Value::Str(s.replace(&old, &new)))
+                }
+                _ => Err(RuntimeError::TypeMismatch),
+            }
+        }
     }
+}
+
+// Each call combines the current time with a process-local counter so two
+// 乱数 calls within the same nanosecond still get distinct seeds.
+static RANDOM_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn next_random_i64(min: i64, max: i64) -> i64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    let counter = RANDOM_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut seed = nanos ^ counter;
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    min + (seed as i64).rem_euclid(max - min + 1)
 }
 
 fn arith(
@@ -901,5 +1004,87 @@ mod tests {
         let src = "整数 結果 ＝ ０；試す ｛ 試す ｛ 結果 ＝ １ ／ ０； ｝ 失敗 失敗内容 ｛ 結果 ＝ １； ｝ ｝ 失敗 失敗内容 ｛ 結果 ＝ ２； ｝返す 結果；";
         let result = run(src);
         assert_eq!(result, Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn test_vm_abs_int_and_float() {
+        let result = run("取り込む 「数学」；返す 絶対値（ー５）；");
+        assert_eq!(result, Some(Value::Int(5)));
+
+        let result = run("取り込む 「数学」；返す 絶対値（ー５．５）；");
+        assert_eq!(result, Some(Value::Float(5.5)));
+    }
+
+    #[test]
+    fn test_vm_sqrt_of_perfect_square() {
+        let result = run("取り込む 「数学」；返す 平方根（９）；");
+        assert_eq!(result, Some(Value::Float(3.0)));
+    }
+
+    #[test]
+    fn test_vm_sqrt_of_negative_returns_error() {
+        let ast = Parser::new(
+            Lexer::new("取り込む 「数学」；整数 結果 ＝ ー１；返す 平方根（結果）；").tokenize(),
+        )
+        .parse()
+        .unwrap();
+        let mut compiler = Compiler::new();
+        let script = compiler.compile(&ast);
+        let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
+        assert!(matches!(result, Err(RuntimeError::InvalidConversion(_))));
+    }
+
+    #[test]
+    fn test_vm_random_within_bounds() {
+        for _ in 0..200 {
+            let result = run("取り込む 「数学」；返す 乱数（５、１０）；");
+            match result {
+                Some(Value::Int(n)) => assert!((5..=10).contains(&n)),
+                other => panic!("expected Int, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_vm_random_invalid_range_returns_error() {
+        let ast = Parser::new(Lexer::new("取り込む 「数学」；返す 乱数（１０、５）；").tokenize())
+            .parse()
+            .unwrap();
+        let mut compiler = Compiler::new();
+        let script = compiler.compile(&ast);
+        let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
+        assert!(matches!(result, Err(RuntimeError::InvalidConversion(_))));
+    }
+
+    #[test]
+    fn test_vm_max_min_happy_path() {
+        let result = run("取り込む 「数学」；返す 最大（３、７）；");
+        assert_eq!(result, Some(Value::Int(7)));
+
+        let result = run("取り込む 「数学」；返す 最小（３、７）；");
+        assert_eq!(result, Some(Value::Int(3)));
+    }
+
+    #[test]
+    fn test_vm_split_and_join_round_trip() {
+        let result = run(
+            "取り込む 「文字列」；文字列列 部分 ＝ 分割（「あ、い、う」、「、」）；返す 結合（部分、「、」）；",
+        );
+        assert_eq!(result, Some(Value::Str("あ、い、う".to_string())));
+    }
+
+    #[test]
+    fn test_vm_contains_true_and_false() {
+        let result = run("取り込む 「文字列」；返す 含む（「あいう」、「い」）；");
+        assert_eq!(result, Some(Value::Bool(true)));
+
+        let result = run("取り込む 「文字列」；返す 含む（「あいう」、「え」）；");
+        assert_eq!(result, Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_vm_replace_happy_path() {
+        let result = run("取り込む 「文字列」；返す 置換（「あいう」、「い」、「え」）；");
+        assert_eq!(result, Some(Value::Str("あえう".to_string())));
     }
 }

@@ -1,10 +1,13 @@
 mod compiler;
 mod diagnostic;
 mod lexer;
+mod modules;
 mod parser;
 mod typechecker;
 mod vm;
 
+use std::collections::HashSet;
+use std::path::Path;
 use std::{env, fs, process};
 
 use compiler::Compiler;
@@ -29,6 +32,12 @@ fn main() {
     let tokens = Lexer::new(&source).tokenize();
     let ast = Parser::new(tokens).parse().unwrap_or_else(|e| {
         eprintln!("{}", diagnostic::render(&source, e.span(), &e.to_string()));
+        process::exit(1);
+    });
+
+    let entry_dir = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
+    let ast = modules::resolve_imports(ast, entry_dir, &mut HashSet::new()).unwrap_or_else(|e| {
+        eprintln!("{}", e);
         process::exit(1);
     });
 
