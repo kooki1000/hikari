@@ -47,6 +47,7 @@ Hikari's syntax uses Japanese reserved words and full-width characters for all o
 整数 結果 ＝ ２ ＋ ３ ＊ ４；  （＊ binds tighter than ＋）
 整数 負数 ＝ ー５；             （unary minus）
 文字列 結果 ＝ 「あ」 ＋ 「い」；（string concatenation via ＋）
+整数 余り ＝ １０ ％ ３；       （modulo — same precedence tier as ＊／／）
 ```
 
 ### Comparison Operators
@@ -127,6 +128,18 @@ Hikari's syntax uses Japanese reserved words and full-width characters for all o
 
 Arrays have reference semantics: assigning an array to another variable aliases the same underlying storage, so mutating through either variable is visible through the other.
 
+### Creating an Empty Array
+
+Array literals (`【...】`) need at least one element to infer their type from. To build an array up dynamically (e.g. from an empty start), use `新配列＜型＞`:
+
+```
+取り込む 「配列」；
+整数列 数字 ＝ 新配列＜整数＞；
+追加（数字、１）；
+追加（数字、２）；
+印刷（要素数（数字））；  （prints 2）
+```
+
 ### Function Declaration and Call
 
 Parameters and call arguments are comma-separated with `、`:
@@ -191,7 +204,7 @@ If the try-body completes without error, the catch-body is skipped entirely. Err
 
 ### Modules
 
-`取り込む 「name」；` imports a module. If `name` matches a recognized standard-library module (`数学`, `文字列`, see below), it unlocks that module's builtin functions for the rest of the program — calling one before importing it is a compile-time error. Otherwise `name` is treated as a relative path to another `.hkr` file: it's parsed and only its top-level `関数` declarations are merged into the program (imports inside the imported file resolve relative to *that* file; cyclic imports are deduplicated, not an error).
+`取り込む 「name」；` imports a module. If `name` matches a recognized standard-library module (`数学`, `文字列`, `配列`, see below), it unlocks that module's builtin functions for the rest of the program — calling one before importing it is a compile-time error. Otherwise `name` is treated as a relative path to another `.hkr` file: it's parsed and only its top-level `関数` declarations are merged into the program (imports inside the imported file resolve relative to *that* file; cyclic imports are deduplicated, not an error).
 
 ```
 取り込む 「utils.hkr」；
@@ -210,10 +223,23 @@ If the try-body completes without error, the catch-body is skipped entirely. Err
 | `数学` | `乱数（min、max）` | `整数、整数 → 整数` | Random integer in `[min, max]` |
 | `数学` | `最大（a、b）` | `整数｜小数 → 同じ型` | Larger of two values |
 | `数学` | `最小（a、b）` | `整数｜小数 → 同じ型` | Smaller of two values |
+| `数学` | `累乗（底、指数）` | `整数｜小数 → 同じ型` | Power (negative integer exponents are a runtime error) |
+| `数学` | `切り捨て（n）` | `小数 → 整数` | Floor |
+| `数学` | `切り上げ（n）` | `小数 → 整数` | Ceiling |
+| `数学` | `四捨五入（n）` | `小数 → 整数` | Round to nearest |
+| `数学` | `余り（a、b）` | `整数｜小数 → 同じ型` | Function form of `％` |
 | `文字列` | `分割（s、区切り）` | `文字列、文字列 → 文字列列` | Split a string |
 | `文字列` | `結合（配列、区切り）` | `文字列列、文字列 → 文字列` | Join a string array |
 | `文字列` | `含む（s、部分）` | `文字列、文字列 → 真偽` | Substring check |
 | `文字列` | `置換（s、旧、新）` | `文字列、文字列、文字列 → 文字列` | Replace all occurrences |
+| `配列` | `要素数（配列）` | `配列 → 整数` | Length |
+| `配列` | `追加（配列、値）` | `配列、要素型 → 無` | Append in place |
+| `配列` | `取り出す（配列）` | `配列 → 要素型` | Pop the last element in place (empty array is a runtime error) |
+| `配列` | `含む配列（配列、値）` | `配列、要素型 → 真偽` | Membership test |
+| `配列` | `位置（配列、値）` | `配列、要素型 → 整数` | Index of first match, or `-1` if absent |
+| `配列` | `逆順（配列）` | `配列 → 同じ配列` | Reverse in place |
+| `配列` | `整列（配列）` | `配列 → 同じ配列` | Sort in place (numbers or strings only) |
+| `配列` | `部分列（配列、開始、終了）` | `配列、整数、整数 → 新しい配列` | Slice `[開始, 終了)` — returns a copy, does not mutate the original |
 
 ### REPL
 

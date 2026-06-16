@@ -28,6 +28,7 @@ pub enum TokenKind {
     KwTry,      // 試す
     KwCatch,    // 失敗
     KwImport,   // 取り込む
+    KwNewArray, // 新配列
 
     // Literals
     LitInt(i64),
@@ -49,6 +50,7 @@ pub enum TokenKind {
     Minus,    // ー  (also prefix of arrow)
     Star,     // ＊
     Slash,    // ／
+    Percent,  // ％
     LBrace,   // ｛
     RBrace,   // ｝
     LParen,   // （
@@ -215,6 +217,7 @@ impl Lexer {
             "試す" => TokenKind::KwTry,
             "失敗" => TokenKind::KwCatch,
             "取り込む" => TokenKind::KwImport,
+            "新配列" => TokenKind::KwNewArray,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -298,6 +301,10 @@ impl Lexer {
                     self.advance();
                     TokenKind::Slash
                 }
+                '％' => {
+                    self.advance();
+                    TokenKind::Percent
+                }
                 '｛' => {
                     self.advance();
                     TokenKind::LBrace
@@ -378,6 +385,7 @@ fn is_symbol(ch: char) -> bool {
             | '＋'
             | '＊'
             | '／'
+            | '％'
             | '｛'
             | '｝'
             | '（'
@@ -743,5 +751,36 @@ mod tests {
         // Two decimal points: an Invalid token rather than a panic.
         let tokens = Lexer::new("１．２．３").tokenize();
         assert_eq!(tokens[0].kind, TokenKind::Invalid("1.2.3".to_string()));
+    }
+
+    #[test]
+    fn test_lex_percent_token() {
+        let tokens = Lexer::new("１０ ％ ３").tokenize();
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::LitInt(10),
+                TokenKind::Percent,
+                TokenKind::LitInt(3),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_lex_new_array_keyword() {
+        let tokens = Lexer::new("新配列＜整数＞").tokenize();
+        let kinds: Vec<TokenKind> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::KwNewArray,
+                TokenKind::Lt,
+                TokenKind::TyInt,
+                TokenKind::Gt,
+                TokenKind::Eof,
+            ]
+        );
     }
 }

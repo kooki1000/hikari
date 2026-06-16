@@ -37,6 +37,7 @@ pub enum Expr {
         array: Box<Expr>,
         index: Box<Expr>,
     },
+    NewArray(HikariType),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -45,6 +46,7 @@ pub enum BinOpKind {
     Sub,   // ー
     Mul,   // ＊
     Div,   // ／
+    Mod,   // ％
     Eq,    // ＝＝
     Lt,    // ＜
     Gt,    // ＞
@@ -601,6 +603,7 @@ impl Parser {
             let op = match self.peek() {
                 TokenKind::Star => BinOpKind::Mul,
                 TokenKind::Slash => BinOpKind::Div,
+                TokenKind::Percent => BinOpKind::Mod,
                 _ => break,
             };
             self.advance();
@@ -652,6 +655,12 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::RParen)?;
                 Ok(expr)
+            }
+            TokenKind::KwNewArray => {
+                self.expect(&TokenKind::Lt)?;
+                let ty = self.parse_type()?;
+                self.expect(&TokenKind::Gt)?;
+                Ok(Expr::NewArray(ty))
             }
             TokenKind::LBracket => {
                 let mut elems = Vec::new();
@@ -725,6 +734,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwTry => "「試す」".to_string(),
         TokenKind::KwCatch => "「失敗」".to_string(),
         TokenKind::KwImport => "「取り込む」".to_string(),
+        TokenKind::KwNewArray => "「新配列」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
@@ -742,6 +752,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::Minus => "「ー」".to_string(),
         TokenKind::Star => "「＊」".to_string(),
         TokenKind::Slash => "「／」".to_string(),
+        TokenKind::Percent => "「％」".to_string(),
         TokenKind::LBrace => "「｛」".to_string(),
         TokenKind::RBrace => "「｝」".to_string(),
         TokenKind::LParen => "「（」".to_string(),
@@ -1326,5 +1337,46 @@ mod tests {
         let tokens = Lexer::new(src).tokenize();
         let err = Parser::new(tokens).parse().unwrap_err();
         assert!(matches!(err, ParseError::InvalidNumber { .. }));
+    }
+
+    #[test]
+    fn test_parse_modulo_precedence() {
+        // １０ ％ ３ ＋ １ should parse as (10 % 3) + 1, Mod binding tighter than Add.
+        let tokens = Lexer::new("返す １０ ％ ３ ＋ １；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let Stmt::Return(expr, _) = &ast[0] else {
+            panic!()
+        };
+        let Expr::BinOp { op, lhs, rhs } = expr else {
+            panic!()
+        };
+        assert_eq!(op, &BinOpKind::Add);
+        assert!(matches!(rhs.as_ref(), Expr::LitInt(1)));
+        let Expr::BinOp {
+            op: inner_op,
+            lhs: il,
+            rhs: ir,
+        } = lhs.as_ref()
+        else {
+            panic!()
+        };
+        assert_eq!(inner_op, &BinOpKind::Mod);
+        assert!(matches!(il.as_ref(), Expr::LitInt(10)));
+        assert!(matches!(ir.as_ref(), Expr::LitInt(3)));
+    }
+
+    #[test]
+    fn test_parse_new_array_expr() {
+        let tokens = Lexer::new("整数列 数字 ＝ 新配列＜整数＞；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::VarDecl {
+                ty: HikariType::Array(inner),
+                value: Expr::NewArray(elem_ty),
+                ..
+            }
+            if **inner == HikariType::Int && *elem_ty == HikariType::Int
+        ));
     }
 }

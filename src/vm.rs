@@ -14,6 +14,9 @@ pub enum RuntimeError {
     InvalidConversion(String),
     IndexOutOfBounds { index: i64, len: usize },
     IntegerOverflow,
+    // 取り出す on an empty array: there is no valid index to report, so this
+    // gets its own variant rather than overloading IndexOutOfBounds.
+    EmptyArray,
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -38,6 +41,9 @@ impl std::fmt::Display for RuntimeError {
             }
             RuntimeError::IntegerOverflow => {
                 write!(f, "整数の計算結果が大きすぎます（オーバーフロー）。")
+            }
+            RuntimeError::EmptyArray => {
+                write!(f, "空の配列から要素を取り出すことはできません。")
             }
         }
     }
@@ -191,6 +197,16 @@ impl Vm {
                 // checked_div also guards i64::MIN / -1, which would overflow.
                 self.stack
                     .push(arith(l, r, i64::checked_div, |a, b| a / b)?);
+            }
+            Instruction::Mod => {
+                let (l, r) = self.pop2()?;
+                if let Value::Int(0) = &r {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                // Rust's float `%` never panics on a zero divisor (it yields
+                // NaN per IEEE 754), so floats need no explicit zero-check.
+                self.stack
+                    .push(arith(l, r, i64::checked_rem, |a, b| a % b)?);
             }
             Instruction::Call(fn_idx, arg_count) => {
                 let chunk = &self.chunks[fn_idx as usize];
@@ -629,7 +645,143 @@ fn call_builtin(builtin: BuiltinFn, args: &mut Vec<Value>) -> Result<Value, Runt
                 _ => Err(RuntimeError::TypeMismatch),
             }
         }
+        BuiltinFn::Pow => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Int(base)), Some(Value::Int(exp))) => {
+                // Negative exponents have no integer result; checked_pow also
+                // needs a u32, so both bounds are validated up front.
+                let exp_u32 = u32::try_from(exp).map_err(|_| {
+                    RuntimeError::InvalidConversion(
+                        "整数の累乗では指数は０以上である必要があります。".to_string(),
+                    )
+                })?;
+                base.checked_pow(exp_u32)
+                    .map(Value::Int)
+                    .ok_or(RuntimeError::IntegerOverflow)
+            }
+            (Some(Value::Float(base)), Some(Value::Float(exp))) => Ok(Value::Float(base.powf(exp))),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Floor => match args.pop() {
+            Some(Value::Float(f)) => float_to_int(f.floor()),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Ceil => match args.pop() {
+            Some(Value::Float(f)) => float_to_int(f.ceil()),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Round => match args.pop() {
+            Some(Value::Float(f)) => float_to_int(f.round()),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Rem => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Int(_)), Some(Value::Int(0))) => Err(RuntimeError::DivisionByZero),
+            (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Int(a % b)),
+            (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a % b)),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::ArrayLen => match args.pop() {
+            Some(Value::Array(a)) => Ok(Value::Int(a.borrow().len() as i64)),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Push => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Array(a)), Some(val)) => {
+                a.borrow_mut().push(val);
+                // 追加 is 無-typed; there's no Value::Void, so CallBuiltin
+                // (which always pushes one result) gets a placeholder that's
+                // never observed since the typechecker forbids using a 無
+                // call's result as a value.
+                Ok(Value::Int(0))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Pop => match args.pop() {
+            Some(Value::Array(a)) => a.borrow_mut().pop().ok_or(RuntimeError::EmptyArray),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::ArrayContains => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Array(a)), Some(val)) => Ok(Value::Bool(a.borrow().contains(&val))),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::IndexOf => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Array(a)), Some(val)) => {
+                let pos = a.borrow().iter().position(|v| v == &val);
+                Ok(Value::Int(pos.map(|p| p as i64).unwrap_or(-1)))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Reverse => match args.pop() {
+            Some(Value::Array(a)) => {
+                a.borrow_mut().reverse();
+                Ok(Value::Array(a))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Sort => match args.pop() {
+            Some(Value::Array(a)) => {
+                {
+                    let mut borrowed = a.borrow_mut();
+                    sort_values(&mut borrowed)?;
+                }
+                Ok(Value::Array(a))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        // Unlike the other array builtins, 部分列 returns a NEW array rather
+        // than mutating the original — slicing-as-copy matches the common
+        // convention in other languages, even though 逆順/整列/追加/取り出す
+        // here all mutate in place.
+        BuiltinFn::Slice => {
+            match (
+                args.first().cloned(),
+                args.get(1).cloned(),
+                args.get(2).cloned(),
+            ) {
+                (Some(Value::Array(a)), Some(Value::Int(start)), Some(Value::Int(end))) => {
+                    let borrowed = a.borrow();
+                    let len = borrowed.len();
+                    if start < 0 || end < 0 || start > end || end as usize > len {
+                        return Err(RuntimeError::IndexOutOfBounds {
+                            index: if start < 0 || start as usize > len {
+                                start
+                            } else {
+                                end
+                            },
+                            len,
+                        });
+                    }
+                    let slice = borrowed[start as usize..end as usize].to_vec();
+                    Ok(Value::Array(Rc::new(RefCell::new(slice))))
+                }
+                _ => Err(RuntimeError::TypeMismatch),
+            }
+        }
     }
+}
+
+fn float_to_int(f: f64) -> Result<Value, RuntimeError> {
+    if f.is_finite() && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+        Ok(Value::Int(f as i64))
+    } else {
+        Err(RuntimeError::InvalidConversion(
+            "結果が整数の範囲に収まりません。".to_string(),
+        ))
+    }
+}
+
+fn sort_values(values: &mut [Value]) -> Result<(), RuntimeError> {
+    if values
+        .iter()
+        .any(|v| !matches!(v, Value::Int(_) | Value::Float(_) | Value::Str(_)))
+    {
+        return Err(RuntimeError::TypeMismatch);
+    }
+    values.sort_by(|a, b| match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x.cmp(y),
+        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Str(x), Value::Str(y)) => x.cmp(y),
+        _ => std::cmp::Ordering::Equal,
+    });
+    Ok(())
 }
 
 // Each call combines the current time with a process-local counter so two
@@ -1246,5 +1398,185 @@ mod tests {
     fn test_vm_integer_multiplication_overflow_is_runtime_error() {
         let src = "整数 Ｘ ＝ ９２２３３７２０３６８５４７７５８０７ ＊ ２；返す Ｘ；";
         assert_eq!(run_result(src), Err(RuntimeError::IntegerOverflow));
+    }
+
+    // ── 7a: modulo ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_vm_modulo_int() {
+        assert_eq!(run("返す １０ ％ ３；"), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn test_vm_modulo_float() {
+        assert_eq!(run("返す １０．０ ％ ３．０；"), Some(Value::Float(1.0)));
+    }
+
+    #[test]
+    fn test_vm_modulo_by_zero_returns_error() {
+        assert_eq!(
+            run_result("返す １０ ％ ０；"),
+            Err(RuntimeError::DivisionByZero)
+        );
+    }
+
+    #[test]
+    fn test_vm_fizzbuzz_with_modulo() {
+        let src =
+            "整数 Ｎ ＝ １５；もし Ｎ ％ １５ ＝＝ ０ ならば ｛ 返す ０； ｝違えば｛ 返す Ｎ； ｝";
+        assert_eq!(run(src), Some(Value::Int(0)));
+    }
+
+    // ── 7b: array builtins ──────────────────────────────────────────────
+
+    #[test]
+    fn test_vm_array_len_builtin() {
+        let src = "取り込む 「配列」；整数列 数字 ＝ 【１、２、３】；返す 要素数（数字）；";
+        assert_eq!(run(src), Some(Value::Int(3)));
+    }
+
+    #[test]
+    fn test_vm_push_pop_round_trip() {
+        let src = "取り込む 「配列」；整数列 数字 ＝ 新配列＜整数＞；追加（数字、１）；追加（数字、２）；整数 最後 ＝ 取り出す（数字）；もし 最後 ＝＝ ２ かつ 要素数（数字） ＝＝ １ ならば ｛ 返す １； ｝違えば｛ 返す ０； ｝";
+        assert_eq!(run(src), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn test_vm_pop_empty_array_returns_error() {
+        let src = "取り込む 「配列」；整数列 数字 ＝ 新配列＜整数＞；返す 取り出す（数字）；";
+        assert_eq!(run_result(src), Err(RuntimeError::EmptyArray));
+    }
+
+    #[test]
+    fn test_vm_contains_array_found_and_not_found() {
+        let src = "取り込む 「配列」；整数列 数字 ＝ 【１、２、３】；返す 含む配列（数字、２）；";
+        assert_eq!(run(src), Some(Value::Bool(true)));
+
+        let src = "取り込む 「配列」；整数列 数字 ＝ 【１、２、３】；返す 含む配列（数字、９）；";
+        assert_eq!(run(src), Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_vm_index_of_found_and_not_found() {
+        let src =
+            "取り込む 「配列」；整数列 数字 ＝ 【１０、２０、３０】；返す 位置（数字、２０）；";
+        assert_eq!(run(src), Some(Value::Int(1)));
+
+        let src =
+            "取り込む 「配列」；整数列 数字 ＝ 【１０、２０、３０】；返す 位置（数字、９９）；";
+        assert_eq!(run(src), Some(Value::Int(-1)));
+    }
+
+    #[test]
+    fn test_vm_reverse_mutates_in_place_and_returns_array() {
+        let src = "取り込む 「配列」；整数列 数字 ＝ 【１、２、３】；整数列 同じ ＝ 逆順（数字）；返す 数字【０】；";
+        assert_eq!(run(src), Some(Value::Int(3)));
+    }
+
+    #[test]
+    fn test_vm_sort_int_array() {
+        let src =
+            "取り込む 「配列」；整数列 数字 ＝ 【３、１、２】；整列（数字）；返す 数字【０】；";
+        assert_eq!(run(src), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn test_vm_sort_float_array() {
+        let src = "取り込む 「配列」；小数列 数字 ＝ 【３．０、１．０、２．０】；整列（数字）；返す 数字【０】；";
+        assert_eq!(run(src), Some(Value::Float(1.0)));
+    }
+
+    #[test]
+    fn test_vm_sort_string_array() {
+        let src = "取り込む 「配列」；文字列列 文字 ＝ 【「う」、「あ」、「い」】；整列（文字）；返す 文字【０】；";
+        assert_eq!(run(src), Some(Value::Str("あ".to_string())));
+    }
+
+    #[test]
+    fn test_vm_slice_returns_new_array_without_mutating_original() {
+        let src = "取り込む 「配列」；整数列 数字 ＝ 【１、２、３、４】；整数列 部分 ＝ 部分列（数字、１、３）；もし 部分【０】 ＝＝ ２ かつ 部分【１】 ＝＝ ３ かつ 要素数（数字） ＝＝ ４ ならば ｛ 返す １； ｝違えば｛ 返す ０； ｝";
+        assert_eq!(run(src), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn test_vm_slice_out_of_bounds_returns_error() {
+        let src = "取り込む 「配列」；整数列 数字 ＝ 【１、２】；返す 部分列（数字、０、５）；";
+        assert!(matches!(
+            run_result(src),
+            Err(RuntimeError::IndexOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn test_vm_new_array_then_build_and_check_len() {
+        let src = "取り込む 「配列」；文字列列 単語 ＝ 新配列＜文字列＞；追加（単語、「あ」）；追加（単語、「い」）；返す 要素数（単語）；";
+        assert_eq!(run(src), Some(Value::Int(2)));
+    }
+
+    // ── 7c: more math builtins ─────────────────────────────────────────
+
+    #[test]
+    fn test_vm_pow_int_and_float() {
+        let src = "取り込む 「数学」；返す 累乗（２、１０）；";
+        assert_eq!(run(src), Some(Value::Int(1024)));
+
+        let src = "取り込む 「数学」；返す 累乗（２．０、０．５）；";
+        match run(src) {
+            Some(Value::Float(f)) => assert!((f - std::f64::consts::SQRT_2).abs() < 1e-9),
+            other => panic!("expected Float, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_vm_pow_negative_exponent_returns_error() {
+        let src = "取り込む 「数学」；返す 累乗（２、ー１）；";
+        assert!(matches!(
+            run_result(src),
+            Err(RuntimeError::InvalidConversion(_))
+        ));
+    }
+
+    #[test]
+    fn test_vm_floor_ceil_round() {
+        let src = "取り込む 「数学」；返す 切り捨て（３．７）；";
+        assert_eq!(run(src), Some(Value::Int(3)));
+
+        let src = "取り込む 「数学」；返す 切り上げ（３．２）；";
+        assert_eq!(run(src), Some(Value::Int(4)));
+
+        let src = "取り込む 「数学」；返す 四捨五入（３．５）；";
+        assert_eq!(run(src), Some(Value::Int(4)));
+    }
+
+    #[test]
+    fn test_vm_remainder_function_form() {
+        let src = "取り込む 「数学」；返す 余り（１０、３）；";
+        assert_eq!(run(src), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn test_vm_remainder_by_zero_returns_error() {
+        let src = "取り込む 「数学」；返す 余り（１０、０）；";
+        assert_eq!(run_result(src), Err(RuntimeError::DivisionByZero));
+    }
+
+    #[test]
+    fn test_vm_build_sort_print_array_program() {
+        let src = "取り込む 「配列」；整数列 数字 ＝ 新配列＜整数＞；追加（数字、５）；追加（数字、１）；追加（数字、３）；整列（数字）；返す 数字；";
+        let result = run(src);
+        match result {
+            Some(Value::Array(a)) => {
+                let v: Vec<i64> = a
+                    .borrow()
+                    .iter()
+                    .map(|x| match x {
+                        Value::Int(n) => *n,
+                        _ => panic!("expected Int"),
+                    })
+                    .collect();
+                assert_eq!(v, vec![1, 3, 5]);
+            }
+            other => panic!("expected Array, got {:?}", other),
+        }
     }
 }

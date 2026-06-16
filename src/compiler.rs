@@ -19,20 +19,33 @@ pub enum Value {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum BuiltinFn {
-    Len,        // 文字数
-    Input,      // 入力
-    ParseInt,   // 整数化
-    ParseFloat, // 小数化
-    ToStr,      // 文字列化
-    Abs,        // 絶対値
-    Sqrt,       // 平方根
-    Random,     // 乱数
-    Max,        // 最大
-    Min,        // 最小
-    Split,      // 分割
-    Join,       // 結合
-    Contains,   // 含む
-    Replace,    // 置換
+    Len,           // 文字数
+    Input,         // 入力
+    ParseInt,      // 整数化
+    ParseFloat,    // 小数化
+    ToStr,         // 文字列化
+    Abs,           // 絶対値
+    Sqrt,          // 平方根
+    Random,        // 乱数
+    Max,           // 最大
+    Min,           // 最小
+    Split,         // 分割
+    Join,          // 結合
+    Contains,      // 含む
+    Replace,       // 置換
+    Pow,           // 累乗
+    Floor,         // 切り捨て
+    Ceil,          // 切り上げ
+    Round,         // 四捨五入
+    Rem,           // 余り
+    ArrayLen,      // 要素数
+    Push,          // 追加
+    Pop,           // 取り出す
+    ArrayContains, // 含む配列
+    IndexOf,       // 位置
+    Reverse,       // 逆順
+    Sort,          // 整列
+    Slice,         // 部分列
 }
 
 // ── Instruction set ───────────────────────────────────────────────────────────
@@ -46,6 +59,7 @@ pub enum Instruction {
     Sub,
     Mul,
     Div,
+    Mod,
     Equal,                      // pop two values, push Bool (==)
     LessThan,                   // pop two values, push Bool (<)
     GreaterThan,                // pop two values, push Bool (>)
@@ -85,6 +99,19 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "結合" => Some(BuiltinFn::Join),
         "含む" => Some(BuiltinFn::Contains),
         "置換" => Some(BuiltinFn::Replace),
+        "累乗" => Some(BuiltinFn::Pow),
+        "切り捨て" => Some(BuiltinFn::Floor),
+        "切り上げ" => Some(BuiltinFn::Ceil),
+        "四捨五入" => Some(BuiltinFn::Round),
+        "余り" => Some(BuiltinFn::Rem),
+        "要素数" => Some(BuiltinFn::ArrayLen),
+        "追加" => Some(BuiltinFn::Push),
+        "取り出す" => Some(BuiltinFn::Pop),
+        "含む配列" => Some(BuiltinFn::ArrayContains),
+        "位置" => Some(BuiltinFn::IndexOf),
+        "逆順" => Some(BuiltinFn::Reverse),
+        "整列" => Some(BuiltinFn::Sort),
+        "部分列" => Some(BuiltinFn::Slice),
         _ => None,
     }
 }
@@ -483,6 +510,7 @@ impl Compiler {
                     BinOpKind::Sub => Instruction::Sub,
                     BinOpKind::Mul => Instruction::Mul,
                     BinOpKind::Div => Instruction::Div,
+                    BinOpKind::Mod => Instruction::Mod,
                     BinOpKind::Eq => Instruction::Equal,
                     BinOpKind::Lt => Instruction::LessThan,
                     BinOpKind::Gt => Instruction::GreaterThan,
@@ -523,6 +551,9 @@ impl Compiler {
                 self.emit_expr(array, instrs, scopes);
                 self.emit_expr(index, instrs, scopes);
                 instrs.push(Instruction::GetIndex);
+            }
+            Expr::NewArray(_) => {
+                instrs.push(Instruction::MakeArray(0));
             }
         }
     }
@@ -775,5 +806,32 @@ mod tests {
         assert_eq!(instrs[3], Instruction::TryEnd);
         assert!(matches!(instrs[4], Instruction::Jump(7)));
         assert_eq!(instrs.len(), 7);
+    }
+
+    #[test]
+    fn test_compile_modulo_emits_mod_instruction() {
+        let (instrs, _) = compile("整数 結果 ＝ １０ ％ ３；");
+        assert!(instrs.contains(&Instruction::Mod));
+    }
+
+    #[test]
+    fn test_compile_array_len_builtin_emits_call_builtin() {
+        let src = "取り込む 「配列」；整数列 数字 ＝ 【１】；整数 結果 ＝ 要素数（数字）；";
+        let (instrs, _) = compile(src);
+        assert!(instrs.contains(&Instruction::CallBuiltin(BuiltinFn::ArrayLen, 1)));
+    }
+
+    #[test]
+    fn test_compile_new_array_emits_make_array_zero() {
+        let (instrs, _) = compile("整数列 数字 ＝ 新配列＜整数＞；");
+        assert_eq!(instrs[0], Instruction::MakeArray(0));
+        assert_eq!(instrs[1], Instruction::StoreLocal(0));
+    }
+
+    #[test]
+    fn test_compile_pow_builtin_emits_call_builtin() {
+        let src = "取り込む 「数学」；整数 結果 ＝ 累乗（２、３）；";
+        let (instrs, _) = compile(src);
+        assert!(instrs.contains(&Instruction::CallBuiltin(BuiltinFn::Pow, 2)));
     }
 }
