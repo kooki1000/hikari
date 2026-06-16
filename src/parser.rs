@@ -9,6 +9,7 @@ pub enum HikariType {
     String, // 文字列
     Bool,   // 真偽
     Void,   // 無
+    Array(Box<HikariType>),
 }
 
 // ── AST nodes ────────────────────────────────────────────────────────────────
@@ -31,6 +32,11 @@ pub enum Expr {
     },
     UnaryMinus(Box<Expr>),
     UnaryNot(Box<Expr>),
+    Array(Vec<Expr>),
+    Index {
+        array: Box<Expr>,
+        index: Box<Expr>,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -81,6 +87,25 @@ pub enum Stmt {
     Assign {
         name: String,
         value: Expr,
+        span: Span,
+    },
+    IndexAssign {
+        name: String,
+        index: Expr,
+        value: Expr,
+        span: Span,
+    },
+    ForRange {
+        var: String,
+        from: Expr,
+        to: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
+    ForEach {
+        var: String,
+        array: Expr,
+        body: Vec<Stmt>,
         span: Span,
     },
 }
@@ -181,7 +206,12 @@ impl Parser {
             TokenKind::KwPrint => self.parse_print(),
             TokenKind::KwIf => self.parse_if(),
             TokenKind::KwWhile => self.parse_while(),
+            TokenKind::KwForRange => self.parse_for_range(),
+            TokenKind::KwEach => self.parse_for_each(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
+            TokenKind::Ident(_) if self.peek_next() == &TokenKind::LBracket => {
+                self.parse_index_assign()
+            }
             TokenKind::Ident(_) if self.peek_next() == &TokenKind::Assign => self.parse_assign(),
             _ => {
                 let span = self.peek_span();
@@ -225,6 +255,26 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect(&TokenKind::Semi)?;
         Ok(Stmt::Assign { name, value, span })
+    }
+
+    fn parse_index_assign(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        let name = match self.advance().clone() {
+            TokenKind::Ident(n) => n,
+            _ => unreachable!("guarded by caller"),
+        };
+        self.expect(&TokenKind::LBracket)?;
+        let index = self.parse_expr()?;
+        self.expect(&TokenKind::RBracket)?;
+        self.expect(&TokenKind::Assign)?;
+        let value = self.parse_expr()?;
+        self.expect(&TokenKind::Semi)?;
+        Ok(Stmt::IndexAssign {
+            name,
+            index,
+            value,
+            span,
+        })
     }
 
     fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -327,6 +377,67 @@ impl Parser {
         self.expect(&TokenKind::RBrace)?;
         Ok(Stmt::While {
             condition,
+            body,
+            span,
+        })
+    }
+
+    fn parse_for_range(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        self.advance(); // consume 繰り返す
+        let var = match (self.peek_span(), self.advance().clone()) {
+            (_, TokenKind::Ident(n)) => n,
+            (s, other) => {
+                return Err(ParseError::ExpectedIdentifier {
+                    got: other,
+                    span: s,
+                });
+            }
+        };
+        self.expect(&TokenKind::Assign)?;
+        let from = self.parse_expr()?;
+        self.expect(&TokenKind::KwFrom)?; // から
+        let to = self.parse_expr()?;
+        self.expect(&TokenKind::KwThen)?; // ならば
+        self.expect(&TokenKind::LBrace)?;
+        let mut body = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            body.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Stmt::ForRange {
+            var,
+            from,
+            to,
+            body,
+            span,
+        })
+    }
+
+    fn parse_for_each(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        self.advance(); // consume 各
+        let var = match (self.peek_span(), self.advance().clone()) {
+            (_, TokenKind::Ident(n)) => n,
+            (s, other) => {
+                return Err(ParseError::ExpectedIdentifier {
+                    got: other,
+                    span: s,
+                });
+            }
+        };
+        self.expect(&TokenKind::Colon)?; // ：
+        let array = self.parse_expr()?;
+        self.expect(&TokenKind::KwThen)?; // ならば
+        self.expect(&TokenKind::LBrace)?;
+        let mut body = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            body.push(self.parse_stmt()?);
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Stmt::ForEach {
+            var,
+            array,
             body,
             span,
         })
@@ -447,7 +558,7 @@ impl Parser {
             return Ok(Expr::UnaryNot(Box::new(inner)));
         }
         let span = self.peek_span();
-        match self.advance().clone() {
+        let mut expr = match self.advance().clone() {
             TokenKind::LitInt(n) => Ok(Expr::LitInt(n)),
             TokenKind::LitFloat(f) => Ok(Expr::LitFloat(f)),
             TokenKind::LitString(s) => Ok(Expr::LitString(s)),
@@ -474,8 +585,29 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 Ok(expr)
             }
+            TokenKind::LBracket => {
+                let mut elems = Vec::new();
+                while self.peek() != &TokenKind::RBracket {
+                    elems.push(self.parse_expr()?);
+                    if self.peek() != &TokenKind::RBracket {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                }
+                self.advance(); // consume 】
+                Ok(Expr::Array(elems))
+            }
             other => Err(ParseError::UnexpectedExprToken { got: other, span }),
+        }?;
+        while self.peek() == &TokenKind::LBracket {
+            self.advance(); // consume 【
+            let index = self.parse_expr()?;
+            self.expect(&TokenKind::RBracket)?;
+            expr = Expr::Index {
+                array: Box::new(expr),
+                index: Box::new(index),
+            };
         }
+        Ok(expr)
     }
 
     fn parse_type(&mut self) -> Result<HikariType, ParseError> {
@@ -486,6 +618,10 @@ impl Parser {
             TokenKind::TyString => Ok(HikariType::String),
             TokenKind::TyBool => Ok(HikariType::Bool),
             TokenKind::TyVoid => Ok(HikariType::Void),
+            TokenKind::TyIntArray => Ok(HikariType::Array(Box::new(HikariType::Int))),
+            TokenKind::TyFloatArray => Ok(HikariType::Array(Box::new(HikariType::Float))),
+            TokenKind::TyStringArray => Ok(HikariType::Array(Box::new(HikariType::String))),
+            TokenKind::TyBoolArray => Ok(HikariType::Array(Box::new(HikariType::Bool))),
             other => Err(ParseError::ExpectedType { got: other, span }),
         }
     }
@@ -500,6 +636,10 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::TyString => "「文字列」".to_string(),
         TokenKind::TyBool => "「真偽」".to_string(),
         TokenKind::TyVoid => "「無」".to_string(),
+        TokenKind::TyIntArray => "「整数列」".to_string(),
+        TokenKind::TyFloatArray => "「小数列」".to_string(),
+        TokenKind::TyStringArray => "「文字列列」".to_string(),
+        TokenKind::TyBoolArray => "「真偽列」".to_string(),
         TokenKind::KwFn => "「関数」".to_string(),
         TokenKind::KwReturn => "「返す」".to_string(),
         TokenKind::KwPrint => "「印刷」".to_string(),
@@ -510,6 +650,9 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwAnd => "「かつ」".to_string(),
         TokenKind::KwOr => "「または」".to_string(),
         TokenKind::KwNot => "「否定」".to_string(),
+        TokenKind::KwForRange => "「繰り返す」".to_string(),
+        TokenKind::KwFrom => "「から」".to_string(),
+        TokenKind::KwEach => "「各」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
@@ -533,6 +676,9 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::RParen => "「）」".to_string(),
         TokenKind::Comma => "「、」".to_string(),
         TokenKind::Arrow => "「ー＞」".to_string(),
+        TokenKind::LBracket => "「【」".to_string(),
+        TokenKind::RBracket => "「】」".to_string(),
+        TokenKind::Colon => "「：」".to_string(),
         TokenKind::Ident(name) => format!("識別子「{}」", name),
         TokenKind::Eof => "ファイルの末尾".to_string(),
     }
@@ -545,6 +691,7 @@ pub fn hikari_type_japanese(ty: &HikariType) -> String {
         HikariType::String => "文字列".to_string(),
         HikariType::Bool => "真偽".to_string(),
         HikariType::Void => "無".to_string(),
+        HikariType::Array(inner) => format!("{}列", hikari_type_japanese(inner)),
     }
 }
 
@@ -596,6 +743,10 @@ fn is_type_token(kind: &TokenKind) -> bool {
             | TokenKind::TyString
             | TokenKind::TyBool
             | TokenKind::TyVoid
+            | TokenKind::TyIntArray
+            | TokenKind::TyFloatArray
+            | TokenKind::TyStringArray
+            | TokenKind::TyBoolArray
     )
 }
 
@@ -979,6 +1130,66 @@ mod tests {
                 got: TokenKind::Semi,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn test_parse_array_literal() {
+        let tokens = Lexer::new("整数列 数字 ＝ 【１、２、３】；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::VarDecl {
+                ty: HikariType::Array(inner),
+                value: Expr::Array(elems),
+                ..
+            }
+            if **inner == HikariType::Int && elems.len() == 3
+        ));
+    }
+
+    #[test]
+    fn test_parse_index_expr() {
+        let tokens = Lexer::new("返す 数字【１】；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::Return(Expr::Index { array, index }, _)
+            if matches!(array.as_ref(), Expr::Ident(n) if n == "数字")
+                && matches!(index.as_ref(), Expr::LitInt(1))
+        ));
+    }
+
+    #[test]
+    fn test_parse_index_assign() {
+        let tokens = Lexer::new("数字【０】＝ ９９；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::IndexAssign { name, index: Expr::LitInt(0), value: Expr::LitInt(99), .. }
+            if name == "数字"
+        ));
+    }
+
+    #[test]
+    fn test_parse_for_range_stmt() {
+        let src = "繰り返す カウンタ ＝ ０ から ５ ならば ｛ 印刷（カウンタ）； ｝";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::ForRange { var, from: Expr::LitInt(0), to: Expr::LitInt(5), body, .. }
+            if var == "カウンタ" && body.len() == 1
+        ));
+    }
+
+    #[test]
+    fn test_parse_for_each_stmt() {
+        let src = "各 要素 ： 数字 ならば ｛ 印刷（要素）； ｝";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::ForEach { var, array: Expr::Ident(arr_name), body, .. }
+            if var == "要素" && arr_name == "数字" && body.len() == 1
         ));
     }
 }

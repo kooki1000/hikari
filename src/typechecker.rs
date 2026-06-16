@@ -52,6 +52,24 @@ pub enum TypeError {
         got: HikariType,
         span: Span,
     },
+    // Array literal has no elements, so its element type cannot be inferred.
+    EmptyArrayLiteral(Span),
+    // Elements of an array literal do not all share the same type.
+    ArrayElementTypeMismatch {
+        expected: HikariType,
+        got: HikariType,
+        span: Span,
+    },
+    // Attempted 添字 access on a non-array value.
+    NotIndexable {
+        got: HikariType,
+        span: Span,
+    },
+    // Index expression is not an Int.
+    IndexNotInt {
+        got: HikariType,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -66,6 +84,10 @@ impl TypeError {
             TypeError::ArgTypeMismatch { span, .. } => *span,
             TypeError::ConditionNotBool(_, span) => *span,
             TypeError::UnaryOpMismatch { span, .. } => *span,
+            TypeError::EmptyArrayLiteral(span) => *span,
+            TypeError::ArrayElementTypeMismatch { span, .. } => *span,
+            TypeError::NotIndexable { span, .. } => *span,
+            TypeError::IndexNotInt { span, .. } => *span,
         }
     }
 }
@@ -132,6 +154,26 @@ impl std::fmt::Display for TypeError {
             TypeError::UnaryOpMismatch { got, .. } => write!(
                 f,
                 "この単項演算には「{}」型を使用できません。",
+                hikari_type_japanese(got)
+            ),
+            TypeError::EmptyArrayLiteral(_) => write!(
+                f,
+                "空の配列リテラルは型を推論できません。（ヒント: 少なくとも１つの要素を指定してください）"
+            ),
+            TypeError::ArrayElementTypeMismatch { expected, got, .. } => write!(
+                f,
+                "配列の要素の型が一致しません: 「{}」の配列に「{}」の値が含まれています。",
+                hikari_type_japanese(expected),
+                hikari_type_japanese(got)
+            ),
+            TypeError::NotIndexable { got, .. } => write!(
+                f,
+                "「{}」型の値には添字でアクセスできません。",
+                hikari_type_japanese(got)
+            ),
+            TypeError::IndexNotInt { got, .. } => write!(
+                f,
+                "添字は「整数」型である必要がありますが、「{}」が指定されました。",
                 hikari_type_japanese(got)
             ),
         }
@@ -319,6 +361,95 @@ impl TypeChecker {
                 }
                 Ok(())
             }
+
+            Stmt::IndexAssign {
+                name,
+                index,
+                value,
+                span,
+            } => {
+                let var_ty = self
+                    .vars
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), *span))?;
+                let elem_ty = match var_ty {
+                    HikariType::Array(inner) => *inner,
+                    other => {
+                        return Err(TypeError::NotIndexable {
+                            got: other,
+                            span: *span,
+                        });
+                    }
+                };
+                let index_ty = self.infer_expr(index, *span)?;
+                if index_ty != HikariType::Int {
+                    return Err(TypeError::IndexNotInt {
+                        got: index_ty,
+                        span: *span,
+                    });
+                }
+                let value_ty = self.infer_expr(value, *span)?;
+                if value_ty != elem_ty {
+                    return Err(TypeError::ArrayElementTypeMismatch {
+                        expected: elem_ty,
+                        got: value_ty,
+                        span: *span,
+                    });
+                }
+                Ok(())
+            }
+
+            Stmt::ForRange {
+                var,
+                from,
+                to,
+                body,
+                span,
+            } => {
+                let from_ty = self.infer_expr(from, *span)?;
+                let to_ty = self.infer_expr(to, *span)?;
+                if from_ty != HikariType::Int {
+                    return Err(TypeError::ArgTypeMismatch {
+                        name: var.clone(),
+                        param: HikariType::Int,
+                        got: from_ty,
+                        span: *span,
+                    });
+                }
+                if to_ty != HikariType::Int {
+                    return Err(TypeError::ArgTypeMismatch {
+                        name: var.clone(),
+                        param: HikariType::Int,
+                        got: to_ty,
+                        span: *span,
+                    });
+                }
+                self.vars.insert(var.clone(), HikariType::Int);
+                self.check(body)?;
+                Ok(())
+            }
+
+            Stmt::ForEach {
+                var,
+                array,
+                body,
+                span,
+            } => {
+                let array_ty = self.infer_expr(array, *span)?;
+                let elem_ty = match array_ty {
+                    HikariType::Array(inner) => *inner,
+                    other => {
+                        return Err(TypeError::NotIndexable {
+                            got: other,
+                            span: *span,
+                        });
+                    }
+                };
+                self.vars.insert(var.clone(), elem_ty);
+                self.check(body)?;
+                Ok(())
+            }
         }
     }
 
@@ -456,6 +587,40 @@ impl TypeChecker {
                     }
                 }
                 Ok(sig.return_ty)
+            }
+
+            Expr::Array(elems) => {
+                let Some(first) = elems.first() else {
+                    return Err(TypeError::EmptyArrayLiteral(span));
+                };
+                let expected = self.infer_expr(first, span)?;
+                for elem in &elems[1..] {
+                    let got = self.infer_expr(elem, span)?;
+                    if got != expected {
+                        return Err(TypeError::ArrayElementTypeMismatch {
+                            expected,
+                            got,
+                            span,
+                        });
+                    }
+                }
+                Ok(HikariType::Array(Box::new(expected)))
+            }
+
+            Expr::Index { array, index } => {
+                let array_ty = self.infer_expr(array, span)?;
+                let elem_ty = match array_ty {
+                    HikariType::Array(inner) => *inner,
+                    other => return Err(TypeError::NotIndexable { got: other, span }),
+                };
+                let index_ty = self.infer_expr(index, span)?;
+                if index_ty != HikariType::Int {
+                    return Err(TypeError::IndexNotInt {
+                        got: index_ty,
+                        span,
+                    });
+                }
+                Ok(elem_ty)
             }
         }
     }
@@ -745,5 +910,108 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_typecheck_array_literal_valid() {
+        let ast = parse("整数列 数字 ＝ 【１、２、３】；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_array_element_type_mismatch() {
+        let ast = parse("整数列 数字 ＝ 【１、「あ」】；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ArrayElementTypeMismatch {
+                expected: HikariType::Int,
+                got: HikariType::String,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_empty_array_literal() {
+        let ast = parse("整数列 数字 ＝ 【】；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::EmptyArrayLiteral(_)));
+    }
+
+    #[test]
+    fn test_typecheck_index_non_array() {
+        let ast = parse("整数 値 ＝ ５；返す 値【０】；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::NotIndexable {
+                got: HikariType::Int,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_index_not_int() {
+        let ast = parse("整数列 数字 ＝ 【１、２】；返す 数字【「あ」】；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::IndexNotInt {
+                got: HikariType::String,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_index_assign_valid() {
+        let ast = parse("整数列 数字 ＝ 【１、２】；数字【０】＝ ９；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_index_assign_type_mismatch() {
+        let ast = parse("整数列 数字 ＝ 【１、２】；数字【０】＝ 「あ」；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ArrayElementTypeMismatch {
+                expected: HikariType::Int,
+                got: HikariType::String,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_for_range_valid() {
+        let src = "繰り返す カウンタ ＝ ０ から ５ ならば ｛ 印刷（カウンタ）； ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_for_range_non_int_bound() {
+        let src = "繰り返す カウンタ ＝ 「あ」 から ５ ならば ｛ 印刷（カウンタ）； ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_for_each_valid() {
+        let src = "整数列 数字 ＝ 【１、２、３】；各 要素 ： 数字 ならば ｛ 印刷（要素）； ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_for_each_non_array() {
+        let src = "整数 数字 ＝ ５；各 要素 ： 数字 ならば ｛ 印刷（要素）； ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::NotIndexable { .. }));
     }
 }
