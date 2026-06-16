@@ -140,7 +140,7 @@ impl Compiler {
                 // Nested fn decls are not yet supported; top-level ones are
                 // handled in compile() directly.
             }
-            Stmt::Print(expr) => {
+            Stmt::Print(expr, _) => {
                 self.emit_expr(expr, instrs, locals);
                 instrs.push(Instruction::Print);
             }
@@ -148,6 +148,7 @@ impl Compiler {
                 condition,
                 then_body,
                 else_body,
+                ..
             } => {
                 self.emit_expr(condition, instrs, locals);
                 // Placeholder index; back-patched after then_body is emitted.
@@ -178,7 +179,7 @@ impl Compiler {
                     instrs[jump_if_false_idx] = Instruction::JumpIfFalse(after_then);
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 let loop_start = instrs.len() as u16;
                 self.emit_expr(condition, instrs, locals);
                 let jump_if_false_idx = instrs.len();
@@ -190,11 +191,11 @@ impl Compiler {
                 let after_loop = instrs.len() as u16;
                 instrs[jump_if_false_idx] = Instruction::JumpIfFalse(after_loop);
             }
-            Stmt::Return(expr) => {
+            Stmt::Return(expr, _) => {
                 self.emit_expr(expr, instrs, locals);
                 instrs.push(Instruction::Return);
             }
-            Stmt::ExprStmt(expr) => {
+            Stmt::ExprStmt(expr, _) => {
                 self.emit_expr(expr, instrs, locals);
             }
         }

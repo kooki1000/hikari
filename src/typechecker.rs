@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use crate::parser::{BinOpKind, Expr, HikariType, Stmt};
+use crate::lexer::Span;
+use crate::parser::{BinOpKind, Expr, HikariType, Stmt, hikari_type_japanese};
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
@@ -11,36 +12,107 @@ pub enum TypeError {
         name: String,
         declared: HikariType,
         got: HikariType,
+        span: Span,
     },
     // Both sides of a binary operator must share a type.
     BinOpMismatch {
         op: BinOpKind,
         lhs: HikariType,
         rhs: HikariType,
+        span: Span,
     },
     // Variable referenced before declaration.
-    UndeclaredVariable(String),
+    UndeclaredVariable(String, Span),
     // Return expression type differs from the function's declared return type.
     ReturnTypeMismatch {
         expected: HikariType,
         got: HikariType,
+        span: Span,
     },
     // Call to an undeclared function.
-    UndeclaredFunction(String),
+    UndeclaredFunction(String, Span),
     // Wrong number of arguments at a call site.
     ArgCountMismatch {
         name: String,
         expected: usize,
         got: usize,
+        span: Span,
     },
     // Argument type does not match the parameter type.
     ArgTypeMismatch {
         name: String,
         param: HikariType,
         got: HikariType,
+        span: Span,
     },
     // Condition in もし/間 is not Bool.
-    ConditionNotBool(HikariType),
+    ConditionNotBool(HikariType, Span),
+}
+
+impl TypeError {
+    pub fn span(&self) -> Span {
+        match self {
+            TypeError::VarDeclMismatch { span, .. } => *span,
+            TypeError::BinOpMismatch { span, .. } => *span,
+            TypeError::UndeclaredVariable(_, span) => *span,
+            TypeError::ReturnTypeMismatch { span, .. } => *span,
+            TypeError::UndeclaredFunction(_, span) => *span,
+            TypeError::ArgCountMismatch { span, .. } => *span,
+            TypeError::ArgTypeMismatch { span, .. } => *span,
+            TypeError::ConditionNotBool(_, span) => *span,
+        }
+    }
+}
+
+impl std::fmt::Display for TypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeError::VarDeclMismatch { name, declared, got, .. } => write!(
+                f,
+                "変数「{}」の型が一致しません: 「{}」として宣言されましたが、「{}」の値が代入されました。",
+                name,
+                hikari_type_japanese(declared),
+                hikari_type_japanese(got)
+            ),
+            TypeError::BinOpMismatch { lhs, rhs, .. } => write!(
+                f,
+                "演算子の両辺の型が一致しません: 「{}」と「{}」は一緒に演算できません。",
+                hikari_type_japanese(lhs),
+                hikari_type_japanese(rhs)
+            ),
+            TypeError::UndeclaredVariable(name, _) => write!(
+                f,
+                "変数「{}」は宣言されていません。（ヒント: 使用する前に型と一緒に宣言してください）",
+                name
+            ),
+            TypeError::ReturnTypeMismatch { expected, got, .. } => write!(
+                f,
+                "戻り値の型が一致しません: 「{}」を返す必要がありますが、「{}」が返されました。",
+                hikari_type_japanese(expected),
+                hikari_type_japanese(got)
+            ),
+            TypeError::UndeclaredFunction(name, _) => {
+                write!(f, "関数「{}」は宣言されていません。", name)
+            }
+            TypeError::ArgCountMismatch { name, expected, got, .. } => write!(
+                f,
+                "関数「{}」の引数の数が一致しません: {}個必要ですが、{}個指定されました。",
+                name, expected, got
+            ),
+            TypeError::ArgTypeMismatch { name, param, got, .. } => write!(
+                f,
+                "関数「{}」の引数の型が一致しません: 「{}」が必要ですが、「{}」が渡されました。",
+                name,
+                hikari_type_japanese(param),
+                hikari_type_japanese(got)
+            ),
+            TypeError::ConditionNotBool(got, _) => write!(
+                f,
+                "条件式は「真偽」型である必要がありますが、「{}」が指定されました。",
+                hikari_type_japanese(got)
+            ),
+        }
+    }
 }
 
 // ── Symbol tables ─────────────────────────────────────────────────────────────
@@ -76,13 +148,14 @@ impl TypeChecker {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
         match stmt {
-            Stmt::VarDecl { ty, name, value } => {
-                let inferred = self.infer_expr(value)?;
+            Stmt::VarDecl { ty, name, value, span } => {
+                let inferred = self.infer_expr(value, *span)?;
                 if inferred != *ty {
                     return Err(TypeError::VarDeclMismatch {
                         name: name.clone(),
                         declared: ty.clone(),
                         got: inferred,
+                        span: *span,
                     });
                 }
                 self.vars.insert(name.clone(), ty.clone());
@@ -94,6 +167,7 @@ impl TypeChecker {
                 params,
                 return_ty,
                 body,
+                ..
             } => {
                 let sig = FnSig {
                     params: params.iter().map(|(t, _)| t.clone()).collect(),
@@ -118,21 +192,22 @@ impl TypeChecker {
                 Ok(())
             }
 
-            Stmt::Return(expr) => {
-                let got = self.infer_expr(expr)?;
+            Stmt::Return(expr, span) => {
+                let got = self.infer_expr(expr, *span)?;
                 if let Some(expected) = &self.current_return_ty {
                     if got != *expected {
                         return Err(TypeError::ReturnTypeMismatch {
                             expected: expected.clone(),
                             got,
+                            span: *span,
                         });
                     }
                 }
                 Ok(())
             }
 
-            Stmt::Print(expr) => {
-                self.infer_expr(expr)?;
+            Stmt::Print(expr, span) => {
+                self.infer_expr(expr, *span)?;
                 Ok(())
             }
 
@@ -140,10 +215,11 @@ impl TypeChecker {
                 condition,
                 then_body,
                 else_body,
+                span,
             } => {
-                let cond_ty = self.infer_expr(condition)?;
+                let cond_ty = self.infer_expr(condition, *span)?;
                 if cond_ty != HikariType::Bool {
-                    return Err(TypeError::ConditionNotBool(cond_ty));
+                    return Err(TypeError::ConditionNotBool(cond_ty, *span));
                 }
                 self.check(then_body)?;
                 if let Some(body) = else_body {
@@ -152,23 +228,23 @@ impl TypeChecker {
                 Ok(())
             }
 
-            Stmt::While { condition, body } => {
-                let cond_ty = self.infer_expr(condition)?;
+            Stmt::While { condition, body, span } => {
+                let cond_ty = self.infer_expr(condition, *span)?;
                 if cond_ty != HikariType::Bool {
-                    return Err(TypeError::ConditionNotBool(cond_ty));
+                    return Err(TypeError::ConditionNotBool(cond_ty, *span));
                 }
                 self.check(body)?;
                 Ok(())
             }
 
-            Stmt::ExprStmt(expr) => {
-                self.infer_expr(expr)?;
+            Stmt::ExprStmt(expr, span) => {
+                self.infer_expr(expr, *span)?;
                 Ok(())
             }
         }
     }
 
-    fn infer_expr(&self, expr: &Expr) -> Result<HikariType, TypeError> {
+    fn infer_expr(&self, expr: &Expr, span: Span) -> Result<HikariType, TypeError> {
         match expr {
             Expr::LitInt(_) => Ok(HikariType::Int),
             Expr::LitFloat(_) => Ok(HikariType::Float),
@@ -179,16 +255,17 @@ impl TypeChecker {
                 .vars
                 .get(name)
                 .cloned()
-                .ok_or_else(|| TypeError::UndeclaredVariable(name.clone())),
+                .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), span)),
 
             Expr::BinOp { op, lhs, rhs } => {
-                let lty = self.infer_expr(lhs)?;
-                let rty = self.infer_expr(rhs)?;
+                let lty = self.infer_expr(lhs, span)?;
+                let rty = self.infer_expr(rhs, span)?;
                 if lty != rty {
                     return Err(TypeError::BinOpMismatch {
                         op: op.clone(),
                         lhs: lty,
                         rhs: rty,
+                        span,
                     });
                 }
                 match op {
@@ -202,21 +279,23 @@ impl TypeChecker {
                     .fns
                     .get(name)
                     .cloned()
-                    .ok_or_else(|| TypeError::UndeclaredFunction(name.clone()))?;
+                    .ok_or_else(|| TypeError::UndeclaredFunction(name.clone(), span))?;
                 if args.len() != sig.params.len() {
                     return Err(TypeError::ArgCountMismatch {
                         name: name.clone(),
                         expected: sig.params.len(),
                         got: args.len(),
+                        span,
                     });
                 }
                 for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
-                    let arg_ty = self.infer_expr(arg)?;
+                    let arg_ty = self.infer_expr(arg, span)?;
                     if arg_ty != *param_ty {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
                             param: param_ty.clone(),
                             got: arg_ty,
+                            span,
                         });
                     }
                 }
@@ -280,7 +359,7 @@ mod tests {
         // 返す 年齢；  — 年齢 never declared
         let ast = parse("返す 年齢；");
         let err = TypeChecker::new().check(&ast).unwrap_err();
-        assert!(matches!(err, TypeError::UndeclaredVariable(n) if n == "年齢"));
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "年齢"));
     }
 
     #[test]
@@ -310,7 +389,7 @@ mod tests {
         let src = "整数 Ｎ ＝ ０；間 Ｎ ならば ｛ 整数 Ｎ ＝ Ｎ ＋ １； ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
-        assert!(matches!(err, TypeError::ConditionNotBool(HikariType::Int)));
+        assert!(matches!(err, TypeError::ConditionNotBool(HikariType::Int, _)));
     }
 
     #[test]
@@ -318,7 +397,7 @@ mod tests {
         let src = "整数 Ｎ ＝ ０；もし Ｎ ならば ｛ 印刷（Ｎ）； ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
-        assert!(matches!(err, TypeError::ConditionNotBool(HikariType::Int)));
+        assert!(matches!(err, TypeError::ConditionNotBool(HikariType::Int, _)));
     }
 
     #[test]
@@ -332,6 +411,7 @@ mod tests {
             TypeError::ReturnTypeMismatch {
                 expected: HikariType::Int,
                 got: HikariType::String,
+                ..
             }
         ));
     }

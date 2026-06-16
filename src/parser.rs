@@ -1,4 +1,4 @@
-use crate::lexer::{Token, TokenKind};
+use crate::lexer::{Span, Token, TokenKind};
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,35 +48,63 @@ pub enum Stmt {
         ty: HikariType,
         name: String,
         value: Expr,
+        span: Span,
     },
     FnDecl {
         name: String,
         params: Vec<(HikariType, String)>,
         return_ty: HikariType,
         body: Vec<Stmt>,
+        span: Span,
     },
-    Return(Expr),
-    Print(Expr),
+    Return(Expr, Span),
+    Print(Expr, Span),
     If {
         condition: Expr,
         then_body: Vec<Stmt>,
         else_body: Option<Vec<Stmt>>,
+        span: Span,
     },
     While {
         condition: Expr,
         body: Vec<Stmt>,
+        span: Span,
     },
-    ExprStmt(Expr),
+    ExprStmt(Expr, Span),
 }
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
-    UnexpectedToken { expected: TokenKind, got: TokenKind },
-    ExpectedIdentifier(TokenKind),
-    ExpectedType(TokenKind),
-    UnexpectedExprToken(TokenKind),
+    UnexpectedToken {
+        expected: TokenKind,
+        got: TokenKind,
+        span: Span,
+    },
+    ExpectedIdentifier {
+        got: TokenKind,
+        span: Span,
+    },
+    ExpectedType {
+        got: TokenKind,
+        span: Span,
+    },
+    UnexpectedExprToken {
+        got: TokenKind,
+        span: Span,
+    },
+}
+
+impl ParseError {
+    pub fn span(&self) -> Span {
+        match self {
+            ParseError::UnexpectedToken { span, .. } => *span,
+            ParseError::ExpectedIdentifier { span, .. } => *span,
+            ParseError::ExpectedType { span, .. } => *span,
+            ParseError::UnexpectedExprToken { span, .. } => *span,
+        }
+    }
 }
 
 // ── Parser ───────────────────────────────────────────────────────────────────
@@ -95,6 +123,10 @@ impl Parser {
         &self.tokens[self.pos].kind
     }
 
+    fn peek_span(&self) -> Span {
+        self.tokens[self.pos].span
+    }
+
     fn advance(&mut self) -> &TokenKind {
         let kind = &self.tokens[self.pos].kind;
         if self.pos + 1 < self.tokens.len() {
@@ -104,6 +136,7 @@ impl Parser {
     }
 
     fn expect(&mut self, expected: &TokenKind) -> Result<(), ParseError> {
+        let span = self.peek_span();
         let got = self.advance().clone();
         if std::mem::discriminant(&got) == std::mem::discriminant(expected) {
             Ok(())
@@ -111,6 +144,7 @@ impl Parser {
             Err(ParseError::UnexpectedToken {
                 expected: expected.clone(),
                 got,
+                span,
             })
         }
     }
@@ -132,38 +166,46 @@ impl Parser {
             TokenKind::KwWhile => self.parse_while(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
             _ => {
+                let span = self.peek_span();
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::Semi)?;
-                Ok(Stmt::ExprStmt(expr))
+                Ok(Stmt::ExprStmt(expr, span))
             }
         }
     }
 
     fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
         let ty = self.parse_type()?;
-        let name = match self.advance().clone() {
-            TokenKind::Ident(n) => n,
-            other => return Err(ParseError::ExpectedIdentifier(other)),
+        let name = match (self.peek_span(), self.advance().clone()) {
+            (_, TokenKind::Ident(n)) => n,
+            (s, other) => return Err(ParseError::ExpectedIdentifier { got: other, span: s }),
         };
         self.expect(&TokenKind::Assign)?;
         let value = self.parse_expr()?;
         self.expect(&TokenKind::Semi)?;
-        Ok(Stmt::VarDecl { ty, name, value })
+        Ok(Stmt::VarDecl {
+            ty,
+            name,
+            value,
+            span,
+        })
     }
 
     fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
         self.advance(); // consume 関数
-        let name = match self.advance().clone() {
-            TokenKind::Ident(n) => n,
-            other => return Err(ParseError::ExpectedIdentifier(other)),
+        let name = match (self.peek_span(), self.advance().clone()) {
+            (_, TokenKind::Ident(n)) => n,
+            (s, other) => return Err(ParseError::ExpectedIdentifier { got: other, span: s }),
         };
         self.expect(&TokenKind::LParen)?;
         let mut params = Vec::new();
         while self.peek() != &TokenKind::RParen {
             let ty = self.parse_type()?;
-            let pname = match self.advance().clone() {
-                TokenKind::Ident(n) => n,
-                other => return Err(ParseError::ExpectedIdentifier(other)),
+            let pname = match (self.peek_span(), self.advance().clone()) {
+                (_, TokenKind::Ident(n)) => n,
+                (s, other) => return Err(ParseError::ExpectedIdentifier { got: other, span: s }),
             };
             params.push((ty, pname));
             // future: handle comma-separated params
@@ -182,17 +224,20 @@ impl Parser {
             params,
             return_ty,
             body,
+            span,
         })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
         self.advance(); // consume 返す
         let expr = self.parse_expr()?;
         self.expect(&TokenKind::Semi)?;
-        Ok(Stmt::Return(expr))
+        Ok(Stmt::Return(expr, span))
     }
 
     fn parse_if(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
         self.advance(); // consume もし
         let condition = self.parse_expr()?;
         self.expect(&TokenKind::KwThen)?; // ならば
@@ -218,10 +263,12 @@ impl Parser {
             condition,
             then_body,
             else_body,
+            span,
         })
     }
 
     fn parse_while(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
         self.advance(); // consume 間
         let condition = self.parse_expr()?;
         self.expect(&TokenKind::KwThen)?; // ならば
@@ -231,16 +278,21 @@ impl Parser {
             body.push(self.parse_stmt()?);
         }
         self.expect(&TokenKind::RBrace)?;
-        Ok(Stmt::While { condition, body })
+        Ok(Stmt::While {
+            condition,
+            body,
+            span,
+        })
     }
 
     fn parse_print(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
         self.advance(); // consume 印刷
         self.expect(&TokenKind::LParen)?;
         let expr = self.parse_expr()?;
         self.expect(&TokenKind::RParen)?;
         self.expect(&TokenKind::Semi)?;
-        Ok(Stmt::Print(expr))
+        Ok(Stmt::Print(expr, span))
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
@@ -304,6 +356,7 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
+        let span = self.peek_span();
         match self.advance().clone() {
             TokenKind::LitInt(n) => Ok(Expr::LitInt(n)),
             TokenKind::LitFloat(f) => Ok(Expr::LitFloat(f)),
@@ -328,18 +381,109 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 Ok(expr)
             }
-            other => Err(ParseError::UnexpectedExprToken(other)),
+            other => Err(ParseError::UnexpectedExprToken { got: other, span }),
         }
     }
 
     fn parse_type(&mut self) -> Result<HikariType, ParseError> {
+        let span = self.peek_span();
         match self.advance().clone() {
             TokenKind::TyInt => Ok(HikariType::Int),
             TokenKind::TyFloat => Ok(HikariType::Float),
             TokenKind::TyString => Ok(HikariType::String),
             TokenKind::TyBool => Ok(HikariType::Bool),
             TokenKind::TyVoid => Ok(HikariType::Void),
-            other => Err(ParseError::ExpectedType(other)),
+            other => Err(ParseError::ExpectedType { got: other, span }),
+        }
+    }
+}
+
+// ── Japanese display helpers ────────────────────────────────────────────────
+
+pub fn token_kind_japanese(kind: &TokenKind) -> String {
+    match kind {
+        TokenKind::TyInt => "「整数」".to_string(),
+        TokenKind::TyFloat => "「小数」".to_string(),
+        TokenKind::TyString => "「文字列」".to_string(),
+        TokenKind::TyBool => "「真偽」".to_string(),
+        TokenKind::TyVoid => "「無」".to_string(),
+        TokenKind::KwFn => "「関数」".to_string(),
+        TokenKind::KwReturn => "「返す」".to_string(),
+        TokenKind::KwPrint => "「印刷」".to_string(),
+        TokenKind::KwIf => "「もし」".to_string(),
+        TokenKind::KwThen => "「ならば」".to_string(),
+        TokenKind::KwElse => "「違えば」".to_string(),
+        TokenKind::KwWhile => "「間」".to_string(),
+        TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
+        TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
+        TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
+        TokenKind::LitTrue => "「真」".to_string(),
+        TokenKind::LitFalse => "「偽」".to_string(),
+        TokenKind::Assign => "「＝」".to_string(),
+        TokenKind::EqEq => "「＝＝」".to_string(),
+        TokenKind::Lt => "「＜」".to_string(),
+        TokenKind::Gt => "「＞」".to_string(),
+        TokenKind::Semi => "「；」".to_string(),
+        TokenKind::Plus => "「＋」".to_string(),
+        TokenKind::Minus => "「ー」".to_string(),
+        TokenKind::Star => "「＊」".to_string(),
+        TokenKind::Slash => "「／」".to_string(),
+        TokenKind::LBrace => "「｛」".to_string(),
+        TokenKind::RBrace => "「｝」".to_string(),
+        TokenKind::LParen => "「（」".to_string(),
+        TokenKind::RParen => "「）」".to_string(),
+        TokenKind::Arrow => "「ー＞」".to_string(),
+        TokenKind::Ident(name) => format!("識別子「{}」", name),
+        TokenKind::Eof => "ファイルの末尾".to_string(),
+    }
+}
+
+pub fn hikari_type_japanese(ty: &HikariType) -> String {
+    match ty {
+        HikariType::Int => "整数".to_string(),
+        HikariType::Float => "小数".to_string(),
+        HikariType::String => "文字列".to_string(),
+        HikariType::Bool => "真偽".to_string(),
+        HikariType::Void => "無".to_string(),
+    }
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseError::UnexpectedToken { expected, got, .. } => {
+                write!(
+                    f,
+                    "{}が必要ですが、{}が見つかりました。",
+                    token_kind_japanese(expected),
+                    token_kind_japanese(got)
+                )?;
+                if *expected == TokenKind::Semi {
+                    write!(f, "（ヒント: 文の終わりに「；」を追加してください）")?;
+                }
+                Ok(())
+            }
+            ParseError::ExpectedIdentifier { got, .. } => {
+                write!(
+                    f,
+                    "識別子（名前）が必要ですが、{}が見つかりました。",
+                    token_kind_japanese(got)
+                )
+            }
+            ParseError::ExpectedType { got, .. } => {
+                write!(
+                    f,
+                    "型（整数・小数・文字列・真偽・無のいずれか）が必要ですが、{}が見つかりました。",
+                    token_kind_japanese(got)
+                )
+            }
+            ParseError::UnexpectedExprToken { got, .. } => {
+                write!(
+                    f,
+                    "式が必要な位置に{}が見つかりました。",
+                    token_kind_japanese(got)
+                )
+            }
         }
     }
 }
@@ -370,7 +514,7 @@ mod tests {
         assert_eq!(ast.len(), 1);
         assert!(matches!(
             &ast[0],
-            Stmt::VarDecl { ty: HikariType::Int, name, value: Expr::LitInt(20) }
+            Stmt::VarDecl { ty: HikariType::Int, name, value: Expr::LitInt(20), .. }
             if name == "年齢"
         ));
     }
@@ -385,7 +529,8 @@ mod tests {
             Stmt::VarDecl {
                 ty: HikariType::Int,
                 name,
-                value: Expr::BinOp { op: BinOpKind::Add, lhs, rhs }
+                value: Expr::BinOp { op: BinOpKind::Add, lhs, rhs },
+                ..
             }
             if name == "結果"
                 && matches!(lhs.as_ref(), Expr::LitInt(1))
@@ -429,7 +574,7 @@ mod tests {
         let ast = Parser::new(tokens).parse().unwrap();
         assert!(matches!(
             &ast[0],
-            Stmt::Return(Expr::BinOp { op: BinOpKind::Add, lhs, rhs })
+            Stmt::Return(Expr::BinOp { op: BinOpKind::Add, lhs, rhs }, _)
             if matches!(lhs.as_ref(), Expr::Ident(n) if n == "年齢")
                 && matches!(rhs.as_ref(), Expr::LitInt(1))
         ));
@@ -447,6 +592,7 @@ mod tests {
             params,
             return_ty,
             body,
+            ..
         } = &ast[0]
         else {
             panic!("expected FnDecl")
@@ -457,10 +603,13 @@ mod tests {
         assert_eq!(body.len(), 1);
         assert!(matches!(
             &body[0],
-            Stmt::Return(Expr::BinOp {
-                op: BinOpKind::Add,
-                ..
-            })
+            Stmt::Return(
+                Expr::BinOp {
+                    op: BinOpKind::Add,
+                    ..
+                },
+                _
+            )
         ));
     }
 
@@ -474,6 +623,7 @@ mod tests {
             condition,
             then_body,
             else_body,
+            ..
         } = &ast[0]
         else {
             panic!("expected If stmt")
@@ -486,7 +636,7 @@ mod tests {
             }
         ));
         assert_eq!(then_body.len(), 1);
-        assert!(matches!(then_body[0], Stmt::Print(_)));
+        assert!(matches!(then_body[0], Stmt::Print(_, _)));
         assert!(else_body.is_none());
     }
 
@@ -508,7 +658,7 @@ mod tests {
         let src = "間 カウンタ ＜ ３ ならば ｛ 印刷（カウンタ）； ｝";
         let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
         assert_eq!(ast.len(), 1);
-        let Stmt::While { condition, body } = &ast[0] else {
+        let Stmt::While { condition, body, .. } = &ast[0] else {
             panic!("expected While stmt")
         };
         assert!(matches!(
@@ -519,7 +669,7 @@ mod tests {
             }
         ));
         assert_eq!(body.len(), 1);
-        assert!(matches!(body[0], Stmt::Print(_)));
+        assert!(matches!(body[0], Stmt::Print(_, _)));
     }
 
     #[test]
@@ -557,7 +707,7 @@ mod tests {
         assert_eq!(ast.len(), 1);
         assert!(matches!(
             &ast[0],
-            Stmt::Print(Expr::Ident(n)) if n == "年齢"
+            Stmt::Print(Expr::Ident(n), _) if n == "年齢"
         ));
     }
 
@@ -571,6 +721,7 @@ mod tests {
             ParseError::UnexpectedToken {
                 expected: TokenKind::Semi,
                 got: TokenKind::Eof,
+                ..
             }
         ));
     }
@@ -582,7 +733,10 @@ mod tests {
         let err = Parser::new(tokens).parse().unwrap_err();
         assert!(matches!(
             err,
-            ParseError::ExpectedIdentifier(TokenKind::Assign)
+            ParseError::ExpectedIdentifier {
+                got: TokenKind::Assign,
+                ..
+            }
         ));
     }
 
@@ -593,7 +747,10 @@ mod tests {
         let err = Parser::new(tokens).parse().unwrap_err();
         assert!(matches!(
             err,
-            ParseError::UnexpectedExprToken(TokenKind::Semi)
+            ParseError::UnexpectedExprToken {
+                got: TokenKind::Semi,
+                ..
+            }
         ));
     }
 }

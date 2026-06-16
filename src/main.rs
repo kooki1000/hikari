@@ -1,4 +1,5 @@
 mod compiler;
+mod diagnostic;
 mod lexer;
 mod parser;
 mod typechecker;
@@ -27,12 +28,12 @@ fn main() {
 
     let tokens = Lexer::new(&source).tokenize();
     let ast = Parser::new(tokens).parse().unwrap_or_else(|e| {
-        eprintln!("構文エラー: {:?}", e);
+        eprintln!("{}", diagnostic::render(&source, e.span(), &e.to_string()));
         process::exit(1);
     });
 
     if let Err(e) = TypeChecker::new().check(&ast) {
-        eprintln!("型エラー: {:?}", e);
+        eprintln!("{}", diagnostic::render(&source, e.span(), &e.to_string()));
         process::exit(1);
     }
 
@@ -41,7 +42,7 @@ fn main() {
     let result = Vm::with_chunks(compiler.constants, compiler.chunks, instructions)
         .run()
         .unwrap_or_else(|e| {
-            eprintln!("実行時エラー: {:?}", e);
+            eprintln!("実行時エラー: {}", e);
             process::exit(1);
         });
 
