@@ -355,14 +355,14 @@ impl TypeChecker {
 
             Stmt::Return(expr, span) => {
                 let got = self.infer_expr(expr, *span)?;
-                if let Some(expected) = &self.current_return_ty {
-                    if got != *expected {
-                        return Err(TypeError::ReturnTypeMismatch {
-                            expected: expected.clone(),
-                            got,
-                            span: *span,
-                        });
-                    }
+                if let Some(expected) = &self.current_return_ty
+                    && got != *expected
+                {
+                    return Err(TypeError::ReturnTypeMismatch {
+                        expected: expected.clone(),
+                        got,
+                        span: *span,
+                    });
                 }
                 Ok(())
             }
@@ -408,7 +408,7 @@ impl TypeChecker {
                 Ok(())
             }
 
-            Stmt::ExprStmt(expr, span) => {
+            Stmt::Expr(expr, span) => {
                 self.infer_expr(expr, *span)?;
                 Ok(())
             }
@@ -615,14 +615,14 @@ impl TypeChecker {
             }
 
             Expr::Call { name, args } => {
-                if let Some(module) = builtin_module(name) {
-                    if !self.imported_modules.contains(module) {
-                        return Err(TypeError::ModuleNotImported {
-                            name: name.clone(),
-                            module: module.to_string(),
-                            span,
-                        });
-                    }
+                if let Some(module) = builtin_module(name)
+                    && !self.imported_modules.contains(module)
+                {
+                    return Err(TypeError::ModuleNotImported {
+                        name: name.clone(),
+                        module: module.to_string(),
+                        span,
+                    });
                 }
 
                 if name == "絶対値" || name == "平方根" {

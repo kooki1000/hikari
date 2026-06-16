@@ -83,7 +83,7 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
-    ExprStmt(Expr, Span),
+    Expr(Expr, Span),
     Assign {
         name: String,
         value: Expr,
@@ -229,7 +229,7 @@ impl Parser {
                 let span = self.peek_span();
                 let expr = self.parse_expr()?;
                 self.expect(&TokenKind::Semi)?;
-                Ok(Stmt::ExprStmt(expr, span))
+                Ok(Stmt::Expr(expr, span))
             }
         }
     }

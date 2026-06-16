@@ -291,7 +291,7 @@ impl Compiler {
                 self.emit_expr(expr, instrs, scopes);
                 instrs.push(Instruction::Return);
             }
-            Stmt::ExprStmt(expr, _) => {
+            Stmt::Expr(expr, _) => {
                 self.emit_expr(expr, instrs, scopes);
             }
             Stmt::Assign { name, value, .. } => {

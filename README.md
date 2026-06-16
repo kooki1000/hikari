@@ -286,38 +286,4 @@ cargo check
 
 ---
 
-## Current Status
-
-| Feature | Status |
-|---------|--------|
-| Lexer — all keywords, operators, literals, comments | ✅ Done |
-| Parser — variable decls, functions, expressions, arrays, loops | ✅ Done |
-| Type checker — strict static typing, scoped, no implicit coercions | ✅ Done |
-| Bytecode compiler — constant pool, scope-aware local slots | ✅ Done |
-| Stack-based VM — call frames, arithmetic | ✅ Done |
-| CLI entry point (`hikari <file.hkr>`) | ✅ Done |
-| Function declaration and call dispatch, multi-param (`、`-separated) | ✅ Done |
-| `印刷` built-in (print) | ✅ Done |
-| `もし…ならば…違えば` (if/else) | ✅ Done |
-| Comparison operators (`＝＝` `≠` `＜` `＞` `≦` `≧`) | ✅ Done |
-| Logical operators (`かつ` `または` `否定`, short-circuiting) | ✅ Done |
-| `間…ならば` (while loop) | ✅ Done |
-| `繰り返す…から…ならば` (counting for-loop) | ✅ Done |
-| `各…：…ならば` (for-each loop) | ✅ Done |
-| Arrays (`整数列` etc.), literals, indexing, mutation | ✅ Done |
-| Variable reassignment | ✅ Done |
-| Unary minus | ✅ Done |
-| String concatenation | ✅ Done |
-| Built-ins (`文字数` `入力` `整数化` `小数化` `文字列化`) | ✅ Done |
-| Block scoping (shadowing, no leakage, isolated functions) | ✅ Done |
-| `試す…失敗…` (try/catch with stack unwinding) | ✅ Done |
-| Modules (`取り込む`), file-based and stdlib | ✅ Done |
-| Standard library (`数学`, `文字列` modules) | ✅ Done |
-| REPL (`hikari` with no args), persistent state | ✅ Done |
-| Error recovery (`Result`-based parser/typechecker/VM errors) | ✅ Done |
-| Japanese diagnostics with source snippets | ✅ Done |
-| `真` / `偽` boolean literals in programs | ✅ Done |
-
----
-
 This completes every phase of the original roadmap (フェーズ０〜６).

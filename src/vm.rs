@@ -955,7 +955,7 @@ mod tests {
         // 繰り返す カウンタ ＝ ０ から ５ ならば ｛ 合計 ＝ 合計 ＋ カウンタ； ｝
         let src = "整数 合計 ＝ ０；繰り返す カウンタ ＝ ０ から ５ ならば ｛ 合計 ＝ 合計 ＋ カウンタ； ｝返す 合計；";
         let result = run(src);
-        assert_eq!(result, Some(Value::Int(0 + 1 + 2 + 3 + 4)));
+        assert_eq!(result, Some(Value::Int(1 + 2 + 3 + 4))); // 0..5, excludes 5
     }
 
     #[test]
