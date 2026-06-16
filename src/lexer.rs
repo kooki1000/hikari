@@ -45,14 +45,24 @@ pub enum TokenKind {
     Eof,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    pub line: usize,
+    pub col: usize,
+    pub len: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
+    pub span: Span,
 }
 
 pub struct Lexer {
     source: Vec<char>,
     pos: usize,
+    line: usize,
+    col: usize,
 }
 
 impl Lexer {
@@ -60,6 +70,8 @@ impl Lexer {
         Self {
             source: src.chars().collect(),
             pos: 0,
+            line: 1,
+            col: 1,
         }
     }
 
@@ -70,6 +82,14 @@ impl Lexer {
     fn advance(&mut self) -> Option<char> {
         let ch = self.source.get(self.pos).copied();
         self.pos += 1;
+        if let Some(c) = ch {
+            if c == '\n' {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                self.col += 1;
+            }
+        }
         ch
     }
 
@@ -150,9 +170,16 @@ impl Lexer {
         let mut tokens = Vec::new();
         loop {
             self.skip_whitespace();
+            let start_line = self.line;
+            let start_col = self.col;
             let Some(ch) = self.peek() else {
                 tokens.push(Token {
                     kind: TokenKind::Eof,
+                    span: Span {
+                        line: start_line,
+                        col: start_col,
+                        len: 1,
+                    },
                 });
                 break;
             };
@@ -234,7 +261,15 @@ impl Lexer {
                 }
             };
 
-            tokens.push(Token { kind });
+            let len = self.col.saturating_sub(start_col).max(1);
+            tokens.push(Token {
+                kind,
+                span: Span {
+                    line: start_line,
+                    col: start_col,
+                    len,
+                },
+            });
         }
         tokens
     }

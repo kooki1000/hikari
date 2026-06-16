@@ -10,6 +10,26 @@ pub enum RuntimeError {
     TypeMismatch,
 }
 
+impl std::fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuntimeError::StackUnderflow => {
+                write!(f, "スタックが空の状態で値を取り出そうとしました。")
+            }
+            RuntimeError::UninitializedLocal(slot) => write!(
+                f,
+                "変数（スロット {}）が初期化される前に使用されました。",
+                slot
+            ),
+            RuntimeError::DivisionByZero => write!(
+                f,
+                "ゼロで割ることはできません。（ヒント: 割る数が０にならないか確認してください）"
+            ),
+            RuntimeError::TypeMismatch => write!(f, "演算で扱う値の型が一致しません。"),
+        }
+    }
+}
+
 // ── Call frame ────────────────────────────────────────────────────────────────
 
 struct Frame {
