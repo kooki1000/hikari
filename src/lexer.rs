@@ -62,6 +62,10 @@ pub enum TokenKind {
     // Identifier (user-defined name)
     Ident(String),
 
+    // A lexeme that could not be tokenized (e.g. a malformed or overflowing
+    // number literal). Carries the offending text so the parser can report it.
+    Invalid(String),
+
     Eof,
 }
 
@@ -172,9 +176,15 @@ impl Lexer {
             }
         }
         if is_float {
-            TokenKind::LitFloat(s.parse().unwrap())
+            match s.parse() {
+                Ok(f) => TokenKind::LitFloat(f),
+                Err(_) => TokenKind::Invalid(s),
+            }
         } else {
-            TokenKind::LitInt(s.parse().unwrap())
+            match s.parse() {
+                Ok(n) => TokenKind::LitInt(n),
+                Err(_) => TokenKind::Invalid(s),
+            }
         }
     }
 
@@ -716,5 +726,22 @@ mod tests {
                 &TokenKind::Eof,
             ]
         );
+    }
+
+    #[test]
+    fn test_lex_overflowing_integer_is_invalid_token() {
+        // Too large for i64: a clean Invalid token rather than a panic.
+        let tokens = Lexer::new("９９９９９９９９９９９９９９９９９９９９").tokenize();
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::Invalid("99999999999999999999".to_string())
+        );
+    }
+
+    #[test]
+    fn test_lex_malformed_number_is_invalid_token() {
+        // Two decimal points: an Invalid token rather than a panic.
+        let tokens = Lexer::new("１．２．３").tokenize();
+        assert_eq!(tokens[0].kind, TokenKind::Invalid("1.2.3".to_string()));
     }
 }

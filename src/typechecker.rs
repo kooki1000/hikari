@@ -587,14 +587,41 @@ impl TypeChecker {
                         span,
                     });
                 }
+                let numeric = matches!(lty, HikariType::Int | HikariType::Float);
+                let mismatch = || TypeError::BinOpMismatch {
+                    op: op.clone(),
+                    lhs: lty.clone(),
+                    rhs: rty.clone(),
+                    span,
+                };
                 match op {
-                    BinOpKind::Eq
-                    | BinOpKind::Lt
-                    | BinOpKind::Gt
-                    | BinOpKind::LtEq
-                    | BinOpKind::GtEq
-                    | BinOpKind::NotEq => Ok(HikariType::Bool),
-                    _ => Ok(lty),
+                    // Equality works for any two values of the same type.
+                    BinOpKind::Eq | BinOpKind::NotEq => Ok(HikariType::Bool),
+                    // Ordering is only defined for numbers (the VM has no
+                    // ordering for 文字列/真偽/配列).
+                    BinOpKind::Lt | BinOpKind::Gt | BinOpKind::LtEq | BinOpKind::GtEq => {
+                        if numeric {
+                            Ok(HikariType::Bool)
+                        } else {
+                            Err(mismatch())
+                        }
+                    }
+                    // ＋ also concatenates strings; the rest are numbers only.
+                    BinOpKind::Add => {
+                        if numeric || lty == HikariType::String {
+                            Ok(lty)
+                        } else {
+                            Err(mismatch())
+                        }
+                    }
+                    BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div => {
+                        if numeric {
+                            Ok(lty)
+                        } else {
+                            Err(mismatch())
+                        }
+                    }
+                    BinOpKind::And | BinOpKind::Or => unreachable!("handled above"),
                 }
             }
 
@@ -1361,5 +1388,42 @@ mod tests {
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_arithmetic_on_bool_is_rejected() {
+        // 真 ＋ 偽 has matching operand types but ＋ is undefined for 真偽.
+        let ast = parse("真偽 結果 ＝ 真 ＋ 偽；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::BinOpMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_subtraction_on_strings_is_rejected() {
+        // ＋ concatenates strings, but ー/＊/／ are numbers-only.
+        let ast = parse("文字列 結果 ＝ 「あ」 ー 「い」；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::BinOpMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_ordering_on_strings_is_rejected() {
+        // ＜/＞/≦/≧ are only defined for numbers.
+        let ast = parse("真偽 結果 ＝ 「あ」 ＜ 「い」；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::BinOpMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_equality_on_strings_is_allowed() {
+        // ＝＝/≠ remain valid for any two values of the same type.
+        let ast = parse("真偽 結果 ＝ 「あ」 ＝＝ 「い」；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_concatenation_still_allowed() {
+        let ast = parse("文字列 結果 ＝ 「あ」 ＋ 「い」；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
     }
 }

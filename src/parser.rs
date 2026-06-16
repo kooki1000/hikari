@@ -141,6 +141,10 @@ pub enum ParseError {
         got: TokenKind,
         span: Span,
     },
+    InvalidNumber {
+        text: String,
+        span: Span,
+    },
 }
 
 impl ParseError {
@@ -150,6 +154,7 @@ impl ParseError {
             ParseError::ExpectedIdentifier { span, .. } => *span,
             ParseError::ExpectedType { span, .. } => *span,
             ParseError::UnexpectedExprToken { span, .. } => *span,
+            ParseError::InvalidNumber { span, .. } => *span,
         }
     }
 }
@@ -659,6 +664,7 @@ impl Parser {
                 self.advance(); // consume 】
                 Ok(Expr::Array(elems))
             }
+            TokenKind::Invalid(text) => Err(ParseError::InvalidNumber { text, span }),
             other => Err(ParseError::UnexpectedExprToken { got: other, span }),
         }?;
         while self.peek() == &TokenKind::LBracket {
@@ -746,6 +752,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::RBracket => "「】」".to_string(),
         TokenKind::Colon => "「：」".to_string(),
         TokenKind::Ident(name) => format!("識別子「{}」", name),
+        TokenKind::Invalid(text) => format!("不正な字句「{}」", text),
         TokenKind::Eof => "ファイルの末尾".to_string(),
     }
 }
@@ -796,6 +803,9 @@ impl std::fmt::Display for ParseError {
                     "式が必要な位置に{}が見つかりました。",
                     token_kind_japanese(got)
                 )
+            }
+            ParseError::InvalidNumber { text, .. } => {
+                write!(f, "「{}」は正しい数値ではありません。", text)
             }
         }
     }
@@ -1308,5 +1318,13 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_parse_malformed_number_returns_invalid_number_error() {
+        let src = "整数 Ｘ ＝ １．２．３；";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(err, ParseError::InvalidNumber { .. }));
     }
 }

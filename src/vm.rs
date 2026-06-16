@@ -13,6 +13,7 @@ pub enum RuntimeError {
     TypeMismatch,
     InvalidConversion(String),
     IndexOutOfBounds { index: i64, len: usize },
+    IntegerOverflow,
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -34,6 +35,9 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::InvalidConversion(msg) => write!(f, "変換に失敗しました: {}", msg),
             RuntimeError::IndexOutOfBounds { index, len } => {
                 write!(f, "添字 {} は範囲外です（配列の長さ: {}）。", index, len)
+            }
+            RuntimeError::IntegerOverflow => {
+                write!(f, "整数の計算結果が大きすぎます（オーバーフロー）。")
             }
         }
     }
@@ -126,10 +130,17 @@ impl Vm {
 
     fn step(&mut self) -> Result<StepResult, RuntimeError> {
         let frame = self.frames.last_mut().expect("no active frame");
-        // Implicit return when execution reaches the end of a chunk.
+        // Reached the end of a chunk without an explicit 返す.
         if frame.ip >= frame.instructions.len() {
             self.frames.pop();
-            return Ok(StepResult::Halt(None));
+            if self.frames.is_empty() {
+                // The top-level script finished: the whole program is done.
+                return Ok(StepResult::Halt(None));
+            }
+            // A called function (e.g. one returning 無) fell off the end of
+            // its body: treat it as a void return and resume the caller
+            // rather than halting the entire program.
+            return Ok(StepResult::Continue);
         }
         let instr = frame.instructions[frame.ip].clone();
         frame.ip += 1;
@@ -155,17 +166,20 @@ impl Vm {
                         self.stack.push(Value::Str(a + &b));
                     }
                     (l, r) => {
-                        self.stack.push(arith(l, r, |a, b| a + b, |a, b| a + b)?);
+                        self.stack
+                            .push(arith(l, r, i64::checked_add, |a, b| a + b)?);
                     }
                 }
             }
             Instruction::Sub => {
                 let (l, r) = self.pop2()?;
-                self.stack.push(arith(l, r, |a, b| a - b, |a, b| a - b)?);
+                self.stack
+                    .push(arith(l, r, i64::checked_sub, |a, b| a - b)?);
             }
             Instruction::Mul => {
                 let (l, r) = self.pop2()?;
-                self.stack.push(arith(l, r, |a, b| a * b, |a, b| a * b)?);
+                self.stack
+                    .push(arith(l, r, i64::checked_mul, |a, b| a * b)?);
             }
             Instruction::Div => {
                 let (l, r) = self.pop2()?;
@@ -174,7 +188,9 @@ impl Vm {
                     Value::Float(f) if *f == 0.0 => return Err(RuntimeError::DivisionByZero),
                     _ => {}
                 }
-                self.stack.push(arith(l, r, |a, b| a / b, |a, b| a / b)?);
+                // checked_div also guards i64::MIN / -1, which would overflow.
+                self.stack
+                    .push(arith(l, r, i64::checked_div, |a, b| a / b)?);
             }
             Instruction::Call(fn_idx, arg_count) => {
                 let chunk = &self.chunks[fn_idx as usize];
@@ -218,7 +234,9 @@ impl Vm {
             Instruction::Negate => {
                 let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                 let result = match val {
-                    Value::Int(n) => Value::Int(-n),
+                    Value::Int(n) => {
+                        Value::Int(n.checked_neg().ok_or(RuntimeError::IntegerOverflow)?)
+                    }
                     Value::Float(f) => Value::Float(-f),
                     _ => return Err(RuntimeError::TypeMismatch),
                 };
@@ -628,17 +646,24 @@ fn next_random_i64(min: i64, max: i64) -> i64 {
     seed ^= seed << 13;
     seed ^= seed >> 7;
     seed ^= seed << 17;
-    min + (seed as i64).rem_euclid(max - min + 1)
+    // Compute the span in i128 so a wide [min, max] range can't overflow i64.
+    let span = (max as i128) - (min as i128) + 1;
+    let offset = (seed as u128 % span as u128) as i64;
+    min + offset
 }
 
+// Integer ops use checked arithmetic so an overflow surfaces as a catchable
+// RuntimeError instead of panicking the interpreter.
 fn arith(
     lhs: Value,
     rhs: Value,
-    int_op: impl Fn(i64, i64) -> i64,
+    int_op: impl Fn(i64, i64) -> Option<i64>,
     float_op: impl Fn(f64, f64) -> f64,
 ) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(int_op(a, b))),
+        (Value::Int(a), Value::Int(b)) => int_op(a, b)
+            .map(Value::Int)
+            .ok_or(RuntimeError::IntegerOverflow),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(float_op(a, b))),
         _ => Err(RuntimeError::TypeMismatch),
     }
@@ -1193,5 +1218,33 @@ mod tests {
     fn test_vm_replace_happy_path() {
         let result = run("取り込む 「文字列」；返す 置換（「あいう」、「い」、「え」）；");
         assert_eq!(result, Some(Value::Str("あえう".to_string())));
+    }
+
+    fn run_result(src: &str) -> Result<Option<Value>, RuntimeError> {
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+        let mut compiler = Compiler::new();
+        let script = compiler.compile(&ast);
+        Vm::with_chunks(compiler.constants, compiler.chunks, script).run()
+    }
+
+    #[test]
+    fn test_vm_void_function_call_does_not_halt_program() {
+        // A 無-returning function falls off the end of its body without an
+        // explicit 返す; the caller must resume rather than the whole program
+        // terminating. 表示 prints its arg, then the script returns 99.
+        let src = "関数 表示（整数 Ａ）ー＞ 無 ｛ 印刷（Ａ）； ｝表示（５）；返す ９９；";
+        assert_eq!(run_result(src).unwrap(), Some(Value::Int(99)));
+    }
+
+    #[test]
+    fn test_vm_integer_addition_overflow_is_runtime_error() {
+        let src = "整数 Ｘ ＝ ９２２３３７２０３６８５４７７５８０７ ＋ １；返す Ｘ；";
+        assert_eq!(run_result(src), Err(RuntimeError::IntegerOverflow));
+    }
+
+    #[test]
+    fn test_vm_integer_multiplication_overflow_is_runtime_error() {
+        let src = "整数 Ｘ ＝ ９２２３３７２０３６８５４７７５８０７ ＊ ２；返す Ｘ；";
+        assert_eq!(run_result(src), Err(RuntimeError::IntegerOverflow));
     }
 }
