@@ -76,6 +76,17 @@ pub enum TypeError {
         module: String,
         span: Span,
     },
+    // A non-無 function has at least one control-flow path that falls off
+    // its end without executing 返す.
+    MissingReturn {
+        name: String,
+        span: Span,
+    },
+    // 抜ける／続ける used outside any enclosing 間／繰り返す／各 body.
+    ControlFlowOutsideLoop {
+        keyword: String,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -95,6 +106,8 @@ impl TypeError {
             TypeError::NotIndexable { span, .. } => *span,
             TypeError::IndexNotInt { span, .. } => *span,
             TypeError::ModuleNotImported { span, .. } => *span,
+            TypeError::MissingReturn { span, .. } => *span,
+            TypeError::ControlFlowOutsideLoop { span, .. } => *span,
         }
     }
 }
@@ -188,6 +201,16 @@ impl std::fmt::Display for TypeError {
                 "「{}」を使うには「取り込む 「{}」；」が必要です。",
                 name, module
             ),
+            TypeError::MissingReturn { name, .. } => write!(
+                f,
+                "関数「{}」のすべての実行経路が値を返すとは限りません。",
+                name
+            ),
+            TypeError::ControlFlowOutsideLoop { keyword, .. } => write!(
+                f,
+                "「{}」はループ（間／繰り返す／各）の中でのみ使用できます。",
+                keyword
+            ),
         }
     }
 }
@@ -265,12 +288,39 @@ fn builtin_module(name: &str) -> Option<&'static str> {
     }
 }
 
+// Conservative exhaustive-return check: only the LAST statement of a block
+// matters for reachability (no dead-code analysis here), and loops never
+// count even if their body always returns, since a loop might run zero times.
+fn always_returns(stmts: &[Stmt]) -> bool {
+    match stmts.last() {
+        None => false,
+        Some(Stmt::Return(..)) => true,
+        Some(Stmt::If {
+            then_body,
+            else_body: Some(else_body),
+            ..
+        }) => always_returns(then_body) && always_returns(else_body),
+        // A try-body's 返す only guarantees a return if it completes without
+        // throwing; since either body always returning only guarantees SOME
+        // path returns when BOTH independently always return, requiring both
+        // is the safe (if slightly conservative) choice.
+        Some(Stmt::TryCatch {
+            try_body,
+            catch_body,
+            ..
+        }) => always_returns(try_body) && always_returns(catch_body),
+        Some(_) => false,
+    }
+}
+
 pub struct TypeChecker {
     scopes: Vec<HashMap<String, HikariType>>,
     fns: HashMap<String, FnSig>,
     // Return type expected by the function currently being checked.
     current_return_ty: Option<HikariType>,
     imported_modules: std::collections::HashSet<String>,
+    // Number of enclosing 間／繰り返す／各 bodies; 抜ける／続ける require > 0.
+    loop_depth: u32,
 }
 
 impl TypeChecker {
@@ -280,6 +330,7 @@ impl TypeChecker {
             fns: HashMap::new(),
             current_return_ty: None,
             imported_modules: std::collections::HashSet::new(),
+            loop_depth: 0,
         }
     }
 
@@ -332,7 +383,7 @@ impl TypeChecker {
                 params,
                 return_ty,
                 body,
-                ..
+                span,
             } => {
                 let sig = FnSig {
                     params: params.iter().map(|(t, _)| t.clone()).collect(),
@@ -344,6 +395,10 @@ impl TypeChecker {
                 // scope stack, matching the VM's independent per-call Frame.
                 let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
                 let outer_return_ty = self.current_return_ty.take();
+                // A 抜ける／続ける written inside a nested 関数 body must not
+                // be considered "inside a loop" just because the call site
+                // (or even the declaration site) happens to sit inside one.
+                let outer_loop_depth = std::mem::take(&mut self.loop_depth);
 
                 for (ty, pname) in params {
                     self.declare_var(pname, ty.clone());
@@ -352,19 +407,62 @@ impl TypeChecker {
 
                 self.check(body)?;
 
+                if *return_ty != HikariType::Void && !always_returns(body) {
+                    return Err(TypeError::MissingReturn {
+                        name: name.clone(),
+                        span: *span,
+                    });
+                }
+
                 self.scopes = outer_scopes;
                 self.current_return_ty = outer_return_ty;
+                self.loop_depth = outer_loop_depth;
                 Ok(())
             }
 
             Stmt::Return(expr, span) => {
-                let got = self.infer_expr(expr, *span)?;
-                if let Some(expected) = &self.current_return_ty
-                    && got != *expected
-                {
-                    return Err(TypeError::ReturnTypeMismatch {
-                        expected: expected.clone(),
-                        got,
+                match expr {
+                    Some(expr) => {
+                        let got = self.infer_expr(expr, *span)?;
+                        if let Some(expected) = &self.current_return_ty
+                            && got != *expected
+                        {
+                            return Err(TypeError::ReturnTypeMismatch {
+                                expected: expected.clone(),
+                                got,
+                                span: *span,
+                            });
+                        }
+                    }
+                    None => {
+                        if let Some(expected) = &self.current_return_ty
+                            && *expected != HikariType::Void
+                        {
+                            return Err(TypeError::ReturnTypeMismatch {
+                                expected: expected.clone(),
+                                got: HikariType::Void,
+                                span: *span,
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
+
+            Stmt::Break(span) => {
+                if self.loop_depth == 0 {
+                    return Err(TypeError::ControlFlowOutsideLoop {
+                        keyword: "抜ける".to_string(),
+                        span: *span,
+                    });
+                }
+                Ok(())
+            }
+
+            Stmt::Continue(span) => {
+                if self.loop_depth == 0 {
+                    return Err(TypeError::ControlFlowOutsideLoop {
+                        keyword: "続ける".to_string(),
                         span: *span,
                     });
                 }
@@ -407,7 +505,9 @@ impl TypeChecker {
                     return Err(TypeError::ConditionNotBool(cond_ty, *span));
                 }
                 self.enter_scope();
+                self.loop_depth += 1;
                 self.check(body)?;
+                self.loop_depth -= 1;
                 self.exit_scope();
                 Ok(())
             }
@@ -496,7 +596,9 @@ impl TypeChecker {
                 }
                 self.enter_scope();
                 self.declare_var(var, HikariType::Int);
+                self.loop_depth += 1;
                 self.check(body)?;
+                self.loop_depth -= 1;
                 self.exit_scope();
                 Ok(())
             }
@@ -519,7 +621,9 @@ impl TypeChecker {
                 };
                 self.enter_scope();
                 self.declare_var(var, elem_ty);
+                self.loop_depth += 1;
                 self.check(body)?;
+                self.loop_depth -= 1;
                 self.exit_scope();
                 Ok(())
             }
@@ -1823,6 +1927,152 @@ mod tests {
         assert!(matches!(
             err,
             TypeError::ModuleNotImported { module, .. } if module == "数学"
+        ));
+    }
+
+    // ── 8a: exhaustive-return analysis ───────────────────────────────────
+
+    #[test]
+    fn test_typecheck_if_else_both_return_is_ok() {
+        let src = "関数 計算（整数 Ａ）ー＞ 整数 ｛ もし Ａ ＞ ０ ならば ｛ 返す １； ｝ 違えば ｛ 返す ０； ｝ ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_if_without_else_is_missing_return() {
+        let src = "関数 計算（整数 Ａ）ー＞ 整数 ｛ もし Ａ ＞ ０ ならば ｛ 返す １； ｝ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::MissingReturn { name, .. } if name == "計算"));
+    }
+
+    #[test]
+    fn test_typecheck_trailing_return_after_if_else_is_ok_even_if_branches_dont_return() {
+        let src = "関数 計算（整数 Ａ）ー＞ 整数 ｛ もし Ａ ＞ ０ ならば ｛ 印刷（１）； ｝ 違えば ｛ 印刷（０）； ｝ 返す Ａ； ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_void_function_exempt_from_missing_return() {
+        let src = "関数 表示（整数 Ａ）ー＞ 無 ｛ 印刷（Ａ）； ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_while_loop_with_return_is_still_missing_return() {
+        let src = "関数 計算（整数 Ａ）ー＞ 整数 ｛ 間 Ａ ＞ ０ ならば ｛ 返す Ａ； ｝ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::MissingReturn { name, .. } if name == "計算"));
+    }
+
+    #[test]
+    fn test_typecheck_try_catch_both_branches_return_is_ok() {
+        let src = "関数 計算（）ー＞ 整数 ｛ 試す ｛ 返す １； ｝ 失敗 失敗内容 ｛ 返す ０； ｝ ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_try_catch_only_one_branch_returns_is_missing_return() {
+        let src = "関数 計算（）ー＞ 整数 ｛ 試す ｛ 返す １； ｝ 失敗 失敗内容 ｛ 印刷（失敗内容）； ｝ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::MissingReturn { name, .. } if name == "計算"));
+    }
+
+    // ── 8b: break / continue ─────────────────────────────────────────────
+
+    #[test]
+    fn test_typecheck_break_continue_inside_loops_ok() {
+        assert!(
+            TypeChecker::new()
+                .check(&parse("間 真 ならば ｛ 抜ける； ｝"))
+                .is_ok()
+        );
+        assert!(
+            TypeChecker::new()
+                .check(&parse("間 真 ならば ｛ 続ける； ｝"))
+                .is_ok()
+        );
+        assert!(
+            TypeChecker::new()
+                .check(&parse("繰り返す ｉ ＝ ０ から ５ ならば ｛ 抜ける； ｝"))
+                .is_ok()
+        );
+        assert!(
+            TypeChecker::new()
+                .check(&parse(
+                    "整数列 数字 ＝ 【１】；各 要素 ： 数字 ならば ｛ 続ける； ｝"
+                ))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_typecheck_break_continue_outside_loop_is_error() {
+        let err = TypeChecker::new().check(&parse("抜ける；")).unwrap_err();
+        assert!(matches!(err, TypeError::ControlFlowOutsideLoop { .. }));
+
+        let err = TypeChecker::new().check(&parse("続ける；")).unwrap_err();
+        assert!(matches!(err, TypeError::ControlFlowOutsideLoop { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_break_inside_if_inside_loop_is_ok() {
+        let src = "間 真 ならば ｛ もし 真 ならば ｛ 抜ける； ｝ ｝";
+        assert!(TypeChecker::new().check(&parse(src)).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_break_inside_function_body_not_itself_in_loop_is_error() {
+        // The function is CALLED from inside a loop, but its own body has no
+        // enclosing loop, proving loop_depth resets per function.
+        let src = "関数 内部（）ー＞ 無 ｛ 抜ける； ｝間 真 ならば ｛ 内部（）； 抜ける； ｝";
+        let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+        assert!(matches!(err, TypeError::ControlFlowOutsideLoop { .. }));
+    }
+
+    // ── 8c: bare return / void semantics ──────────────────────────────────
+
+    #[test]
+    fn test_typecheck_bare_return_in_void_function_is_ok() {
+        let src = "関数 表示（）ー＞ 無 ｛ 返す； ｝";
+        assert!(TypeChecker::new().check(&parse(src)).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_bare_return_in_non_void_function_is_error() {
+        let src = "関数 計算（）ー＞ 整数 ｛ 返す； ｝";
+        let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ReturnTypeMismatch {
+                expected: HikariType::Int,
+                got: HikariType::Void,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_bare_return_at_top_level_is_ok() {
+        assert!(TypeChecker::new().check(&parse("返す；")).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_void_call_result_cannot_be_used_as_value() {
+        let src = "関数 表示（整数 Ａ）ー＞ 無 ｛ 印刷（Ａ）； ｝整数 結果 ＝ 表示（５）；";
+        let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::VarDeclMismatch {
+                got: HikariType::Void,
+                ..
+            }
         ));
     }
 }
