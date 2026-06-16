@@ -26,7 +26,13 @@ pub enum Instruction {
     Equal,            // pop two values, push Bool (==)
     LessThan,         // pop two values, push Bool (<)
     GreaterThan,      // pop two values, push Bool (>)
+    LessEqual,        // pop two values, push Bool (<=)
+    GreaterEqual,     // pop two values, push Bool (>=)
+    NotEqual,         // pop two values, push Bool (!=)
+    Negate,           // pop one value, push its arithmetic negation
+    Not,              // pop one Bool, push its negation
     JumpIfFalse(u16), // pop Bool; jump to absolute offset if false
+    JumpIfTrue(u16),  // pop Bool; jump to absolute offset if true
     Jump(u16),        // unconditional jump to absolute offset
     Call(u16, u8),    // Call(fn_idx, arg_count)
     Print,            // pop and print top of stack
@@ -198,6 +204,11 @@ impl Compiler {
             Stmt::ExprStmt(expr, _) => {
                 self.emit_expr(expr, instrs, locals);
             }
+            Stmt::Assign { name, value, .. } => {
+                self.emit_expr(value, instrs, locals);
+                let slot = Self::local_slot(locals, name);
+                instrs.push(Instruction::StoreLocal(slot));
+            }
         }
     }
 
@@ -228,6 +239,42 @@ impl Compiler {
                 let slot = Self::local_slot(locals, name);
                 instrs.push(Instruction::LoadLocal(slot));
             }
+            Expr::BinOp {
+                op: BinOpKind::And,
+                lhs,
+                rhs,
+            } => {
+                self.emit_expr(lhs, instrs, locals);
+                let jump_if_false_idx = instrs.len();
+                instrs.push(Instruction::JumpIfFalse(0));
+                self.emit_expr(rhs, instrs, locals);
+                let jump_end_idx = instrs.len();
+                instrs.push(Instruction::Jump(0));
+                let false_target = instrs.len() as u16;
+                instrs[jump_if_false_idx] = Instruction::JumpIfFalse(false_target);
+                let false_idx = self.add_constant(Value::Bool(false));
+                instrs.push(Instruction::LoadConst(false_idx));
+                let end = instrs.len() as u16;
+                instrs[jump_end_idx] = Instruction::Jump(end);
+            }
+            Expr::BinOp {
+                op: BinOpKind::Or,
+                lhs,
+                rhs,
+            } => {
+                self.emit_expr(lhs, instrs, locals);
+                let jump_if_true_idx = instrs.len();
+                instrs.push(Instruction::JumpIfTrue(0));
+                self.emit_expr(rhs, instrs, locals);
+                let jump_end_idx = instrs.len();
+                instrs.push(Instruction::Jump(0));
+                let true_target = instrs.len() as u16;
+                instrs[jump_if_true_idx] = Instruction::JumpIfTrue(true_target);
+                let true_idx = self.add_constant(Value::Bool(true));
+                instrs.push(Instruction::LoadConst(true_idx));
+                let end = instrs.len() as u16;
+                instrs[jump_end_idx] = Instruction::Jump(end);
+            }
             Expr::BinOp { op, lhs, rhs } => {
                 self.emit_expr(lhs, instrs, locals);
                 self.emit_expr(rhs, instrs, locals);
@@ -239,8 +286,20 @@ impl Compiler {
                     BinOpKind::Eq => Instruction::Equal,
                     BinOpKind::Lt => Instruction::LessThan,
                     BinOpKind::Gt => Instruction::GreaterThan,
+                    BinOpKind::LtEq => Instruction::LessEqual,
+                    BinOpKind::GtEq => Instruction::GreaterEqual,
+                    BinOpKind::NotEq => Instruction::NotEqual,
+                    BinOpKind::And | BinOpKind::Or => unreachable!("handled above"),
                 };
                 instrs.push(instr);
+            }
+            Expr::UnaryMinus(inner) => {
+                self.emit_expr(inner, instrs, locals);
+                instrs.push(Instruction::Negate);
+            }
+            Expr::UnaryNot(inner) => {
+                self.emit_expr(inner, instrs, locals);
+                instrs.push(Instruction::Not);
             }
             Expr::Call { name, args } => {
                 // Push arguments left-to-right; the VM seeds locals from them.
@@ -336,6 +395,21 @@ mod tests {
         //         [after=9]
         assert!(matches!(instrs[5], Instruction::JumpIfFalse(9)));
         assert!(matches!(instrs[8], Instruction::Jump(2)));
+    }
+
+    #[test]
+    fn test_compile_reassignment_reuses_slot() {
+        let (instrs, _) = compile("整数 年齢 ＝ ２０；年齢 ＝ ３０；");
+        assert_eq!(instrs[1], Instruction::StoreLocal(0));
+        assert_eq!(instrs[3], Instruction::StoreLocal(0));
+    }
+
+    #[test]
+    fn test_compile_unary_minus() {
+        let (instrs, _) = compile("整数 結果 ＝ ー５；");
+        assert_eq!(instrs[0], Instruction::LoadConst(0));
+        assert_eq!(instrs[1], Instruction::Negate);
+        assert_eq!(instrs[2], Instruction::StoreLocal(0));
     }
 
     #[test]

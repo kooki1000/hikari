@@ -29,17 +29,24 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    UnaryMinus(Box<Expr>),
+    UnaryNot(Box<Expr>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum BinOpKind {
-    Add, // ＋
-    Sub, // ー
-    Mul, // ＊
-    Div, // ／
-    Eq,  // ＝＝
-    Lt,  // ＜
-    Gt,  // ＞
+    Add,   // ＋
+    Sub,   // ー
+    Mul,   // ＊
+    Div,   // ／
+    Eq,    // ＝＝
+    Lt,    // ＜
+    Gt,    // ＞
+    LtEq,  // ≦
+    GtEq,  // ≧
+    NotEq, // ≠
+    And,   // かつ
+    Or,    // または
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -71,6 +78,11 @@ pub enum Stmt {
         span: Span,
     },
     ExprStmt(Expr, Span),
+    Assign {
+        name: String,
+        value: Expr,
+        span: Span,
+    },
 }
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -123,6 +135,11 @@ impl Parser {
         &self.tokens[self.pos].kind
     }
 
+    fn peek_next(&self) -> &TokenKind {
+        let idx = (self.pos + 1).min(self.tokens.len() - 1);
+        &self.tokens[idx].kind
+    }
+
     fn peek_span(&self) -> Span {
         self.tokens[self.pos].span
     }
@@ -165,6 +182,7 @@ impl Parser {
             TokenKind::KwIf => self.parse_if(),
             TokenKind::KwWhile => self.parse_while(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
+            TokenKind::Ident(_) if self.peek_next() == &TokenKind::Assign => self.parse_assign(),
             _ => {
                 let span = self.peek_span();
                 let expr = self.parse_expr()?;
@@ -192,6 +210,18 @@ impl Parser {
         })
     }
 
+    fn parse_assign(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        let name = match self.advance().clone() {
+            TokenKind::Ident(n) => n,
+            _ => unreachable!("guarded by caller"),
+        };
+        self.expect(&TokenKind::Assign)?;
+        let value = self.parse_expr()?;
+        self.expect(&TokenKind::Semi)?;
+        Ok(Stmt::Assign { name, value, span })
+    }
+
     fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
         let span = self.peek_span();
         self.advance(); // consume 関数
@@ -208,7 +238,9 @@ impl Parser {
                 (s, other) => return Err(ParseError::ExpectedIdentifier { got: other, span: s }),
             };
             params.push((ty, pname));
-            // future: handle comma-separated params
+            if self.peek() != &TokenKind::RParen {
+                self.expect(&TokenKind::Comma)?;
+            }
         }
         self.expect(&TokenKind::RParen)?;
         self.expect(&TokenKind::Arrow)?;
@@ -296,16 +328,49 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_comparison()
+        self.parse_or()
     }
 
-    // Comparison: lowest precedence  (＝＝  ＜  ＞)
+    // Logical OR: lowest precedence (または)
+    fn parse_or(&mut self) -> Result<Expr, ParseError> {
+        let mut lhs = self.parse_and()?;
+        while self.peek() == &TokenKind::KwOr {
+            self.advance();
+            let rhs = self.parse_and()?;
+            lhs = Expr::BinOp {
+                op: BinOpKind::Or,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
+    }
+
+    // Logical AND (かつ)
+    fn parse_and(&mut self) -> Result<Expr, ParseError> {
+        let mut lhs = self.parse_comparison()?;
+        while self.peek() == &TokenKind::KwAnd {
+            self.advance();
+            let rhs = self.parse_comparison()?;
+            lhs = Expr::BinOp {
+                op: BinOpKind::And,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
+    }
+
+    // Comparison (＝＝  ＜  ＞  ≦  ≧  ≠)
     fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
         let lhs = self.parse_additive()?;
         let op = match self.peek() {
             TokenKind::EqEq => BinOpKind::Eq,
             TokenKind::Lt => BinOpKind::Lt,
             TokenKind::Gt => BinOpKind::Gt,
+            TokenKind::LtEq => BinOpKind::LtEq,
+            TokenKind::GtEq => BinOpKind::GtEq,
+            TokenKind::NotEq => BinOpKind::NotEq,
             _ => return Ok(lhs),
         };
         self.advance();
@@ -356,6 +421,16 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
+        if self.peek() == &TokenKind::Minus {
+            self.advance();
+            let inner = self.parse_primary()?;
+            return Ok(Expr::UnaryMinus(Box::new(inner)));
+        }
+        if self.peek() == &TokenKind::KwNot {
+            self.advance();
+            let inner = self.parse_primary()?;
+            return Ok(Expr::UnaryNot(Box::new(inner)));
+        }
         let span = self.peek_span();
         match self.advance().clone() {
             TokenKind::LitInt(n) => Ok(Expr::LitInt(n)),
@@ -369,6 +444,9 @@ impl Parser {
                     let mut args = Vec::new();
                     while self.peek() != &TokenKind::RParen {
                         args.push(self.parse_expr()?);
+                        if self.peek() != &TokenKind::RParen {
+                            self.expect(&TokenKind::Comma)?;
+                        }
                     }
                     self.advance(); // consume ）
                     Ok(Expr::Call { name, args })
@@ -414,6 +492,9 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwThen => "「ならば」".to_string(),
         TokenKind::KwElse => "「違えば」".to_string(),
         TokenKind::KwWhile => "「間」".to_string(),
+        TokenKind::KwAnd => "「かつ」".to_string(),
+        TokenKind::KwOr => "「または」".to_string(),
+        TokenKind::KwNot => "「否定」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
@@ -423,6 +504,9 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::EqEq => "「＝＝」".to_string(),
         TokenKind::Lt => "「＜」".to_string(),
         TokenKind::Gt => "「＞」".to_string(),
+        TokenKind::LtEq => "「≦」".to_string(),
+        TokenKind::GtEq => "「≧」".to_string(),
+        TokenKind::NotEq => "「≠」".to_string(),
         TokenKind::Semi => "「；」".to_string(),
         TokenKind::Plus => "「＋」".to_string(),
         TokenKind::Minus => "「ー」".to_string(),
@@ -432,6 +516,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::RBrace => "「｝」".to_string(),
         TokenKind::LParen => "「（」".to_string(),
         TokenKind::RParen => "「）」".to_string(),
+        TokenKind::Comma => "「、」".to_string(),
         TokenKind::Arrow => "「ー＞」".to_string(),
         TokenKind::Ident(name) => format!("識別子「{}」", name),
         TokenKind::Eof => "ファイルの末尾".to_string(),
@@ -737,6 +822,118 @@ mod tests {
                 got: TokenKind::Assign,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn test_parse_reassignment() {
+        // 整数 年齢 ＝ ２０； 年齢 ＝ ３０；
+        let tokens = Lexer::new("整数 年齢 ＝ ２０；年齢 ＝ ３０；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert_eq!(ast.len(), 2);
+        assert!(matches!(
+            &ast[1],
+            Stmt::Assign { name, value: Expr::LitInt(30), .. } if name == "年齢"
+        ));
+    }
+
+    #[test]
+    fn test_parse_multi_param_fn_decl() {
+        // 関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝
+        let src = "関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+        let Stmt::FnDecl { params, .. } = &ast[0] else {
+            panic!("expected FnDecl")
+        };
+        assert_eq!(
+            params,
+            &[
+                (HikariType::Int, "Ａ".to_string()),
+                (HikariType::Int, "Ｂ".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_multi_arg_call() {
+        // 関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝
+        // 返す 加算（１、２）；
+        let src = "関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝返す 加算（１、２）；";
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+        let Stmt::Return(Expr::Call { name, args }, _) = &ast[1] else {
+            panic!("expected Return(Call)")
+        };
+        assert_eq!(name, "加算");
+        assert_eq!(args.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_unary_minus() {
+        // 整数 結果 ＝ ー５；
+        let tokens = Lexer::new("整数 結果 ＝ ー５；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::VarDecl { value: Expr::UnaryMinus(inner), .. }
+            if matches!(inner.as_ref(), Expr::LitInt(5))
+        ));
+    }
+
+    #[test]
+    fn test_parse_unary_minus_in_addition() {
+        // 整数 結果 ＝ １０ ＋ ー３；
+        let tokens = Lexer::new("整数 結果 ＝ １０ ＋ ー３；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let Stmt::VarDecl { value, .. } = &ast[0] else {
+            panic!()
+        };
+        let Expr::BinOp { op, rhs, .. } = value else {
+            panic!()
+        };
+        assert_eq!(op, &BinOpKind::Add);
+        assert!(matches!(rhs.as_ref(), Expr::UnaryMinus(_)));
+    }
+
+    #[test]
+    fn test_parse_logical_and_or_precedence() {
+        // １ ＝＝ １ かつ ２ ＝＝ ２
+        let tokens = Lexer::new("返す １ ＝＝ １ かつ ２ ＝＝ ２；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        let Stmt::Return(expr, _) = &ast[0] else {
+            panic!()
+        };
+        let Expr::BinOp { op, lhs, rhs } = expr else {
+            panic!()
+        };
+        assert_eq!(op, &BinOpKind::And);
+        assert!(matches!(
+            lhs.as_ref(),
+            Expr::BinOp { op: BinOpKind::Eq, .. }
+        ));
+        assert!(matches!(
+            rhs.as_ref(),
+            Expr::BinOp { op: BinOpKind::Eq, .. }
+        ));
+    }
+
+    #[test]
+    fn test_parse_unary_not() {
+        // 返す 否定 真；
+        let tokens = Lexer::new("返す 否定 真；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::Return(Expr::UnaryNot(inner), _) if matches!(inner.as_ref(), Expr::LitBool(true))
+        ));
+    }
+
+    #[test]
+    fn test_parse_additional_comparison_operators() {
+        let tokens = Lexer::new("返す ３ ≦ ３；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::Return(Expr::BinOp { op: BinOpKind::LtEq, .. }, _)
         ));
     }
 

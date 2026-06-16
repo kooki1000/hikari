@@ -47,6 +47,8 @@ pub enum TypeError {
     },
     // Condition in もし/間 is not Bool.
     ConditionNotBool(HikariType, Span),
+    // Operand of a unary operator (単項マイナス／否定) has an unsupported type.
+    UnaryOpMismatch { got: HikariType, span: Span },
 }
 
 impl TypeError {
@@ -60,6 +62,7 @@ impl TypeError {
             TypeError::ArgCountMismatch { span, .. } => *span,
             TypeError::ArgTypeMismatch { span, .. } => *span,
             TypeError::ConditionNotBool(_, span) => *span,
+            TypeError::UnaryOpMismatch { span, .. } => *span,
         }
     }
 }
@@ -109,6 +112,11 @@ impl std::fmt::Display for TypeError {
             TypeError::ConditionNotBool(got, _) => write!(
                 f,
                 "条件式は「真偽」型である必要がありますが、「{}」が指定されました。",
+                hikari_type_japanese(got)
+            ),
+            TypeError::UnaryOpMismatch { got, .. } => write!(
+                f,
+                "この単項演算には「{}」型を使用できません。",
                 hikari_type_japanese(got)
             ),
         }
@@ -241,6 +249,24 @@ impl TypeChecker {
                 self.infer_expr(expr, *span)?;
                 Ok(())
             }
+
+            Stmt::Assign { name, value, span } => {
+                let declared = self
+                    .vars
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), *span))?;
+                let got = self.infer_expr(value, *span)?;
+                if got != declared {
+                    return Err(TypeError::VarDeclMismatch {
+                        name: name.clone(),
+                        declared,
+                        got,
+                        span: *span,
+                    });
+                }
+                Ok(())
+            }
         }
     }
 
@@ -260,6 +286,25 @@ impl TypeChecker {
             Expr::BinOp { op, lhs, rhs } => {
                 let lty = self.infer_expr(lhs, span)?;
                 let rty = self.infer_expr(rhs, span)?;
+                if matches!(op, BinOpKind::And | BinOpKind::Or) {
+                    if lty != HikariType::Bool {
+                        return Err(TypeError::BinOpMismatch {
+                            op: op.clone(),
+                            lhs: lty,
+                            rhs: rty,
+                            span,
+                        });
+                    }
+                    if rty != HikariType::Bool {
+                        return Err(TypeError::BinOpMismatch {
+                            op: op.clone(),
+                            lhs: lty,
+                            rhs: rty,
+                            span,
+                        });
+                    }
+                    return Ok(HikariType::Bool);
+                }
                 if lty != rty {
                     return Err(TypeError::BinOpMismatch {
                         op: op.clone(),
@@ -269,8 +314,29 @@ impl TypeChecker {
                     });
                 }
                 match op {
-                    BinOpKind::Eq | BinOpKind::Lt | BinOpKind::Gt => Ok(HikariType::Bool),
+                    BinOpKind::Eq
+                    | BinOpKind::Lt
+                    | BinOpKind::Gt
+                    | BinOpKind::LtEq
+                    | BinOpKind::GtEq
+                    | BinOpKind::NotEq => Ok(HikariType::Bool),
                     _ => Ok(lty),
+                }
+            }
+
+            Expr::UnaryMinus(inner) => {
+                let ity = self.infer_expr(inner, span)?;
+                match ity {
+                    HikariType::Int | HikariType::Float => Ok(ity),
+                    other => Err(TypeError::UnaryOpMismatch { got: other, span }),
+                }
+            }
+
+            Expr::UnaryNot(inner) => {
+                let ity = self.infer_expr(inner, span)?;
+                match ity {
+                    HikariType::Bool => Ok(HikariType::Bool),
+                    other => Err(TypeError::UnaryOpMismatch { got: other, span }),
                 }
             }
 
@@ -398,6 +464,86 @@ mod tests {
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(err, TypeError::ConditionNotBool(HikariType::Int, _)));
+    }
+
+    #[test]
+    fn test_typecheck_reassignment_valid() {
+        let ast = parse("整数 年齢 ＝ ２０；年齢 ＝ ３０；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_reassignment_type_mismatch() {
+        // 整数 年齢 ＝ ２０； 年齢 ＝ 「太郎」；
+        let ast = parse("整数 年齢 ＝ ２０；年齢 ＝ 「太郎」；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::VarDeclMismatch {
+                declared: HikariType::Int,
+                got: HikariType::String,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_reassignment_undeclared_variable() {
+        let ast = parse("年齢 ＝ ２０；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "年齢"));
+    }
+
+    #[test]
+    fn test_typecheck_unary_minus_int_ok() {
+        let ast = parse("整数 結果 ＝ ー５；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_unary_minus_on_bool_fails() {
+        let ast = parse("真偽 フラグ ＝ 真；整数 結果 ＝ ーフラグ；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::UnaryOpMismatch { got: HikariType::Bool, .. }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_logical_and_or_require_bool() {
+        let ast = parse("真偽 結果 ＝ 真 かつ 偽；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("真偽 結果 ＝ 真 または 偽；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("真偽 結果 ＝ １ かつ 真；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::BinOpMismatch { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_unary_not_requires_bool() {
+        let ast = parse("真偽 結果 ＝ 否定 真；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+
+        let ast = parse("真偽 結果 ＝ 否定 １；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::UnaryOpMismatch { got: HikariType::Int, .. }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_additional_comparison_operators() {
+        let ast = parse("真偽 結果 ＝ ３ ≦ ５；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+        let ast = parse("真偽 結果 ＝ ５ ≧ ３；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+        let ast = parse("真偽 結果 ＝ １ ≠ ２；");
+        assert!(TypeChecker::new().check(&ast).is_ok());
     }
 
     #[test]
