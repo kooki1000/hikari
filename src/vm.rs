@@ -366,6 +366,36 @@ impl Vm {
             Instruction::TryEnd => {
                 self.try_stack.pop();
             }
+            Instruction::MakeRecord(field_names) => {
+                let stack_len = self.stack.len();
+                let values = self.stack.split_off(stack_len - field_names.len());
+                let map: std::collections::HashMap<String, Value> =
+                    field_names.into_iter().zip(values).collect();
+                self.stack.push(Value::Record(Rc::new(RefCell::new(map))));
+            }
+            Instruction::GetField(name) => {
+                let record = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
+                    Value::Record(r) => r,
+                    _ => return Err(RuntimeError::TypeMismatch),
+                };
+                let borrowed = record.borrow();
+                // Guaranteed present by the typechecker, so a missing key
+                // here would indicate a compiler/typechecker bug, not a
+                // user-reachable runtime error.
+                let val = borrowed
+                    .get(&name)
+                    .expect("field presence guaranteed by typechecker")
+                    .clone();
+                self.stack.push(val);
+            }
+            Instruction::SetField(name) => {
+                let value = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                let record = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
+                    Value::Record(r) => r,
+                    _ => return Err(RuntimeError::TypeMismatch),
+                };
+                record.borrow_mut().insert(name, value);
+            }
         }
 
         Ok(StepResult::Continue)
@@ -470,6 +500,21 @@ pub fn display_value(val: &Value) -> String {
                 .collect::<Vec<_>>()
                 .join("、")
         ),
+        Value::Record(rec) => {
+            let borrowed = rec.borrow();
+            // HashMap iteration order is unspecified; sort keys for
+            // deterministic display/test output rather than building
+            // ordered-map machinery just for this.
+            let mut keys: Vec<&String> = borrowed.keys().collect();
+            keys.sort();
+            format!(
+                "｛{}｝",
+                keys.iter()
+                    .map(|k| format!("{}：{}", k, display_value(&borrowed[*k])))
+                    .collect::<Vec<_>>()
+                    .join("、")
+            )
+        }
     }
 }
 
@@ -1624,6 +1669,42 @@ mod tests {
         let src =
             "関数 何もしない（）ー＞ 無 ｛ 返す； ｝何もしない（）；整数 結果 ＝ ４２；返す 結果；";
         assert_eq!(run(src), Some(Value::Int(42)));
+    }
+
+    // ── 9a: records ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_vm_record_construct_and_read_field() {
+        let src = "型 点 ｛ 整数 ｘ； 整数 ｙ； ｝点 ｐ ＝ 点 ｛ ｘ：１、ｙ：２ ｝；返す ｐ：：ｘ ＋ ｐ：：ｙ；";
+        assert_eq!(run(src), Some(Value::Int(3)));
+    }
+
+    #[test]
+    fn test_vm_record_field_assign_mutates() {
+        let src =
+            "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：１ ｝；ｐ：：ｘ ＝ ９９；返す ｐ：：ｘ；";
+        assert_eq!(run(src), Some(Value::Int(99)));
+    }
+
+    #[test]
+    fn test_vm_record_aliasing_reference_semantics() {
+        // Assigning Ａ to Ｂ shares the same underlying Rc<RefCell<>>, so
+        // mutating a field through Ｂ must be visible through Ａ, mirroring
+        // array aliasing.
+        let src = "型 点 ｛ 整数 ｘ； ｝点 Ａ ＝ 点 ｛ ｘ：１ ｝；点 Ｂ ＝ Ａ；Ｂ：：ｘ ＝ ９９；返す Ａ：：ｘ；";
+        assert_eq!(run(src), Some(Value::Int(99)));
+    }
+
+    #[test]
+    fn test_vm_record_as_function_param_and_return() {
+        let src = "型 点 ｛ 整数 ｘ； 整数 ｙ； ｝関数 ずらす（点 Ｐ）ー＞ 点 ｛ Ｐ：：ｘ ＝ Ｐ：：ｘ ＋ １；返す Ｐ； ｝点 ａ ＝ 点 ｛ ｘ：１、ｙ：２ ｝；点 ｂ ＝ ずらす（ａ）；返す ｂ：：ｘ；";
+        assert_eq!(run(src), Some(Value::Int(2)));
+    }
+
+    #[test]
+    fn test_vm_record_with_array_field() {
+        let src = "型 箱 ｛ 整数列 数字； ｝箱 ｂ ＝ 箱 ｛ 数字：【１、２、３】 ｝；返す ｂ：：数字【１】；";
+        assert_eq!(run(src), Some(Value::Int(2)));
     }
 
     #[test]

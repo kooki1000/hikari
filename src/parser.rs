@@ -10,6 +10,7 @@ pub enum HikariType {
     Bool,   // 真偽
     Void,   // 無
     Array(Box<HikariType>),
+    Record(String), // user-defined record type, identified by its declared name
 }
 
 // ── AST nodes ────────────────────────────────────────────────────────────────
@@ -38,6 +39,14 @@ pub enum Expr {
         index: Box<Expr>,
     },
     NewArray(HikariType),
+    RecordLit {
+        type_name: String,
+        fields: Vec<(String, Expr)>,
+    },
+    FieldAccess {
+        record: Box<Expr>,
+        field: String,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -122,6 +131,21 @@ pub enum Stmt {
     },
     Break(Span),
     Continue(Span),
+    TypeDecl {
+        name: String,
+        fields: Vec<(HikariType, String)>,
+        span: Span,
+    },
+    // The target is a full Expr (not a bare name like IndexAssign's) because
+    // field-assign targets can themselves be the result of an arbitrary
+    // expression, e.g. 配列【０】：：ｘ ＝ １；, whereas IndexAssign was modeled
+    // around a bare local variable name.
+    FieldAssign {
+        record: Expr,
+        field: String,
+        value: Expr,
+        span: Span,
+    },
 }
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -231,18 +255,74 @@ impl Parser {
             TokenKind::KwImport => self.parse_import(),
             TokenKind::KwBreak => self.parse_break(),
             TokenKind::KwContinue => self.parse_continue(),
+            TokenKind::KwType => self.parse_type_decl(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
             TokenKind::Ident(_) if self.peek_next() == &TokenKind::LBracket => {
                 self.parse_index_assign()
             }
             TokenKind::Ident(_) if self.peek_next() == &TokenKind::Assign => self.parse_assign(),
-            _ => {
-                let span = self.peek_span();
-                let expr = self.parse_expr()?;
-                self.expect(&TokenKind::Semi)?;
-                Ok(Stmt::Expr(expr, span))
+            // Two bare identifiers in a row at statement-start is the unique
+            // shape of a record-typed var-decl (型名 変数名 ＝ ...); no other
+            // current construct starts with two consecutive Idents.
+            TokenKind::Ident(_) if matches!(self.peek_next(), TokenKind::Ident(_)) => {
+                self.parse_var_decl()
             }
+            _ => self.parse_expr_or_field_assign(),
         }
+    }
+
+    fn parse_expr_or_field_assign(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        let expr = self.parse_expr()?;
+        if let Expr::FieldAccess { record, field } = expr {
+            if self.peek() == &TokenKind::Assign {
+                self.advance();
+                let value = self.parse_expr()?;
+                self.expect(&TokenKind::Semi)?;
+                return Ok(Stmt::FieldAssign {
+                    record: *record,
+                    field,
+                    value,
+                    span,
+                });
+            }
+            self.expect(&TokenKind::Semi)?;
+            return Ok(Stmt::Expr(Expr::FieldAccess { record, field }, span));
+        }
+        self.expect(&TokenKind::Semi)?;
+        Ok(Stmt::Expr(expr, span))
+    }
+
+    fn parse_type_decl(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        self.advance(); // consume 型
+        let name = match (self.peek_span(), self.advance().clone()) {
+            (_, TokenKind::Ident(n)) => n,
+            (s, other) => {
+                return Err(ParseError::ExpectedIdentifier {
+                    got: other,
+                    span: s,
+                });
+            }
+        };
+        self.expect(&TokenKind::LBrace)?;
+        let mut fields = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            let ty = self.parse_type()?;
+            let fname = match (self.peek_span(), self.advance().clone()) {
+                (_, TokenKind::Ident(n)) => n,
+                (s, other) => {
+                    return Err(ParseError::ExpectedIdentifier {
+                        got: other,
+                        span: s,
+                    });
+                }
+            };
+            self.expect(&TokenKind::Semi)?;
+            fields.push((ty, fname));
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Stmt::TypeDecl { name, fields, span })
     }
 
     fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -669,6 +749,31 @@ impl Parser {
                     }
                     self.advance(); // consume ）
                     Ok(Expr::Call { name, args })
+                } else if self.peek() == &TokenKind::LBrace {
+                    self.advance(); // consume ｛
+                    let mut fields = Vec::new();
+                    while self.peek() != &TokenKind::RBrace {
+                        let fname = match (self.peek_span(), self.advance().clone()) {
+                            (_, TokenKind::Ident(n)) => n,
+                            (s, other) => {
+                                return Err(ParseError::ExpectedIdentifier {
+                                    got: other,
+                                    span: s,
+                                });
+                            }
+                        };
+                        self.expect(&TokenKind::Colon)?;
+                        let value = self.parse_expr()?;
+                        fields.push((fname, value));
+                        if self.peek() != &TokenKind::RBrace {
+                            self.expect(&TokenKind::Comma)?;
+                        }
+                    }
+                    self.expect(&TokenKind::RBrace)?;
+                    Ok(Expr::RecordLit {
+                        type_name: name,
+                        fields,
+                    })
                 } else {
                     Ok(Expr::Ident(name))
                 }
@@ -698,14 +803,33 @@ impl Parser {
             TokenKind::Invalid(text) => Err(ParseError::InvalidNumber { text, span }),
             other => Err(ParseError::UnexpectedExprToken { got: other, span }),
         }?;
-        while self.peek() == &TokenKind::LBracket {
-            self.advance(); // consume 【
-            let index = self.parse_expr()?;
-            self.expect(&TokenKind::RBracket)?;
-            expr = Expr::Index {
-                array: Box::new(expr),
-                index: Box::new(index),
-            };
+        loop {
+            if self.peek() == &TokenKind::LBracket {
+                self.advance(); // consume 【
+                let index = self.parse_expr()?;
+                self.expect(&TokenKind::RBracket)?;
+                expr = Expr::Index {
+                    array: Box::new(expr),
+                    index: Box::new(index),
+                };
+            } else if self.peek() == &TokenKind::DoubleColon {
+                self.advance(); // consume ：：
+                let field = match (self.peek_span(), self.advance().clone()) {
+                    (_, TokenKind::Ident(n)) => n,
+                    (s, other) => {
+                        return Err(ParseError::ExpectedIdentifier {
+                            got: other,
+                            span: s,
+                        });
+                    }
+                };
+                expr = Expr::FieldAccess {
+                    record: Box::new(expr),
+                    field,
+                };
+            } else {
+                break;
+            }
         }
         Ok(expr)
     }
@@ -722,6 +846,7 @@ impl Parser {
             TokenKind::TyFloatArray => Ok(HikariType::Array(Box::new(HikariType::Float))),
             TokenKind::TyStringArray => Ok(HikariType::Array(Box::new(HikariType::String))),
             TokenKind::TyBoolArray => Ok(HikariType::Array(Box::new(HikariType::Bool))),
+            TokenKind::Ident(name) => Ok(HikariType::Record(name)),
             other => Err(ParseError::ExpectedType { got: other, span }),
         }
     }
@@ -759,6 +884,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwNewArray => "「新配列」".to_string(),
         TokenKind::KwBreak => "「抜ける」".to_string(),
         TokenKind::KwContinue => "「続ける」".to_string(),
+        TokenKind::KwType => "「型」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
@@ -786,6 +912,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::LBracket => "「【」".to_string(),
         TokenKind::RBracket => "「】」".to_string(),
         TokenKind::Colon => "「：」".to_string(),
+        TokenKind::DoubleColon => "「：：」".to_string(),
         TokenKind::Ident(name) => format!("識別子「{}」", name),
         TokenKind::Invalid(text) => format!("不正な字句「{}」", text),
         TokenKind::Eof => "ファイルの末尾".to_string(),
@@ -800,6 +927,7 @@ pub fn hikari_type_japanese(ty: &HikariType) -> String {
         HikariType::Bool => "真偽".to_string(),
         HikariType::Void => "無".to_string(),
         HikariType::Array(inner) => format!("{}列", hikari_type_japanese(inner)),
+        HikariType::Record(name) => name.clone(),
     }
 }
 
@@ -1421,6 +1549,122 @@ mod tests {
 
     fn parse_helper(src: &str) -> Vec<Stmt> {
         Parser::new(Lexer::new(src).tokenize()).parse().unwrap()
+    }
+
+    // ── 9a: records ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_type_decl() {
+        let src = "型 点 ｛ 整数 ｘ； 整数 ｙ； ｝";
+        let ast = parse_helper(src);
+        assert!(matches!(
+            &ast[0],
+            Stmt::TypeDecl { name, fields, .. }
+            if name == "点" && fields == &[
+                (HikariType::Int, "ｘ".to_string()),
+                (HikariType::Int, "ｙ".to_string()),
+            ]
+        ));
+    }
+
+    #[test]
+    fn test_parse_record_construction() {
+        let src = "点 ｐ ＝ 点 ｛ ｘ：１、ｙ：２ ｝；";
+        let ast = parse_helper(src);
+        let Stmt::VarDecl {
+            ty: HikariType::Record(tyname),
+            value: Expr::RecordLit { type_name, fields },
+            ..
+        } = &ast[0]
+        else {
+            panic!("expected VarDecl with RecordLit")
+        };
+        assert_eq!(tyname, "点");
+        assert_eq!(type_name, "点");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "ｘ");
+        assert_eq!(fields[1].0, "ｙ");
+    }
+
+    #[test]
+    fn test_parse_field_access() {
+        let ast = parse_helper("返す ｐ：：ｘ；");
+        assert!(matches!(
+            &ast[0],
+            Stmt::Return(Some(Expr::FieldAccess { record, field }), _)
+            if matches!(record.as_ref(), Expr::Ident(n) if n == "ｐ") && field == "ｘ"
+        ));
+    }
+
+    #[test]
+    fn test_parse_chained_field_access() {
+        let ast = parse_helper("返す ａ：：ｂ：：ｃ；");
+        let Stmt::Return(Some(Expr::FieldAccess { record, field }), _) = &ast[0] else {
+            panic!("expected FieldAccess")
+        };
+        assert_eq!(field, "ｃ");
+        let Expr::FieldAccess {
+            record: inner_record,
+            field: inner_field,
+        } = record.as_ref()
+        else {
+            panic!("expected nested FieldAccess")
+        };
+        assert_eq!(inner_field, "ｂ");
+        assert!(matches!(inner_record.as_ref(), Expr::Ident(n) if n == "ａ"));
+    }
+
+    #[test]
+    fn test_parse_field_assignment() {
+        let ast = parse_helper("ｐ：：ｘ ＝ ９９；");
+        assert!(matches!(
+            &ast[0],
+            Stmt::FieldAssign { record: Expr::Ident(n), field, value: Expr::LitInt(99), .. }
+            if n == "ｐ" && field == "ｘ"
+        ));
+    }
+
+    #[test]
+    fn test_parse_index_then_field_access_chain() {
+        let ast = parse_helper("返す 配列【０】：：ｘ；");
+        let Stmt::Return(Some(Expr::FieldAccess { record, field }), _) = &ast[0] else {
+            panic!("expected FieldAccess")
+        };
+        assert_eq!(field, "ｘ");
+        assert!(matches!(record.as_ref(), Expr::Index { .. }));
+    }
+
+    #[test]
+    fn test_parse_field_then_index_access_chain() {
+        let ast = parse_helper("返す 点：：配列フィールド【０】；");
+        let Stmt::Return(Some(Expr::Index { array, .. }), _) = &ast[0] else {
+            panic!("expected Index")
+        };
+        assert!(matches!(array.as_ref(), Expr::FieldAccess { .. }));
+    }
+
+    #[test]
+    fn test_parse_type_decl_missing_semi_returns_error() {
+        let src = "型 点 ｛ 整数 ｘ ｝";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedToken { .. }));
+    }
+
+    #[test]
+    fn test_parse_record_construction_missing_colon_returns_error() {
+        let src = "点 ｐ ＝ 点 ｛ ｘ １ ｝；";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedToken { .. }));
+    }
+
+    #[test]
+    fn test_parse_type_decl_missing_field_name_returns_error() {
+        let src = "型 点 ｛ 整数； ｝";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(err, ParseError::ExpectedIdentifier { .. }));
     }
 
     #[test]

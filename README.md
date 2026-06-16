@@ -158,6 +158,23 @@ Array literals (`【...】`) need at least one element to infer their type from.
 印刷（要素数（数字））；  （prints 2）
 ```
 
+### Records
+
+`型 名前 ｛ ... ｝` declares a record type. Field declarations inside `｛...｝` are `；`-terminated (like a function body), but construction is `、`-separated (like an array literal or call argument list). Field access/assignment uses `：：` (double colon, distinct from the single `：` used for construction labels and `各…：…`):
+
+```
+型 点 ｛
+    整数 ｘ；
+    整数 ｙ；
+｝
+
+点 ｐ ＝ 点 ｛ ｘ：１、ｙ：２ ｝；
+印刷（ｐ：：ｘ）；  （field access — prints 1）
+ｐ：：ｘ ＝ ９９；   （field assignment）
+```
+
+Records have reference semantics, just like arrays: assigning a record to another variable aliases the same underlying storage, so mutating a field through either variable is visible through the other.
+
 ### Function Declaration and Call
 
 Parameters and call arguments are comma-separated with `、`:
