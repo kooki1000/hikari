@@ -13,6 +13,9 @@ pub enum Value {
     // Rc<RefCell<>> gives arrays reference semantics so mutations via
     // index-assignment are visible through aliased variables.
     Array(std::rc::Rc<std::cell::RefCell<Vec<Value>>>),
+    // Same Rc<RefCell<>> reference-semantics pattern as Array: assigning a
+    // record to another variable aliases the same storage.
+    Record(std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>),
 }
 
 // ── Built-in functions ────────────────────────────────────────────────────────
@@ -81,6 +84,11 @@ pub enum Instruction {
     ArrayLen,           // pop array, push its length as Value::Int
     TryStart(u16, u16), // TryStart(catch_target ip, error_var's local slot)
     TryEnd,             // marks successful completion of a try block
+    // Field names in the SOURCE order their values were pushed (RecordLit's
+    // parsed field order), not necessarily the type's declared field order.
+    MakeRecord(Vec<String>),
+    GetField(String), // pop a record, push the named field's value
+    SetField(String), // pop value, pop record, set the named field in place
 }
 
 pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
@@ -530,6 +538,19 @@ impl Compiler {
                 // typechecker, and file-based imports are already
                 // flattened away before compilation.
             }
+            Stmt::TypeDecl { .. } => {
+                // No bytecode: purely a typechecker-time declaration.
+            }
+            Stmt::FieldAssign {
+                record,
+                field,
+                value,
+                ..
+            } => {
+                self.emit_expr(record, instrs, scopes);
+                self.emit_expr(value, instrs, scopes);
+                instrs.push(Instruction::SetField(field.clone()));
+            }
         }
     }
 
@@ -645,6 +666,18 @@ impl Compiler {
             }
             Expr::NewArray(_) => {
                 instrs.push(Instruction::MakeArray(0));
+            }
+            Expr::RecordLit { fields, .. } => {
+                for (_, value) in fields {
+                    self.emit_expr(value, instrs, scopes);
+                }
+                instrs.push(Instruction::MakeRecord(
+                    fields.iter().map(|(n, _)| n.clone()).collect(),
+                ));
+            }
+            Expr::FieldAccess { record, field } => {
+                self.emit_expr(record, instrs, scopes);
+                instrs.push(Instruction::GetField(field.clone()));
             }
         }
     }
@@ -948,6 +981,39 @@ mod tests {
         let (instrs, _) = compile(src);
         // loop_start is index 0 (condition re-check starts the loop).
         assert!(instrs.contains(&Instruction::Jump(0)));
+    }
+
+    // ── 9a: records ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_compile_record_lit_emits_make_record_in_source_order() {
+        let src = "型 点 ｛ 整数 ｘ； 整数 ｙ； ｝点 ｐ ＝ 点 ｛ ｙ：２、ｘ：１ ｝；";
+        let (instrs, _) = compile(src);
+        assert!(matches!(
+            &instrs[2],
+            Instruction::MakeRecord(names) if names == &vec!["ｙ".to_string(), "ｘ".to_string()]
+        ));
+    }
+
+    #[test]
+    fn test_compile_field_access_emits_get_field() {
+        let src = "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：１ ｝；返す ｐ：：ｘ；";
+        let (instrs, _) = compile(src);
+        assert!(instrs.contains(&Instruction::GetField("ｘ".to_string())));
+    }
+
+    #[test]
+    fn test_compile_field_assign_emits_set_field() {
+        let src = "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：１ ｝；ｐ：：ｘ ＝ ９；";
+        let (instrs, _) = compile(src);
+        assert!(instrs.contains(&Instruction::SetField("ｘ".to_string())));
+    }
+
+    #[test]
+    fn test_compile_type_decl_emits_no_instructions() {
+        let src = "型 点 ｛ 整数 ｘ； ｝";
+        let (instrs, _) = compile(src);
+        assert!(instrs.is_empty());
     }
 
     #[test]

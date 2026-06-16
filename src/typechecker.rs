@@ -87,6 +87,34 @@ pub enum TypeError {
         keyword: String,
         span: Span,
     },
+    // Reference to a record type name that was never declared with 型.
+    UndeclaredType(String, Span),
+    // Record construction omits a field the type declares.
+    MissingField {
+        type_name: String,
+        field: String,
+        span: Span,
+    },
+    // Record construction (or field access) names a field the type doesn't have.
+    UnknownField {
+        type_name: String,
+        field: String,
+        span: Span,
+    },
+    // A field's value expression doesn't match the field's declared type,
+    // whether at construction time or via field assignment.
+    FieldTypeMismatch {
+        type_name: String,
+        field: String,
+        expected: HikariType,
+        got: HikariType,
+        span: Span,
+    },
+    // ：フィールド access/assignment on a value that isn't a record.
+    NotARecord {
+        got: HikariType,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -108,6 +136,11 @@ impl TypeError {
             TypeError::ModuleNotImported { span, .. } => *span,
             TypeError::MissingReturn { span, .. } => *span,
             TypeError::ControlFlowOutsideLoop { span, .. } => *span,
+            TypeError::UndeclaredType(_, span) => *span,
+            TypeError::MissingField { span, .. } => *span,
+            TypeError::UnknownField { span, .. } => *span,
+            TypeError::FieldTypeMismatch { span, .. } => *span,
+            TypeError::NotARecord { span, .. } => *span,
         }
     }
 }
@@ -210,6 +243,44 @@ impl std::fmt::Display for TypeError {
                 f,
                 "「{}」はループ（間／繰り返す／各）の中でのみ使用できます。",
                 keyword
+            ),
+            TypeError::UndeclaredType(name, _) => write!(
+                f,
+                "型「{}」は宣言されていません。（ヒント: 「型 {} ｛ ... ｝」で宣言してください）",
+                name, name
+            ),
+            TypeError::MissingField {
+                type_name, field, ..
+            } => write!(
+                f,
+                "型「{}」のフィールド「{}」が指定されていません。",
+                type_name, field
+            ),
+            TypeError::UnknownField {
+                type_name, field, ..
+            } => write!(
+                f,
+                "型「{}」にはフィールド「{}」がありません。",
+                type_name, field
+            ),
+            TypeError::FieldTypeMismatch {
+                type_name,
+                field,
+                expected,
+                got,
+                ..
+            } => write!(
+                f,
+                "型「{}」のフィールド「{}」の型が一致しません: 「{}」が必要ですが、「{}」が指定されました。",
+                type_name,
+                field,
+                hikari_type_japanese(expected),
+                hikari_type_japanese(got)
+            ),
+            TypeError::NotARecord { got, .. } => write!(
+                f,
+                "「{}」型の値にはフィールドでアクセスできません。",
+                hikari_type_japanese(got)
             ),
         }
     }
@@ -321,6 +392,8 @@ pub struct TypeChecker {
     imported_modules: std::collections::HashSet<String>,
     // Number of enclosing 間／繰り返す／各 bodies; 抜ける／続ける require > 0.
     loop_depth: u32,
+    // Record type name → ordered (field name, field type) pairs.
+    records: HashMap<String, Vec<(String, HikariType)>>,
 }
 
 impl TypeChecker {
@@ -331,6 +404,7 @@ impl TypeChecker {
             current_return_ty: None,
             imported_modules: std::collections::HashSet::new(),
             loop_depth: 0,
+            records: HashMap::new(),
         }
     }
 
@@ -350,6 +424,19 @@ impl TypeChecker {
         self.scopes.iter().rev().find_map(|s| s.get(name).cloned())
     }
 
+    // parse_type's Ident arm accepts ANY identifier as a syntactically valid
+    // type, even ones that aren't declared record types, so this is the
+    // gatekeeper that rejects undeclared record names wherever a type is
+    // actually used (VarDecl, function params/return type).
+    fn check_type_declared(&self, ty: &HikariType, span: Span) -> Result<(), TypeError> {
+        if let HikariType::Record(name) = ty
+            && !self.records.contains_key(name)
+        {
+            return Err(TypeError::UndeclaredType(name.clone(), span));
+        }
+        Ok(())
+    }
+
     pub fn check(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         for stmt in stmts {
             self.check_stmt(stmt)?;
@@ -365,6 +452,7 @@ impl TypeChecker {
                 value,
                 span,
             } => {
+                self.check_type_declared(ty, *span)?;
                 let inferred = self.infer_expr(value, *span)?;
                 if inferred != *ty {
                     return Err(TypeError::VarDeclMismatch {
@@ -385,6 +473,10 @@ impl TypeChecker {
                 body,
                 span,
             } => {
+                for (ty, _) in params {
+                    self.check_type_declared(ty, *span)?;
+                }
+                self.check_type_declared(return_ty, *span)?;
                 let sig = FnSig {
                     params: params.iter().map(|(t, _)| t.clone()).collect(),
                     return_ty: return_ty.clone(),
@@ -648,6 +740,50 @@ impl TypeChecker {
             Stmt::Import { name, .. } => {
                 if name == "数学" || name == "文字列" || name == "配列" {
                     self.imported_modules.insert(name.clone());
+                }
+                Ok(())
+            }
+
+            Stmt::TypeDecl { name, fields, .. } => {
+                let entry = fields.iter().map(|(t, n)| (n.clone(), t.clone())).collect();
+                self.records.insert(name.clone(), entry);
+                Ok(())
+            }
+
+            Stmt::FieldAssign {
+                record,
+                field,
+                value,
+                span,
+            } => {
+                let record_ty = self.infer_expr(record, *span)?;
+                let type_name = match record_ty {
+                    HikariType::Record(name) => name,
+                    other => {
+                        return Err(TypeError::NotARecord {
+                            got: other,
+                            span: *span,
+                        });
+                    }
+                };
+                let field_ty = self
+                    .records
+                    .get(&type_name)
+                    .and_then(|fs| fs.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone()))
+                    .ok_or_else(|| TypeError::UnknownField {
+                        type_name: type_name.clone(),
+                        field: field.clone(),
+                        span: *span,
+                    })?;
+                let value_ty = self.infer_expr(value, *span)?;
+                if value_ty != field_ty {
+                    return Err(TypeError::FieldTypeMismatch {
+                        type_name,
+                        field: field.clone(),
+                        expected: field_ty,
+                        got: value_ty,
+                        span: *span,
+                    });
                 }
                 Ok(())
             }
@@ -1139,6 +1275,70 @@ impl TypeChecker {
             }
 
             Expr::NewArray(ty) => Ok(HikariType::Array(Box::new(ty.clone()))),
+
+            Expr::RecordLit { type_name, fields } => {
+                let declared = self
+                    .records
+                    .get(type_name)
+                    .ok_or_else(|| TypeError::UndeclaredType(type_name.clone(), span))?
+                    .clone();
+
+                let provided: std::collections::HashSet<&str> =
+                    fields.iter().map(|(n, _)| n.as_str()).collect();
+                let required: std::collections::HashSet<&str> =
+                    declared.iter().map(|(n, _)| n.as_str()).collect();
+
+                if let Some(missing) = required.difference(&provided).next() {
+                    return Err(TypeError::MissingField {
+                        type_name: type_name.clone(),
+                        field: missing.to_string(),
+                        span,
+                    });
+                }
+                if let Some(extra) = provided.difference(&required).next() {
+                    return Err(TypeError::UnknownField {
+                        type_name: type_name.clone(),
+                        field: extra.to_string(),
+                        span,
+                    });
+                }
+
+                for (fname, fexpr) in fields {
+                    let expected = declared
+                        .iter()
+                        .find(|(n, _)| n == fname)
+                        .map(|(_, t)| t.clone())
+                        .expect("field presence already validated above");
+                    let got = self.infer_expr(fexpr, span)?;
+                    if got != expected {
+                        return Err(TypeError::FieldTypeMismatch {
+                            type_name: type_name.clone(),
+                            field: fname.clone(),
+                            expected,
+                            got,
+                            span,
+                        });
+                    }
+                }
+
+                Ok(HikariType::Record(type_name.clone()))
+            }
+
+            Expr::FieldAccess { record, field } => {
+                let record_ty = self.infer_expr(record, span)?;
+                let type_name = match record_ty {
+                    HikariType::Record(name) => name,
+                    other => return Err(TypeError::NotARecord { got: other, span }),
+                };
+                self.records
+                    .get(&type_name)
+                    .and_then(|fs| fs.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone()))
+                    .ok_or_else(|| TypeError::UnknownField {
+                        type_name,
+                        field: field.clone(),
+                        span,
+                    })
+            }
         }
     }
 }
@@ -2061,6 +2261,105 @@ mod tests {
     #[test]
     fn test_typecheck_bare_return_at_top_level_is_ok() {
         assert!(TypeChecker::new().check(&parse("返す；")).is_ok());
+    }
+
+    // ── 9a: records ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_typecheck_record_construction_and_field_read_valid() {
+        let src = "型 点 ｛ 整数 ｘ； 整数 ｙ； ｝点 ｐ ＝ 点 ｛ ｘ：１、ｙ：２ ｝；整数 結果 ＝ ｐ：：ｘ；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_field_read_unknown_field() {
+        let src = "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：１ ｝；整数 結果 ＝ ｐ：：ｚ；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UnknownField { field, .. } if field == "ｚ"));
+    }
+
+    #[test]
+    fn test_typecheck_field_read_on_non_record_value() {
+        let ast = parse("整数 値 ＝ ５；整数 結果 ＝ 値：：ｘ；");
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::NotARecord {
+                got: HikariType::Int,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_record_construction_missing_field() {
+        let src = "型 点 ｛ 整数 ｘ； 整数 ｙ； ｝点 ｐ ＝ 点 ｛ ｘ：１ ｝；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::MissingField { field, .. } if field == "ｙ"));
+    }
+
+    #[test]
+    fn test_typecheck_record_construction_extra_field() {
+        let src = "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：１、ｚ：２ ｝；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UnknownField { field, .. } if field == "ｚ"));
+    }
+
+    #[test]
+    fn test_typecheck_record_construction_field_type_mismatch() {
+        let src = "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：「あ」 ｝；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::FieldTypeMismatch {
+                expected: HikariType::Int,
+                got: HikariType::String,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_field_assign_happy_path() {
+        let src = "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：１ ｝；ｐ：：ｘ ＝ ９；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_field_assign_wrong_value_type() {
+        let src = "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：１ ｝；ｐ：：ｘ ＝ 「あ」；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::FieldTypeMismatch {
+                expected: HikariType::Int,
+                got: HikariType::String,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_undeclared_type_in_construction() {
+        let src = "点 ｐ ＝ 点 ｛ ｘ：１ ｝；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredType(n, _) if n == "点"));
+    }
+
+    #[test]
+    fn test_typecheck_undeclared_type_in_var_decl() {
+        let src = "型 点 ｛ 整数 ｘ； ｝存在しない ｐ ＝ 点 ｛ ｘ：１ ｝；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredType(n, _) if n == "存在しない"));
     }
 
     #[test]

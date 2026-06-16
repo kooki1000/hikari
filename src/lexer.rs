@@ -31,6 +31,7 @@ pub enum TokenKind {
     KwNewArray, // 新配列
     KwBreak,    // 抜ける
     KwContinue, // 続ける
+    KwType,     // 型
 
     // Literals
     LitInt(i64),
@@ -40,28 +41,29 @@ pub enum TokenKind {
     LitFalse, // 偽
 
     // Operators & punctuation
-    Assign,   // ＝
-    EqEq,     // ＝＝
-    Lt,       // ＜
-    Gt,       // ＞
-    LtEq,     // ≦
-    GtEq,     // ≧
-    NotEq,    // ≠
-    Semi,     // ；
-    Plus,     // ＋
-    Minus,    // ー  (also prefix of arrow)
-    Star,     // ＊
-    Slash,    // ／
-    Percent,  // ％
-    LBrace,   // ｛
-    RBrace,   // ｝
-    LParen,   // （
-    RParen,   // ）
-    Comma,    // 、
-    Arrow,    // ー＞
-    LBracket, // 【
-    RBracket, // 】
-    Colon,    // ：
+    Assign,      // ＝
+    EqEq,        // ＝＝
+    Lt,          // ＜
+    Gt,          // ＞
+    LtEq,        // ≦
+    GtEq,        // ≧
+    NotEq,       // ≠
+    Semi,        // ；
+    Plus,        // ＋
+    Minus,       // ー  (also prefix of arrow)
+    Star,        // ＊
+    Slash,       // ／
+    Percent,     // ％
+    LBrace,      // ｛
+    RBrace,      // ｝
+    LParen,      // （
+    RParen,      // ）
+    Comma,       // 、
+    Arrow,       // ー＞
+    LBracket,    // 【
+    RBracket,    // 】
+    Colon,       // ：
+    DoubleColon, // ：： (record field access)
 
     // Identifier (user-defined name)
     Ident(String),
@@ -222,6 +224,7 @@ impl Lexer {
             "新配列" => TokenKind::KwNewArray,
             "抜ける" => TokenKind::KwBreak,
             "続ける" => TokenKind::KwContinue,
+            "型" => TokenKind::KwType,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -335,7 +338,12 @@ impl Lexer {
                 }
                 '：' => {
                     self.advance();
-                    TokenKind::Colon
+                    if self.peek() == Some('：') {
+                        self.advance();
+                        TokenKind::DoubleColon
+                    } else {
+                        TokenKind::Colon
+                    }
                 }
                 '「' => {
                     self.advance();
@@ -781,6 +789,14 @@ mod tests {
             kinds,
             vec![&TokenKind::KwBreak, &TokenKind::KwContinue, &TokenKind::Eof,]
         );
+    }
+
+    #[test]
+    fn test_lex_type_keyword() {
+        let tokens = Lexer::new("型").tokenize();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::KwType);
+        assert_eq!(tokens[1].kind, TokenKind::Eof);
     }
 
     #[test]
