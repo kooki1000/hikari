@@ -66,6 +66,17 @@ Hikari's syntax uses Japanese reserved words and full-width characters for all o
 返す 二倍（２１）；
 ```
 
+### Boolean Literals
+
+```
+真偽 フラグ ＝ 真；
+もし フラグ ならば ｛
+    印刷（１）；
+｝ 違えば ｛
+    印刷（０）；
+｝
+```
+
 ### Comparison Operators
 
 | Symbol | Meaning |
@@ -78,7 +89,7 @@ Hikari's syntax uses Japanese reserved words and full-width characters for all o
 
 ## Architecture
 
-The implementation follows a classic pipeline, built strictly with TDD (56 tests, all passing):
+The implementation follows a classic pipeline, built strictly with TDD (60 tests, all passing):
 
 ```
 Source (.hkr)
@@ -133,6 +144,7 @@ cargo test
 | Comparison operators (`＝＝` `＜` `＞`) | ✅ Done |
 | `間…ならば` (while loop) | ✅ Done |
 | Error recovery (`Result`-based parser/VM errors) | ✅ Done |
+| `真` / `偽` boolean literals in programs | ✅ Done |
 
 ---
 
@@ -140,7 +152,6 @@ cargo test
 
 | Feature | Notes |
 |---------|-------|
-| `真` / `偽` boolean literals in programs | Lexer already emits them; parser/type checker need expression-level support |
 | Multiple function parameters | Parser handles one param; needs comma-separated param list |
 | String concatenation | `＋` on `文字列` operands |
 | Standard library builtins | e.g. `長さ` (length), numeric conversions |

@@ -277,6 +277,14 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_bool_literal() {
+        let (instrs, constants) = compile("真偽 フラグ ＝ 真；");
+        assert_eq!(instrs[0], Instruction::LoadConst(0));
+        assert_eq!(instrs[1], Instruction::StoreLocal(0));
+        assert_eq!(constants[0], Value::Bool(true));
+    }
+
+    #[test]
     fn test_compile_binary_add() {
         let (instrs, constants) = compile("整数 結果 ＝ １ ＋ ２；");
         assert_eq!(instrs[0], Instruction::LoadConst(0));
