@@ -298,6 +298,13 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_bool_literal_as_if_condition() {
+        // 真偽 フラグ ＝ 真；もし フラグ ならば ｛ 印刷（１）； ｝
+        let ast = parse("真偽 フラグ ＝ 真；もし フラグ ならば ｛ 印刷（１）； ｝");
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
     fn test_typecheck_while_valid() {
         let src = "整数 Ｎ ＝ ０；間 Ｎ ＜ ３ ならば ｛ 整数 Ｎ ＝ Ｎ ＋ １； ｝";
         let ast = parse(src);

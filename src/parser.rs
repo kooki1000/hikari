@@ -523,6 +523,33 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_bool_literals() {
+        // 真偽 フラグ ＝ 真；
+        let tokens = Lexer::new("真偽 フラグ ＝ 真；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::VarDecl {
+                ty: HikariType::Bool,
+                value: Expr::LitBool(true),
+                ..
+            }
+        ));
+
+        // 真偽 フラグ ＝ 偽；
+        let tokens = Lexer::new("真偽 フラグ ＝ 偽；").tokenize();
+        let ast = Parser::new(tokens).parse().unwrap();
+        assert!(matches!(
+            &ast[0],
+            Stmt::VarDecl {
+                ty: HikariType::Bool,
+                value: Expr::LitBool(false),
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn test_parse_print_stmt() {
         // 印刷（年齢）；
         let tokens = Lexer::new("印刷（年齢）；").tokenize();

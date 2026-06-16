@@ -298,6 +298,14 @@ mod tests {
     }
 
     #[test]
+    fn test_vm_bool_literal_as_if_condition() {
+        // 真偽 フラグ ＝ 真；もし フラグ ならば ｛ 返す １； ｝ 違えば ｛ 返す ０； ｝
+        let result =
+            run("真偽 フラグ ＝ 真；もし フラグ ならば ｛ 返す １； ｝ 違えば ｛ 返す ０； ｝");
+        assert_eq!(result, Some(Value::Int(1)));
+    }
+
+    #[test]
     fn test_vm_if_true_branch() {
         // もし １ ＝＝ １ ならば ｛ 返す １０； ｝
         // Condition is true → returns 10
