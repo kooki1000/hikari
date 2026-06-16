@@ -262,7 +262,7 @@ mod tests {
     use crate::parser::Parser;
 
     fn compile(src: &str) -> (Vec<Instruction>, Vec<Value>) {
-        let ast = Parser::new(Lexer::new(src).tokenize()).parse();
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
         let mut c = Compiler::new();
         let instrs = c.compile(&ast);
         (instrs, c.constants)
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn test_compile_return() {
         let src = "関数 計算（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝";
-        let ast = Parser::new(Lexer::new(src).tokenize()).parse();
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
         let mut c = Compiler::new();
         c.compile(&ast);
         // The function chunk (index 0) must end with Return.
@@ -333,7 +333,7 @@ mod tests {
     fn test_compile_call_emits_correct_fn_idx() {
         // 関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝ 返す 二倍（５）；
         let src = "関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝返す 二倍（５）；";
-        let ast = Parser::new(Lexer::new(src).tokenize()).parse();
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
         let mut c = Compiler::new();
         let script = c.compile(&ast);
         // Script: LoadConst(5), Call(0, 1), Return

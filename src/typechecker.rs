@@ -241,7 +241,7 @@ mod tests {
     use crate::parser::{Parser, Stmt};
 
     fn parse(src: &str) -> Vec<Stmt> {
-        Parser::new(Lexer::new(src).tokenize()).parse()
+        Parser::new(Lexer::new(src).tokenize()).parse().unwrap()
     }
 
     #[test]

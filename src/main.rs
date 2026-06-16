@@ -26,7 +26,10 @@ fn main() {
     });
 
     let tokens = Lexer::new(&source).tokenize();
-    let ast = Parser::new(tokens).parse();
+    let ast = Parser::new(tokens).parse().unwrap_or_else(|e| {
+        eprintln!("構文エラー: {:?}", e);
+        process::exit(1);
+    });
 
     if let Err(e) = TypeChecker::new().check(&ast) {
         eprintln!("型エラー: {:?}", e);
@@ -35,7 +38,12 @@ fn main() {
 
     let mut compiler = Compiler::new();
     let instructions = compiler.compile(&ast);
-    let result = Vm::with_chunks(compiler.constants, compiler.chunks, instructions).run();
+    let result = Vm::with_chunks(compiler.constants, compiler.chunks, instructions)
+        .run()
+        .unwrap_or_else(|e| {
+            eprintln!("実行時エラー: {:?}", e);
+            process::exit(1);
+        });
 
     if let Some(value) = result {
         println!("{}", display_value(&value));
