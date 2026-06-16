@@ -72,7 +72,7 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
-    Return(Expr, Span),
+    Return(Option<Expr>, Span),
     Print(Expr, Span),
     If {
         condition: Expr,
@@ -120,6 +120,8 @@ pub enum Stmt {
         name: String,
         span: Span,
     },
+    Break(Span),
+    Continue(Span),
 }
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -227,6 +229,8 @@ impl Parser {
             TokenKind::KwEach => self.parse_for_each(),
             TokenKind::KwTry => self.parse_try_catch(),
             TokenKind::KwImport => self.parse_import(),
+            TokenKind::KwBreak => self.parse_break(),
+            TokenKind::KwContinue => self.parse_continue(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
             TokenKind::Ident(_) if self.peek_next() == &TokenKind::LBracket => {
                 self.parse_index_assign()
@@ -347,9 +351,27 @@ impl Parser {
     fn parse_return(&mut self) -> Result<Stmt, ParseError> {
         let span = self.peek_span();
         self.advance(); // consume 返す
+        if self.peek() == &TokenKind::Semi {
+            self.advance();
+            return Ok(Stmt::Return(None, span));
+        }
         let expr = self.parse_expr()?;
         self.expect(&TokenKind::Semi)?;
-        Ok(Stmt::Return(expr, span))
+        Ok(Stmt::Return(Some(expr), span))
+    }
+
+    fn parse_break(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        self.advance(); // consume 抜ける
+        self.expect(&TokenKind::Semi)?;
+        Ok(Stmt::Break(span))
+    }
+
+    fn parse_continue(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        self.advance(); // consume 続ける
+        self.expect(&TokenKind::Semi)?;
+        Ok(Stmt::Continue(span))
     }
 
     fn parse_if(&mut self) -> Result<Stmt, ParseError> {
@@ -735,6 +757,8 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwCatch => "「失敗」".to_string(),
         TokenKind::KwImport => "「取り込む」".to_string(),
         TokenKind::KwNewArray => "「新配列」".to_string(),
+        TokenKind::KwBreak => "「抜ける」".to_string(),
+        TokenKind::KwContinue => "「続ける」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
@@ -912,7 +936,7 @@ mod tests {
         let ast = Parser::new(tokens).parse().unwrap();
         assert!(matches!(
             &ast[0],
-            Stmt::Return(Expr::BinOp { op: BinOpKind::Add, lhs, rhs }, _)
+            Stmt::Return(Some(Expr::BinOp { op: BinOpKind::Add, lhs, rhs }), _)
             if matches!(lhs.as_ref(), Expr::Ident(n) if n == "年齢")
                 && matches!(rhs.as_ref(), Expr::LitInt(1))
         ));
@@ -942,10 +966,10 @@ mod tests {
         assert!(matches!(
             &body[0],
             Stmt::Return(
-                Expr::BinOp {
+                Some(Expr::BinOp {
                     op: BinOpKind::Add,
                     ..
-                },
+                }),
                 _
             )
         ));
@@ -1117,7 +1141,7 @@ mod tests {
         let src =
             "関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝返す 加算（１、２）；";
         let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
-        let Stmt::Return(Expr::Call { name, args }, _) = &ast[1] else {
+        let Stmt::Return(Some(Expr::Call { name, args }), _) = &ast[1] else {
             panic!("expected Return(Call)")
         };
         assert_eq!(name, "加算");
@@ -1156,7 +1180,7 @@ mod tests {
         // １ ＝＝ １ かつ ２ ＝＝ ２
         let tokens = Lexer::new("返す １ ＝＝ １ かつ ２ ＝＝ ２；").tokenize();
         let ast = Parser::new(tokens).parse().unwrap();
-        let Stmt::Return(expr, _) = &ast[0] else {
+        let Stmt::Return(Some(expr), _) = &ast[0] else {
             panic!()
         };
         let Expr::BinOp { op, lhs, rhs } = expr else {
@@ -1186,7 +1210,7 @@ mod tests {
         let ast = Parser::new(tokens).parse().unwrap();
         assert!(matches!(
             &ast[0],
-            Stmt::Return(Expr::UnaryNot(inner), _) if matches!(inner.as_ref(), Expr::LitBool(true))
+            Stmt::Return(Some(Expr::UnaryNot(inner)), _) if matches!(inner.as_ref(), Expr::LitBool(true))
         ));
     }
 
@@ -1197,10 +1221,10 @@ mod tests {
         assert!(matches!(
             &ast[0],
             Stmt::Return(
-                Expr::BinOp {
+                Some(Expr::BinOp {
                     op: BinOpKind::LtEq,
                     ..
-                },
+                }),
                 _
             )
         ));
@@ -1241,7 +1265,7 @@ mod tests {
         let ast = Parser::new(tokens).parse().unwrap();
         assert!(matches!(
             &ast[0],
-            Stmt::Return(Expr::Index { array, index }, _)
+            Stmt::Return(Some(Expr::Index { array, index }), _)
             if matches!(array.as_ref(), Expr::Ident(n) if n == "数字")
                 && matches!(index.as_ref(), Expr::LitInt(1))
         ));
@@ -1344,7 +1368,7 @@ mod tests {
         // １０ ％ ３ ＋ １ should parse as (10 % 3) + 1, Mod binding tighter than Add.
         let tokens = Lexer::new("返す １０ ％ ３ ＋ １；").tokenize();
         let ast = Parser::new(tokens).parse().unwrap();
-        let Stmt::Return(expr, _) = &ast[0] else {
+        let Stmt::Return(Some(expr), _) = &ast[0] else {
             panic!()
         };
         let Expr::BinOp { op, lhs, rhs } = expr else {
@@ -1363,6 +1387,40 @@ mod tests {
         assert_eq!(inner_op, &BinOpKind::Mod);
         assert!(matches!(il.as_ref(), Expr::LitInt(10)));
         assert!(matches!(ir.as_ref(), Expr::LitInt(3)));
+    }
+
+    #[test]
+    fn test_parse_break_stmt() {
+        let ast = parse_helper("間 真 ならば ｛ 抜ける； ｝");
+        let Stmt::While { body, .. } = &ast[0] else {
+            panic!()
+        };
+        assert!(matches!(body[0], Stmt::Break(_)));
+    }
+
+    #[test]
+    fn test_parse_continue_stmt() {
+        let ast = parse_helper("間 真 ならば ｛ 続ける； ｝");
+        let Stmt::While { body, .. } = &ast[0] else {
+            panic!()
+        };
+        assert!(matches!(body[0], Stmt::Continue(_)));
+    }
+
+    #[test]
+    fn test_parse_bare_return() {
+        let ast = parse_helper("返す；");
+        assert!(matches!(ast[0], Stmt::Return(None, _)));
+    }
+
+    #[test]
+    fn test_parse_return_with_expr_still_works() {
+        let ast = parse_helper("返す ５；");
+        assert!(matches!(ast[0], Stmt::Return(Some(Expr::LitInt(5)), _)));
+    }
+
+    fn parse_helper(src: &str) -> Vec<Stmt> {
+        Parser::new(Lexer::new(src).tokenize()).parse().unwrap()
     }
 
     #[test]

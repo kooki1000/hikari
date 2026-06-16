@@ -135,6 +135,25 @@ pub struct Compiler {
     fn_index: HashMap<String, u16>, // function name → chunk index
     synthetic_counter: u32,         // disambiguates ForEach's hidden locals
     script_scopes: Scopes,          // persists slots across repeated compile() calls (REPL)
+    loop_targets: Vec<LoopTarget>,  // enclosing-loop patch points for 抜ける／続ける
+}
+
+// For While, continue_target is known immediately (loop_start, where the
+// condition is re-checked) so 続ける can emit its Jump directly. For
+// ForRange/ForEach the increment step is compiled AFTER the body, so its
+// offset isn't known while the body (and any 続ける within it) is being
+// compiled; jumping to loop_start instead would skip the increment and loop
+// forever, so those continues are deferred via continue_jump_idxs and
+// back-patched once the increment's start index is known, the same way
+// break_jump_idxs is back-patched once after_loop is known.
+enum ContinueTarget {
+    Known(usize),
+    Deferred(Vec<usize>),
+}
+
+struct LoopTarget {
+    continue_target: ContinueTarget,
+    break_jump_idxs: Vec<usize>,
 }
 
 struct Scopes {
@@ -187,6 +206,7 @@ impl Compiler {
             fn_index: HashMap::new(),
             synthetic_counter: 0,
             script_scopes: Scopes::new(),
+            loop_targets: Vec::new(),
         }
     }
 
@@ -306,6 +326,10 @@ impl Compiler {
                 let jump_if_false_idx = instrs.len();
                 instrs.push(Instruction::JumpIfFalse(0));
                 scopes.enter();
+                self.loop_targets.push(LoopTarget {
+                    continue_target: ContinueTarget::Known(loop_start as usize),
+                    break_jump_idxs: Vec::new(),
+                });
                 for s in body {
                     self.emit_stmt(s, instrs, scopes);
                 }
@@ -313,10 +337,41 @@ impl Compiler {
                 instrs.push(Instruction::Jump(loop_start));
                 let after_loop = instrs.len() as u16;
                 instrs[jump_if_false_idx] = Instruction::JumpIfFalse(after_loop);
+                let target = self.loop_targets.pop().expect("pushed above");
+                for idx in target.break_jump_idxs {
+                    instrs[idx] = Instruction::Jump(after_loop);
+                }
             }
             Stmt::Return(expr, _) => {
-                self.emit_expr(expr, instrs, scopes);
+                if let Some(expr) = expr {
+                    self.emit_expr(expr, instrs, scopes);
+                }
                 instrs.push(Instruction::Return);
+            }
+            Stmt::Break(_) => {
+                let idx = instrs.len();
+                instrs.push(Instruction::Jump(0));
+                self.loop_targets
+                    .last_mut()
+                    .expect("guaranteed inside a loop by the typechecker")
+                    .break_jump_idxs
+                    .push(idx);
+            }
+            Stmt::Continue(_) => {
+                let top = self
+                    .loop_targets
+                    .last_mut()
+                    .expect("guaranteed inside a loop by the typechecker");
+                match &mut top.continue_target {
+                    ContinueTarget::Known(idx) => {
+                        instrs.push(Instruction::Jump(*idx as u16));
+                    }
+                    ContinueTarget::Deferred(idxs) => {
+                        let idx = instrs.len();
+                        instrs.push(Instruction::Jump(0));
+                        idxs.push(idx);
+                    }
+                }
             }
             Stmt::Expr(expr, _) => {
                 self.emit_expr(expr, instrs, scopes);
@@ -356,9 +411,19 @@ impl Compiler {
                 instrs.push(Instruction::LessThan);
                 let jif_idx = instrs.len();
                 instrs.push(Instruction::JumpIfFalse(0));
+                self.loop_targets.push(LoopTarget {
+                    continue_target: ContinueTarget::Deferred(Vec::new()),
+                    break_jump_idxs: Vec::new(),
+                });
                 for s in body {
                     self.emit_stmt(s, instrs, scopes);
                 }
+                // 続ける must land HERE, at the increment, not at loop_start:
+                // loop_start re-checks the condition (fine in principle), but
+                // jumping there directly would also skip this increment, so
+                // the loop variable would never advance and the loop would
+                // never terminate.
+                let increment_start = instrs.len() as u16;
                 instrs.push(Instruction::LoadLocal(slot));
                 let one_idx = self.add_constant(Value::Int(1));
                 instrs.push(Instruction::LoadConst(one_idx));
@@ -367,6 +432,15 @@ impl Compiler {
                 instrs.push(Instruction::Jump(loop_start));
                 let after_loop = instrs.len() as u16;
                 instrs[jif_idx] = Instruction::JumpIfFalse(after_loop);
+                let target = self.loop_targets.pop().expect("pushed above");
+                for idx in target.break_jump_idxs {
+                    instrs[idx] = Instruction::Jump(after_loop);
+                }
+                if let ContinueTarget::Deferred(idxs) = target.continue_target {
+                    for idx in idxs {
+                        instrs[idx] = Instruction::Jump(increment_start);
+                    }
+                }
                 scopes.exit();
             }
             Stmt::ForEach {
@@ -394,9 +468,17 @@ impl Compiler {
                 instrs.push(Instruction::GetIndex);
                 let var_slot = scopes.declare(var);
                 instrs.push(Instruction::StoreLocal(var_slot));
+                self.loop_targets.push(LoopTarget {
+                    continue_target: ContinueTarget::Deferred(Vec::new()),
+                    break_jump_idxs: Vec::new(),
+                });
                 for s in body {
                     self.emit_stmt(s, instrs, scopes);
                 }
+                // Same reasoning as ForRange: 続ける must land at the index
+                // increment below, not at loop_start, or the index would
+                // never advance and the loop would never terminate.
+                let increment_start = instrs.len() as u16;
                 instrs.push(Instruction::LoadLocal(idx_slot));
                 let one_idx = self.add_constant(Value::Int(1));
                 instrs.push(Instruction::LoadConst(one_idx));
@@ -405,6 +487,15 @@ impl Compiler {
                 instrs.push(Instruction::Jump(loop_start));
                 let after_loop = instrs.len() as u16;
                 instrs[jif_idx] = Instruction::JumpIfFalse(after_loop);
+                let target = self.loop_targets.pop().expect("pushed above");
+                for idx in target.break_jump_idxs {
+                    instrs[idx] = Instruction::Jump(after_loop);
+                }
+                if let ContinueTarget::Deferred(idxs) = target.continue_target {
+                    for idx in idxs {
+                        instrs[idx] = Instruction::Jump(increment_start);
+                    }
+                }
                 scopes.exit();
             }
             Stmt::TryCatch {
@@ -833,5 +924,44 @@ mod tests {
         let src = "取り込む 「数学」；整数 結果 ＝ 累乗（２、３）；";
         let (instrs, _) = compile(src);
         assert!(instrs.contains(&Instruction::CallBuiltin(BuiltinFn::Pow, 2)));
+    }
+
+    // ── 8b: break / continue ─────────────────────────────────────────────
+
+    #[test]
+    fn test_compile_while_break_jumps_to_after_loop() {
+        // layout: [0] LoadConst(0)=真  [loop_start=1] ... condition is the
+        // same constant reload, [jif] JumpIfFalse(after), body: Break, then
+        // back-edge Jump(loop_start), [after]
+        let src = "間 真 ならば ｛ 抜ける； ｝";
+        let (instrs, _) = compile(src);
+        let after_loop = instrs.len() as u16;
+        let break_jump = instrs
+            .iter()
+            .find(|i| matches!(i, Instruction::Jump(n) if *n == after_loop));
+        assert!(break_jump.is_some());
+    }
+
+    #[test]
+    fn test_compile_while_continue_jumps_to_loop_start() {
+        let src = "間 真 ならば ｛ 続ける； ｝";
+        let (instrs, _) = compile(src);
+        // loop_start is index 0 (condition re-check starts the loop).
+        assert!(instrs.contains(&Instruction::Jump(0)));
+    }
+
+    #[test]
+    fn test_compile_for_range_continue_targets_increment_not_loop_start() {
+        let src = "繰り返す ｉ ＝ ０ から ５ ならば ｛ 続ける； ｝";
+        let (instrs, _) = compile(src);
+        // The continue's Jump target must be the increment step's LoadLocal,
+        // not loop_start (index 1, where the condition re-check begins).
+        let continue_jump_target = instrs.iter().find_map(|i| match i {
+            Instruction::Jump(n) if *n != 1 => Some(*n),
+            _ => None,
+        });
+        assert!(continue_jump_target.is_some());
+        let target = continue_jump_target.unwrap() as usize;
+        assert!(matches!(instrs[target], Instruction::LoadLocal(_)));
     }
 }

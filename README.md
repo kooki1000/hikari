@@ -101,6 +101,24 @@ Hikari's syntax uses Japanese reserved words and full-width characters for all o
 ｝
 ```
 
+### Break and Continue
+
+`抜ける` (break) exits the nearest enclosing loop immediately; `続ける` (continue) skips to the next iteration. Both are only valid inside a `間`/`繰り返す`/`各` body:
+
+```
+整数 合計 ＝ ０；
+整数 ｉ ＝ １；
+間 ｉ ≦ １０ ならば ｛
+    もし ｉ ％ ２ ＝＝ ０ ならば ｛
+        ｉ ＝ ｉ ＋ １；
+        続ける；
+    ｝
+    合計 ＝ 合計 ＋ ｉ；
+    ｉ ＝ ｉ ＋ １；
+｝
+（合計 is now 1+3+5+7+9 = 25）
+```
+
 ### Counting For-Loop
 
 ```
@@ -153,6 +171,8 @@ Parameters and call arguments are comma-separated with `、`:
 ```
 
 Function bodies are isolated: they only see their own parameters, not variables from the enclosing scope (matching the call-frame model of the VM — see Scoping below).
+
+A `無`-returning function may use a bare `返す；` (no expression) to return early; non-`無` functions must always return a value, and every control-flow path through a non-`無` function's body must end in `返す` or it's a compile-time error.
 
 ### Boolean Literals
 

@@ -1560,6 +1560,72 @@ mod tests {
         assert_eq!(run_result(src), Err(RuntimeError::DivisionByZero));
     }
 
+    // ── 8b: break / continue ─────────────────────────────────────────────
+
+    #[test]
+    fn test_vm_while_break_stops_early() {
+        let src = "整数 カウンタ ＝ ０；間 カウンタ ＜ １０ ならば ｛ もし カウンタ ＝＝ ５ ならば ｛ 抜ける； ｝ カウンタ ＝ カウンタ ＋ １； ｝返す カウンタ；";
+        assert_eq!(run(src), Some(Value::Int(5)));
+    }
+
+    #[test]
+    fn test_vm_while_continue_skips_even_numbers_sums_odds() {
+        // 続ける skips adding on even numbers, but the loop variable still
+        // increments and the loop still completes: 1+3+5+7+9 = 25.
+        let src = "整数 合計 ＝ ０；整数 ｉ ＝ １；間 ｉ ≦ １０ ならば ｛ もし ｉ ％ ２ ＝＝ ０ ならば ｛ ｉ ＝ ｉ ＋ １；続ける； ｝ 合計 ＝ 合計 ＋ ｉ；ｉ ＝ ｉ ＋ １； ｝返す 合計；";
+        assert_eq!(run(src), Some(Value::Int(25)));
+    }
+
+    #[test]
+    fn test_vm_for_range_break_stops_early() {
+        let src = "整数 合計 ＝ ０；繰り返す ｉ ＝ ０ から １０ ならば ｛ もし ｉ ＝＝ ５ ならば ｛ 抜ける； ｝ 合計 ＝ 合計 ＋ １； ｝返す 合計；";
+        assert_eq!(run(src), Some(Value::Int(5)));
+    }
+
+    #[test]
+    fn test_vm_for_range_continue_skips_even_increments_correctly() {
+        // Proves the increment step still runs on a 続ける'd iteration:
+        // summing 0..10 while skipping evens gives 1+3+5+7+9 = 25.
+        let src = "整数 合計 ＝ ０；繰り返す ｉ ＝ ０ から １０ ならば ｛ もし ｉ ％ ２ ＝＝ ０ ならば ｛ 続ける； ｝ 合計 ＝ 合計 ＋ ｉ； ｝返す 合計；";
+        assert_eq!(run(src), Some(Value::Int(25)));
+    }
+
+    #[test]
+    fn test_vm_for_each_break_stops_early() {
+        let src = "整数列 数字 ＝ 【１、２、３、４、５】；整数 合計 ＝ ０；各 値 ： 数字 ならば ｛ もし 値 ＝＝ ３ ならば ｛ 抜ける； ｝ 合計 ＝ 合計 ＋ 値； ｝返す 合計；";
+        assert_eq!(run(src), Some(Value::Int(3))); // 1 + 2
+    }
+
+    #[test]
+    fn test_vm_for_each_continue_skips_even_increments_correctly() {
+        let src = "整数列 数字 ＝ 【１、２、３、４、５、６、７、８、９、１０】；整数 合計 ＝ ０；各 値 ： 数字 ならば ｛ もし 値 ％ ２ ＝＝ ０ ならば ｛ 続ける； ｝ 合計 ＝ 合計 ＋ 値； ｝返す 合計；";
+        assert_eq!(run(src), Some(Value::Int(25)));
+    }
+
+    #[test]
+    fn test_vm_break_inside_nested_if_inside_loop() {
+        let src = "整数 カウンタ ＝ ０；間 真 ならば ｛ もし 真 ならば ｛ もし カウンタ ＝＝ ３ ならば ｛ 抜ける； ｝ ｝ カウンタ ＝ カウンタ ＋ １； ｝返す カウンタ；";
+        assert_eq!(run(src), Some(Value::Int(3)));
+    }
+
+    #[test]
+    fn test_vm_outer_loop_break_unaffected_by_inner_loop_break() {
+        // Inner loop's 抜ける only exits the inner loop (after 2 inner runs
+        // each outer iteration); outer loop runs its own 3 iterations.
+        let src = "整数 外回数 ＝ ０；整数 内合計 ＝ ０；繰り返す 外 ＝ ０ から ３ ならば ｛ 外回数 ＝ 外回数 ＋ １；繰り返す 内 ＝ ０ から １０ ならば ｛ もし 内 ＝＝ ２ ならば ｛ 抜ける； ｝ 内合計 ＝ 内合計 ＋ １； ｝ ｝返す 外回数 ＊ １００ ＋ 内合計；";
+        // Outer runs 3 times; inner runs 2 iterations (0,1) each time → 6.
+        assert_eq!(run(src), Some(Value::Int(306)));
+    }
+
+    // ── 8c: bare return / void semantics ──────────────────────────────────
+
+    #[test]
+    fn test_vm_bare_return_in_void_function_keeps_stack_balanced() {
+        let src =
+            "関数 何もしない（）ー＞ 無 ｛ 返す； ｝何もしない（）；整数 結果 ＝ ４２；返す 結果；";
+        assert_eq!(run(src), Some(Value::Int(42)));
+    }
+
     #[test]
     fn test_vm_build_sort_print_array_program() {
         let src = "取り込む 「配列」；整数列 数字 ＝ 新配列＜整数＞；追加（数字、５）；追加（数字、１）；追加（数字、３）；整列（数字）；返す 数字；";

@@ -29,6 +29,8 @@ pub enum TokenKind {
     KwCatch,    // 失敗
     KwImport,   // 取り込む
     KwNewArray, // 新配列
+    KwBreak,    // 抜ける
+    KwContinue, // 続ける
 
     // Literals
     LitInt(i64),
@@ -218,6 +220,8 @@ impl Lexer {
             "失敗" => TokenKind::KwCatch,
             "取り込む" => TokenKind::KwImport,
             "新配列" => TokenKind::KwNewArray,
+            "抜ける" => TokenKind::KwBreak,
+            "続ける" => TokenKind::KwContinue,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -765,6 +769,17 @@ mod tests {
                 TokenKind::LitInt(3),
                 TokenKind::Eof,
             ]
+        );
+    }
+
+    #[test]
+    fn test_lex_break_continue_keywords() {
+        let src = "抜ける 続ける";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![&TokenKind::KwBreak, &TokenKind::KwContinue, &TokenKind::Eof,]
         );
     }
 
