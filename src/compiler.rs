@@ -208,7 +208,9 @@ impl Compiler {
                     instrs[jump_if_false_idx] = Instruction::JumpIfFalse(after_then);
                 }
             }
-            Stmt::While { condition, body, .. } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 let loop_start = instrs.len() as u16;
                 self.emit_expr(condition, instrs, locals);
                 let jump_if_false_idx = instrs.len();

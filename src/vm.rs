@@ -305,9 +305,7 @@ fn cmp_ge(lhs: Value, rhs: Value) -> Result<bool, RuntimeError> {
 fn normalize_digits(s: &str) -> String {
     s.chars()
         .map(|c| match c {
-            '\u{FF10}'..='\u{FF19}' => {
-                char::from_u32(c as u32 - 0xFF10 + '0' as u32).unwrap_or(c)
-            }
+            '\u{FF10}'..='\u{FF19}' => char::from_u32(c as u32 - 0xFF10 + '0' as u32).unwrap_or(c),
             '．' => '.',
             'ー' => '-',
             _ => c,
@@ -330,17 +328,26 @@ fn call_builtin(builtin: BuiltinFn, args: &mut Vec<Value>) -> Result<Value, Runt
             Ok(Value::Str(trimmed.to_string()))
         }
         BuiltinFn::ParseInt => match args.pop() {
-            Some(Value::Str(s)) => normalize_digits(&s)
-                .parse::<i64>()
-                .map(Value::Int)
-                .map_err(|_| RuntimeError::InvalidConversion(format!("「{}」は整数に変換できません。", s))),
+            Some(Value::Str(s)) => {
+                normalize_digits(&s)
+                    .parse::<i64>()
+                    .map(Value::Int)
+                    .map_err(|_| {
+                        RuntimeError::InvalidConversion(format!(
+                            "「{}」は整数に変換できません。",
+                            s
+                        ))
+                    })
+            }
             _ => Err(RuntimeError::TypeMismatch),
         },
         BuiltinFn::ParseFloat => match args.pop() {
             Some(Value::Str(s)) => normalize_digits(&s)
                 .parse::<f64>()
                 .map(Value::Float)
-                .map_err(|_| RuntimeError::InvalidConversion(format!("「{}」は小数に変換できません。", s))),
+                .map_err(|_| {
+                    RuntimeError::InvalidConversion(format!("「{}」は小数に変換できません。", s))
+                }),
             _ => Err(RuntimeError::TypeMismatch),
         },
         BuiltinFn::ToStr => match args.pop() {
@@ -526,7 +533,8 @@ mod tests {
     fn test_vm_multi_param_call() {
         // 関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝
         // 返す 加算（３、４）；  →  7
-        let src = "関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝返す 加算（３、４）；";
+        let src =
+            "関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝返す 加算（３、４）；";
         assert_eq!(run(src), Some(Value::Int(7)));
     }
 

@@ -48,7 +48,10 @@ pub enum TypeError {
     // Condition in もし/間 is not Bool.
     ConditionNotBool(HikariType, Span),
     // Operand of a unary operator (単項マイナス／否定) has an unsupported type.
-    UnaryOpMismatch { got: HikariType, span: Span },
+    UnaryOpMismatch {
+        got: HikariType,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -70,7 +73,12 @@ impl TypeError {
 impl std::fmt::Display for TypeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeError::VarDeclMismatch { name, declared, got, .. } => write!(
+            TypeError::VarDeclMismatch {
+                name,
+                declared,
+                got,
+                ..
+            } => write!(
                 f,
                 "変数「{}」の型が一致しません: 「{}」として宣言されましたが、「{}」の値が代入されました。",
                 name,
@@ -97,12 +105,19 @@ impl std::fmt::Display for TypeError {
             TypeError::UndeclaredFunction(name, _) => {
                 write!(f, "関数「{}」は宣言されていません。", name)
             }
-            TypeError::ArgCountMismatch { name, expected, got, .. } => write!(
+            TypeError::ArgCountMismatch {
+                name,
+                expected,
+                got,
+                ..
+            } => write!(
                 f,
                 "関数「{}」の引数の数が一致しません: {}個必要ですが、{}個指定されました。",
                 name, expected, got
             ),
-            TypeError::ArgTypeMismatch { name, param, got, .. } => write!(
+            TypeError::ArgTypeMismatch {
+                name, param, got, ..
+            } => write!(
                 f,
                 "関数「{}」の引数の型が一致しません: 「{}」が必要ですが、「{}」が渡されました。",
                 name,
@@ -184,7 +199,12 @@ impl TypeChecker {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
         match stmt {
-            Stmt::VarDecl { ty, name, value, span } => {
+            Stmt::VarDecl {
+                ty,
+                name,
+                value,
+                span,
+            } => {
                 let inferred = self.infer_expr(value, *span)?;
                 if inferred != *ty {
                     return Err(TypeError::VarDeclMismatch {
@@ -264,7 +284,11 @@ impl TypeChecker {
                 Ok(())
             }
 
-            Stmt::While { condition, body, span } => {
+            Stmt::While {
+                condition,
+                body,
+                span,
+            } => {
                 let cond_ty = self.infer_expr(condition, *span)?;
                 if cond_ty != HikariType::Bool {
                     return Err(TypeError::ConditionNotBool(cond_ty, *span));
@@ -521,7 +545,10 @@ mod tests {
         let src = "整数 Ｎ ＝ ０；間 Ｎ ならば ｛ 整数 Ｎ ＝ Ｎ ＋ １； ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
-        assert!(matches!(err, TypeError::ConditionNotBool(HikariType::Int, _)));
+        assert!(matches!(
+            err,
+            TypeError::ConditionNotBool(HikariType::Int, _)
+        ));
     }
 
     #[test]
@@ -529,7 +556,10 @@ mod tests {
         let src = "整数 Ｎ ＝ ０；もし Ｎ ならば ｛ 印刷（Ｎ）； ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
-        assert!(matches!(err, TypeError::ConditionNotBool(HikariType::Int, _)));
+        assert!(matches!(
+            err,
+            TypeError::ConditionNotBool(HikariType::Int, _)
+        ));
     }
 
     #[test]
@@ -655,7 +685,10 @@ mod tests {
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(
             err,
-            TypeError::UnaryOpMismatch { got: HikariType::Bool, .. }
+            TypeError::UnaryOpMismatch {
+                got: HikariType::Bool,
+                ..
+            }
         ));
     }
 
@@ -681,7 +714,10 @@ mod tests {
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(
             err,
-            TypeError::UnaryOpMismatch { got: HikariType::Int, .. }
+            TypeError::UnaryOpMismatch {
+                got: HikariType::Int,
+                ..
+            }
         ));
     }
 
