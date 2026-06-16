@@ -1,5 +1,15 @@
 use crate::compiler::{Chunk, Instruction, Value};
 
+// ── Error type ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, PartialEq)]
+pub enum RuntimeError {
+    StackUnderflow,
+    UninitializedLocal(u16),
+    DivisionByZero,
+    TypeMismatch,
+}
+
 // ── Call frame ────────────────────────────────────────────────────────────────
 
 struct Frame {
@@ -68,13 +78,13 @@ impl Vm {
         }
     }
 
-    pub fn run(&mut self) -> Option<Value> {
+    pub fn run(&mut self) -> Result<Option<Value>, RuntimeError> {
         loop {
             let frame = self.frames.last_mut().expect("no active frame");
             // Implicit return when execution reaches the end of a chunk.
             if frame.ip >= frame.instructions.len() {
                 self.frames.pop();
-                return None;
+                return Ok(None);
             }
             let instr = frame.instructions[frame.ip].clone();
             frame.ip += 1;
@@ -86,28 +96,31 @@ impl Vm {
                 Instruction::LoadLocal(slot) => {
                     let val = self.frames.last().unwrap().locals[slot as usize]
                         .clone()
-                        .expect("load of uninitialised local");
+                        .ok_or(RuntimeError::UninitializedLocal(slot))?;
                     self.stack.push(val);
                 }
                 Instruction::StoreLocal(slot) => {
-                    let val = self.stack.pop().expect("stack underflow on StoreLocal");
+                    let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                     self.frames.last_mut().unwrap().locals[slot as usize] = Some(val);
                 }
                 Instruction::Add => {
-                    let (l, r) = self.pop2();
-                    self.stack.push(arith(l, r, |a, b| a + b, |a, b| a + b));
+                    let (l, r) = self.pop2()?;
+                    self.stack.push(arith(l, r, |a, b| a + b, |a, b| a + b)?);
                 }
                 Instruction::Sub => {
-                    let (l, r) = self.pop2();
-                    self.stack.push(arith(l, r, |a, b| a - b, |a, b| a - b));
+                    let (l, r) = self.pop2()?;
+                    self.stack.push(arith(l, r, |a, b| a - b, |a, b| a - b)?);
                 }
                 Instruction::Mul => {
-                    let (l, r) = self.pop2();
-                    self.stack.push(arith(l, r, |a, b| a * b, |a, b| a * b));
+                    let (l, r) = self.pop2()?;
+                    self.stack.push(arith(l, r, |a, b| a * b, |a, b| a * b)?);
                 }
                 Instruction::Div => {
-                    let (l, r) = self.pop2();
-                    self.stack.push(arith(l, r, |a, b| a / b, |a, b| a / b));
+                    let (l, r) = self.pop2()?;
+                    if r == Value::Int(0) {
+                        return Err(RuntimeError::DivisionByZero);
+                    }
+                    self.stack.push(arith(l, r, |a, b| a / b, |a, b| a / b)?);
                 }
                 Instruction::Call(fn_idx, arg_count) => {
                     let chunk = &self.chunks[fn_idx as usize];
@@ -119,19 +132,19 @@ impl Vm {
                     // Execution continues inside the new frame on the next iteration.
                 }
                 Instruction::Equal => {
-                    let (l, r) = self.pop2();
+                    let (l, r) = self.pop2()?;
                     self.stack.push(Value::Bool(l == r));
                 }
                 Instruction::LessThan => {
-                    let (l, r) = self.pop2();
-                    self.stack.push(Value::Bool(cmp_lt(l, r)));
+                    let (l, r) = self.pop2()?;
+                    self.stack.push(Value::Bool(cmp_lt(l, r)?));
                 }
                 Instruction::GreaterThan => {
-                    let (l, r) = self.pop2();
-                    self.stack.push(Value::Bool(cmp_gt(l, r)));
+                    let (l, r) = self.pop2()?;
+                    self.stack.push(Value::Bool(cmp_gt(l, r)?));
                 }
                 Instruction::JumpIfFalse(offset) => {
-                    let val = self.stack.pop().expect("stack underflow on JumpIfFalse");
+                    let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                     if val == Value::Bool(false) {
                         self.frames.last_mut().unwrap().ip = offset as usize;
                     }
@@ -140,14 +153,14 @@ impl Vm {
                     self.frames.last_mut().unwrap().ip = offset as usize;
                 }
                 Instruction::Print => {
-                    let val = self.stack.pop().expect("stack underflow on Print");
+                    let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                     println!("{}", display_value(&val));
                 }
                 Instruction::Return => {
                     let return_val = self.stack.pop();
                     self.frames.pop();
                     if self.frames.is_empty() {
-                        return return_val;
+                        return Ok(return_val);
                     }
                     // Push return value back onto the caller's stack.
                     if let Some(val) = return_val {
@@ -158,10 +171,10 @@ impl Vm {
         }
     }
 
-    fn pop2(&mut self) -> (Value, Value) {
-        let rhs = self.stack.pop().expect("stack underflow");
-        let lhs = self.stack.pop().expect("stack underflow");
-        (lhs, rhs)
+    fn pop2(&mut self) -> Result<(Value, Value), RuntimeError> {
+        let rhs = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+        let lhs = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+        Ok((lhs, rhs))
     }
 }
 
@@ -174,19 +187,19 @@ pub fn display_value(val: &Value) -> String {
     }
 }
 
-fn cmp_lt(lhs: Value, rhs: Value) -> bool {
+fn cmp_lt(lhs: Value, rhs: Value) -> Result<bool, RuntimeError> {
     match (lhs, rhs) {
-        (Value::Int(a), Value::Int(b)) => a < b,
-        (Value::Float(a), Value::Float(b)) => a < b,
-        _ => panic!("type error in comparison"),
+        (Value::Int(a), Value::Int(b)) => Ok(a < b),
+        (Value::Float(a), Value::Float(b)) => Ok(a < b),
+        _ => Err(RuntimeError::TypeMismatch),
     }
 }
 
-fn cmp_gt(lhs: Value, rhs: Value) -> bool {
+fn cmp_gt(lhs: Value, rhs: Value) -> Result<bool, RuntimeError> {
     match (lhs, rhs) {
-        (Value::Int(a), Value::Int(b)) => a > b,
-        (Value::Float(a), Value::Float(b)) => a > b,
-        _ => panic!("type error in comparison"),
+        (Value::Int(a), Value::Int(b)) => Ok(a > b),
+        (Value::Float(a), Value::Float(b)) => Ok(a > b),
+        _ => Err(RuntimeError::TypeMismatch),
     }
 }
 
@@ -195,11 +208,11 @@ fn arith(
     rhs: Value,
     int_op: impl Fn(i64, i64) -> i64,
     float_op: impl Fn(f64, f64) -> f64,
-) -> Value {
+) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
-        (Value::Int(a), Value::Int(b)) => Value::Int(int_op(a, b)),
-        (Value::Float(a), Value::Float(b)) => Value::Float(float_op(a, b)),
-        (l, r) => panic!("type error in arithmetic: {:?} and {:?}", l, r),
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(int_op(a, b))),
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(float_op(a, b))),
+        _ => Err(RuntimeError::TypeMismatch),
     }
 }
 
@@ -213,17 +226,19 @@ mod tests {
     use crate::parser::Parser;
 
     fn run(src: &str) -> Option<Value> {
-        let ast = Parser::new(Lexer::new(src).tokenize()).parse();
+        let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
         let mut compiler = Compiler::new();
         let script = compiler.compile(&ast);
-        Vm::with_chunks(compiler.constants, compiler.chunks, script).run()
+        Vm::with_chunks(compiler.constants, compiler.chunks, script)
+            .run()
+            .unwrap()
     }
 
     #[test]
     fn test_vm_push_constant() {
         let constants = vec![Value::Int(42)];
         let instructions = vec![Instruction::LoadConst(0), Instruction::Return];
-        let result = Vm::new(constants, instructions).run();
+        let result = Vm::new(constants, instructions).run().unwrap();
         assert_eq!(result, Some(Value::Int(42)));
     }
 
@@ -320,5 +335,32 @@ mod tests {
         // 返す 二倍（３ ＋ ４）；  →  14
         let src = "関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝返す 二倍（３ ＋ ４）；";
         assert_eq!(run(src), Some(Value::Int(14)));
+    }
+
+    #[test]
+    fn test_vm_division_by_zero_returns_error() {
+        // 整数 結果 ＝ １ ／ ０；
+        let ast = Parser::new(Lexer::new("整数 結果 ＝ １ ／ ０；").tokenize())
+            .parse()
+            .unwrap();
+        let mut compiler = Compiler::new();
+        let script = compiler.compile(&ast);
+        let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
+        assert_eq!(result, Err(RuntimeError::DivisionByZero));
+    }
+
+    #[test]
+    fn test_vm_uninitialized_local_returns_error() {
+        // もし １ ＝＝ ２ ならば ｛ 整数 Ａ ＝ １； ｝ 返す Ａ；
+        // The then-branch never runs, so Ａ's slot is never stored before the load.
+        let ast = Parser::new(
+            Lexer::new("もし １ ＝＝ ２ ならば ｛ 整数 Ａ ＝ １； ｝返す Ａ；").tokenize(),
+        )
+        .parse()
+        .unwrap();
+        let mut compiler = Compiler::new();
+        let script = compiler.compile(&ast);
+        let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
+        assert_eq!(result, Err(RuntimeError::UninitializedLocal(0)));
     }
 }

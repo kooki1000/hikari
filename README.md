@@ -78,7 +78,7 @@ Hikari's syntax uses Japanese reserved words and full-width characters for all o
 
 ## Architecture
 
-The implementation follows a classic pipeline, built strictly with TDD (51 tests, all passing):
+The implementation follows a classic pipeline, built strictly with TDD (56 tests, all passing):
 
 ```
 Source (.hkr)
@@ -132,6 +132,7 @@ cargo test
 | `もし…ならば…違えば` (if/else) | ✅ Done |
 | Comparison operators (`＝＝` `＜` `＞`) | ✅ Done |
 | `間…ならば` (while loop) | ✅ Done |
+| Error recovery (`Result`-based parser/VM errors) | ✅ Done |
 
 ---
 
@@ -139,7 +140,6 @@ cargo test
 
 | Feature | Notes |
 |---------|-------|
-| Error recovery | Replace `panic!` in parser/VM with `Result`-based errors and clean diagnostics |
 | `真` / `偽` boolean literals in programs | Lexer already emits them; parser/type checker need expression-level support |
 | Multiple function parameters | Parser handles one param; needs comma-separated param list |
 | String concatenation | `＋` on `文字列` operands |
