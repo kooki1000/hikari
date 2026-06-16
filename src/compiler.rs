@@ -52,10 +52,12 @@ pub enum Instruction {
     CallBuiltin(BuiltinFn, u8), // CallBuiltin(builtin, arg_count)
     Print,                      // pop and print top of stack
     Return,
-    MakeArray(u16), // pop n values (in order), push a new Value::Array
-    GetIndex,       // pop index, pop array, push the element at index
-    SetIndex,       // pop value, pop index, pop array, mutate array in place
-    ArrayLen,       // pop array, push its length as Value::Int
+    MakeArray(u16),     // pop n values (in order), push a new Value::Array
+    GetIndex,           // pop index, pop array, push the element at index
+    SetIndex,           // pop value, pop index, pop array, mutate array in place
+    ArrayLen,           // pop array, push its length as Value::Int
+    TryStart(u16, u16), // TryStart(catch_target ip, error_var's local slot)
+    TryEnd,             // marks successful completion of a try block
 }
 
 pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
@@ -356,6 +358,33 @@ impl Compiler {
                 let after_loop = instrs.len() as u16;
                 instrs[jif_idx] = Instruction::JumpIfFalse(after_loop);
                 scopes.exit();
+            }
+            Stmt::TryCatch {
+                try_body,
+                error_var,
+                catch_body,
+                ..
+            } => {
+                let try_start_idx = instrs.len();
+                instrs.push(Instruction::TryStart(0, 0)); // placeholder, patched below
+                scopes.enter();
+                for s in try_body {
+                    self.emit_stmt(s, instrs, scopes);
+                }
+                scopes.exit();
+                instrs.push(Instruction::TryEnd);
+                let jump_over_catch_idx = instrs.len();
+                instrs.push(Instruction::Jump(0)); // placeholder
+                let catch_target = instrs.len() as u16;
+                scopes.enter();
+                let error_slot = scopes.declare(error_var);
+                instrs[try_start_idx] = Instruction::TryStart(catch_target, error_slot);
+                for s in catch_body {
+                    self.emit_stmt(s, instrs, scopes);
+                }
+                scopes.exit();
+                let after_catch = instrs.len() as u16;
+                instrs[jump_over_catch_idx] = Instruction::Jump(after_catch);
             }
         }
     }
@@ -679,5 +708,21 @@ mod tests {
         // Final read of outer Ｎ after the if-block must load slot 0, not 1.
         assert!(instrs.contains(&Instruction::LoadLocal(0)));
         assert!(!instrs.contains(&Instruction::LoadLocal(1)));
+    }
+
+    #[test]
+    fn test_compile_try_catch_emits_try_start_end_and_jump() {
+        // layout: [0] TryStart(catch_target, error_slot)
+        //         [1] LoadConst(0)=1, [2] Print     ← try_body
+        //         [3] TryEnd
+        //         [4] Jump(after_catch)
+        //         [catch_target=5] LoadConst(1), [6] Print   ← catch_body
+        //         [after_catch=7]
+        let src = "試す ｛ 印刷（１）； ｝ 失敗 失敗内容 ｛ 印刷（失敗内容）； ｝";
+        let (instrs, _) = compile(src);
+        assert!(matches!(instrs[0], Instruction::TryStart(5, 0)));
+        assert_eq!(instrs[3], Instruction::TryEnd);
+        assert!(matches!(instrs[4], Instruction::Jump(7)));
+        assert_eq!(instrs.len(), 7);
     }
 }

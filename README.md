@@ -174,11 +174,26 @@ Every `｛ ... ｝` block (`もし`/`違えば`, `間`, `繰り返す`, `各`, f
 印刷（値）；  （prints 1 — the outer 値 is untouched）
 ```
 
+### Try / Catch
+
+`試す ｛ ... ｝ 失敗 エラー ｛ ... ｝` catches a runtime error (division by zero, type mismatch, an out-of-range index, a failed `整数化`/`小数化` conversion, etc.) raised while executing the try-body instead of crashing the program. The identifier after `失敗` is bound to the error's message as a `文字列`, scoped to the catch-body only:
+
+```
+試す ｛
+    整数 結果 ＝ １ ／ ０；
+｝ 失敗 エラー ｛
+    印刷（「エラーを捕まえました： 」 ＋ エラー）；
+｝
+印刷（「続行中」）；
+```
+
+If the try-body completes without error, the catch-body is skipped entirely. Errors raised deep inside a nested function call invoked from the try-body are also caught (the VM unwinds call frames and the stack back to where the try-block started). This only catches *runtime* errors — a type error inside a try-body is still rejected at compile time, unaffected by try/catch.
+
 ---
 
 ## Architecture
 
-The implementation follows a classic pipeline, built strictly with TDD (160+ tests, all passing):
+The implementation follows a classic pipeline, built strictly with TDD (170+ tests, all passing):
 
 ```
 Source (.hkr)
@@ -251,6 +266,7 @@ cargo check
 | String concatenation | ✅ Done |
 | Built-ins (`文字数` `入力` `整数化` `小数化` `文字列化`) | ✅ Done |
 | Block scoping (shadowing, no leakage, isolated functions) | ✅ Done |
+| `試す…失敗…` (try/catch with stack unwinding) | ✅ Done |
 | Error recovery (`Result`-based parser/typechecker/VM errors) | ✅ Done |
 | Japanese diagnostics with source snippets | ✅ Done |
 | `真` / `偽` boolean literals in programs | ✅ Done |
@@ -261,7 +277,6 @@ cargo check
 
 | Feature | Notes |
 |---------|-------|
-| Language-level error handling (`試す`/`失敗`) | Try/catch with stack unwinding |
 | Modules (`取り込む`) | Import other `.hkr` files |
 | Standard library (`数学`, `文字列` modules) | `絶対値`, `平方根`, `乱数`, `分割`, `結合`, etc. |
 | REPL (`hikari` with no args) | Interactive mode with persistent state |
