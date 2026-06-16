@@ -89,6 +89,48 @@ pub struct Compiler {
     synthetic_counter: u32,         // disambiguates ForEach's hidden locals
 }
 
+struct Scopes {
+    frames: Vec<HashMap<String, u16>>,
+    next_slot: u16,
+}
+
+impl Scopes {
+    fn new() -> Self {
+        Self {
+            frames: vec![HashMap::new()],
+            next_slot: 0,
+        }
+    }
+
+    fn enter(&mut self) {
+        self.frames.push(HashMap::new());
+    }
+
+    fn exit(&mut self) {
+        self.frames.pop();
+    }
+
+    // Reuses the slot only on same-scope redeclaration; a name that exists
+    // only in an outer scope gets a fresh slot, so the new binding shadows
+    // the outer one without corrupting it.
+    fn declare(&mut self, name: &str) -> u16 {
+        if let Some(&slot) = self.frames.last().unwrap().get(name) {
+            return slot;
+        }
+        let slot = self.next_slot;
+        self.next_slot += 1;
+        self.frames
+            .last_mut()
+            .unwrap()
+            .insert(name.to_string(), slot);
+        slot
+    }
+
+    fn lookup(&self, name: &str) -> Option<u16> {
+        self.frames.iter().rev().find_map(|f| f.get(name).copied())
+    }
+}
+
 impl Compiler {
     pub fn new() -> Self {
         Self {
@@ -115,7 +157,7 @@ impl Compiler {
 
         // Second pass: compile function bodies and the top-level script.
         let mut script_instrs: Vec<Instruction> = Vec::new();
-        let mut script_locals: HashMap<String, u16> = HashMap::new();
+        let mut script_scopes = Scopes::new();
 
         for stmt in stmts {
             match stmt {
@@ -123,20 +165,19 @@ impl Compiler {
                     name, params, body, ..
                 } => {
                     let idx = self.fn_index[name] as usize;
-                    let mut fn_locals: HashMap<String, u16> = HashMap::new();
+                    let mut fn_scopes = Scopes::new();
                     // Parameters occupy the first local slots in order.
                     for (_, pname) in params {
-                        let slot = fn_locals.len() as u16;
-                        fn_locals.insert(pname.clone(), slot);
+                        fn_scopes.declare(pname);
                     }
                     let mut fn_instrs = Vec::new();
                     for s in body {
-                        self.emit_stmt(s, &mut fn_instrs, &mut fn_locals);
+                        self.emit_stmt(s, &mut fn_instrs, &mut fn_scopes);
                     }
                     self.chunks[idx].instructions = fn_instrs;
                 }
                 other => {
-                    self.emit_stmt(other, &mut script_instrs, &mut script_locals);
+                    self.emit_stmt(other, &mut script_instrs, &mut script_scopes);
                 }
             }
         }
@@ -153,25 +194,11 @@ impl Compiler {
         idx
     }
 
-    fn local_slot(locals: &mut HashMap<String, u16>, name: &str) -> u16 {
-        if let Some(&slot) = locals.get(name) {
-            return slot;
-        }
-        let slot = locals.len() as u16;
-        locals.insert(name.to_string(), slot);
-        slot
-    }
-
-    fn emit_stmt(
-        &mut self,
-        stmt: &Stmt,
-        instrs: &mut Vec<Instruction>,
-        locals: &mut HashMap<String, u16>,
-    ) {
+    fn emit_stmt(&mut self, stmt: &Stmt, instrs: &mut Vec<Instruction>, scopes: &mut Scopes) {
         match stmt {
             Stmt::VarDecl { name, value, .. } => {
-                self.emit_expr(value, instrs, locals);
-                let slot = Self::local_slot(locals, name);
+                self.emit_expr(value, instrs, scopes);
+                let slot = scopes.declare(name);
                 instrs.push(Instruction::StoreLocal(slot));
             }
             Stmt::FnDecl { .. } => {
@@ -179,7 +206,7 @@ impl Compiler {
                 // handled in compile() directly.
             }
             Stmt::Print(expr, _) => {
-                self.emit_expr(expr, instrs, locals);
+                self.emit_expr(expr, instrs, scopes);
                 instrs.push(Instruction::Print);
             }
             Stmt::If {
@@ -188,14 +215,16 @@ impl Compiler {
                 else_body,
                 ..
             } => {
-                self.emit_expr(condition, instrs, locals);
+                self.emit_expr(condition, instrs, scopes);
                 // Placeholder index; back-patched after then_body is emitted.
                 let jump_if_false_idx = instrs.len();
                 instrs.push(Instruction::JumpIfFalse(0));
 
+                scopes.enter();
                 for s in then_body {
-                    self.emit_stmt(s, instrs, locals);
+                    self.emit_stmt(s, instrs, scopes);
                 }
+                scopes.exit();
 
                 if let Some(else_stmts) = else_body {
                     // Jump over else_body after then_body executes.
@@ -205,9 +234,11 @@ impl Compiler {
                     let else_start = instrs.len() as u16;
                     instrs[jump_if_false_idx] = Instruction::JumpIfFalse(else_start);
 
+                    scopes.enter();
                     for s in else_stmts {
-                        self.emit_stmt(s, instrs, locals);
+                        self.emit_stmt(s, instrs, scopes);
                     }
+                    scopes.exit();
                     // Back-patch Jump to land after else_body.
                     let after_else = instrs.len() as u16;
                     instrs[jump_idx] = Instruction::Jump(after_else);
@@ -221,35 +252,41 @@ impl Compiler {
                 condition, body, ..
             } => {
                 let loop_start = instrs.len() as u16;
-                self.emit_expr(condition, instrs, locals);
+                self.emit_expr(condition, instrs, scopes);
                 let jump_if_false_idx = instrs.len();
                 instrs.push(Instruction::JumpIfFalse(0));
+                scopes.enter();
                 for s in body {
-                    self.emit_stmt(s, instrs, locals);
+                    self.emit_stmt(s, instrs, scopes);
                 }
+                scopes.exit();
                 instrs.push(Instruction::Jump(loop_start));
                 let after_loop = instrs.len() as u16;
                 instrs[jump_if_false_idx] = Instruction::JumpIfFalse(after_loop);
             }
             Stmt::Return(expr, _) => {
-                self.emit_expr(expr, instrs, locals);
+                self.emit_expr(expr, instrs, scopes);
                 instrs.push(Instruction::Return);
             }
             Stmt::ExprStmt(expr, _) => {
-                self.emit_expr(expr, instrs, locals);
+                self.emit_expr(expr, instrs, scopes);
             }
             Stmt::Assign { name, value, .. } => {
-                self.emit_expr(value, instrs, locals);
-                let slot = Self::local_slot(locals, name);
+                self.emit_expr(value, instrs, scopes);
+                let slot = scopes
+                    .lookup(name)
+                    .expect("declared name must resolve to a slot (guaranteed by typechecker)");
                 instrs.push(Instruction::StoreLocal(slot));
             }
             Stmt::IndexAssign {
                 name, index, value, ..
             } => {
-                let slot = Self::local_slot(locals, name);
+                let slot = scopes
+                    .lookup(name)
+                    .expect("declared name must resolve to a slot (guaranteed by typechecker)");
                 instrs.push(Instruction::LoadLocal(slot));
-                self.emit_expr(index, instrs, locals);
-                self.emit_expr(value, instrs, locals);
+                self.emit_expr(index, instrs, scopes);
+                self.emit_expr(value, instrs, scopes);
                 instrs.push(Instruction::SetIndex);
             }
             Stmt::ForRange {
@@ -259,17 +296,18 @@ impl Compiler {
                 body,
                 ..
             } => {
-                self.emit_expr(from, instrs, locals);
-                let slot = Self::local_slot(locals, var);
+                self.emit_expr(from, instrs, scopes);
+                scopes.enter();
+                let slot = scopes.declare(var);
                 instrs.push(Instruction::StoreLocal(slot));
                 let loop_start = instrs.len() as u16;
                 instrs.push(Instruction::LoadLocal(slot));
-                self.emit_expr(to, instrs, locals);
+                self.emit_expr(to, instrs, scopes);
                 instrs.push(Instruction::LessThan);
                 let jif_idx = instrs.len();
                 instrs.push(Instruction::JumpIfFalse(0));
                 for s in body {
-                    self.emit_stmt(s, instrs, locals);
+                    self.emit_stmt(s, instrs, scopes);
                 }
                 instrs.push(Instruction::LoadLocal(slot));
                 let one_idx = self.add_constant(Value::Int(1));
@@ -279,16 +317,18 @@ impl Compiler {
                 instrs.push(Instruction::Jump(loop_start));
                 let after_loop = instrs.len() as u16;
                 instrs[jif_idx] = Instruction::JumpIfFalse(after_loop);
+                scopes.exit();
             }
             Stmt::ForEach {
                 var, array, body, ..
             } => {
                 let id = self.synthetic_counter;
                 self.synthetic_counter += 1;
-                self.emit_expr(array, instrs, locals);
-                let arr_slot = Self::local_slot(locals, &format!("__foreach_arr_{}", id));
+                self.emit_expr(array, instrs, scopes);
+                scopes.enter();
+                let arr_slot = scopes.declare(&format!("__foreach_arr_{}", id));
                 instrs.push(Instruction::StoreLocal(arr_slot));
-                let idx_slot = Self::local_slot(locals, &format!("__foreach_idx_{}", id));
+                let idx_slot = scopes.declare(&format!("__foreach_idx_{}", id));
                 let zero_idx = self.add_constant(Value::Int(0));
                 instrs.push(Instruction::LoadConst(zero_idx));
                 instrs.push(Instruction::StoreLocal(idx_slot));
@@ -302,10 +342,10 @@ impl Compiler {
                 instrs.push(Instruction::LoadLocal(arr_slot));
                 instrs.push(Instruction::LoadLocal(idx_slot));
                 instrs.push(Instruction::GetIndex);
-                let var_slot = Self::local_slot(locals, var);
+                let var_slot = scopes.declare(var);
                 instrs.push(Instruction::StoreLocal(var_slot));
                 for s in body {
-                    self.emit_stmt(s, instrs, locals);
+                    self.emit_stmt(s, instrs, scopes);
                 }
                 instrs.push(Instruction::LoadLocal(idx_slot));
                 let one_idx = self.add_constant(Value::Int(1));
@@ -315,16 +355,12 @@ impl Compiler {
                 instrs.push(Instruction::Jump(loop_start));
                 let after_loop = instrs.len() as u16;
                 instrs[jif_idx] = Instruction::JumpIfFalse(after_loop);
+                scopes.exit();
             }
         }
     }
 
-    fn emit_expr(
-        &mut self,
-        expr: &Expr,
-        instrs: &mut Vec<Instruction>,
-        locals: &mut HashMap<String, u16>,
-    ) {
+    fn emit_expr(&mut self, expr: &Expr, instrs: &mut Vec<Instruction>, scopes: &mut Scopes) {
         match expr {
             Expr::LitInt(n) => {
                 let idx = self.add_constant(Value::Int(*n));
@@ -343,7 +379,9 @@ impl Compiler {
                 instrs.push(Instruction::LoadConst(idx));
             }
             Expr::Ident(name) => {
-                let slot = Self::local_slot(locals, name);
+                let slot = scopes
+                    .lookup(name)
+                    .expect("declared name must resolve to a slot (guaranteed by typechecker)");
                 instrs.push(Instruction::LoadLocal(slot));
             }
             Expr::BinOp {
@@ -351,10 +389,10 @@ impl Compiler {
                 lhs,
                 rhs,
             } => {
-                self.emit_expr(lhs, instrs, locals);
+                self.emit_expr(lhs, instrs, scopes);
                 let jump_if_false_idx = instrs.len();
                 instrs.push(Instruction::JumpIfFalse(0));
-                self.emit_expr(rhs, instrs, locals);
+                self.emit_expr(rhs, instrs, scopes);
                 let jump_end_idx = instrs.len();
                 instrs.push(Instruction::Jump(0));
                 let false_target = instrs.len() as u16;
@@ -369,10 +407,10 @@ impl Compiler {
                 lhs,
                 rhs,
             } => {
-                self.emit_expr(lhs, instrs, locals);
+                self.emit_expr(lhs, instrs, scopes);
                 let jump_if_true_idx = instrs.len();
                 instrs.push(Instruction::JumpIfTrue(0));
-                self.emit_expr(rhs, instrs, locals);
+                self.emit_expr(rhs, instrs, scopes);
                 let jump_end_idx = instrs.len();
                 instrs.push(Instruction::Jump(0));
                 let true_target = instrs.len() as u16;
@@ -383,8 +421,8 @@ impl Compiler {
                 instrs[jump_end_idx] = Instruction::Jump(end);
             }
             Expr::BinOp { op, lhs, rhs } => {
-                self.emit_expr(lhs, instrs, locals);
-                self.emit_expr(rhs, instrs, locals);
+                self.emit_expr(lhs, instrs, scopes);
+                self.emit_expr(rhs, instrs, scopes);
                 let instr = match op {
                     BinOpKind::Add => Instruction::Add,
                     BinOpKind::Sub => Instruction::Sub,
@@ -401,17 +439,17 @@ impl Compiler {
                 instrs.push(instr);
             }
             Expr::UnaryMinus(inner) => {
-                self.emit_expr(inner, instrs, locals);
+                self.emit_expr(inner, instrs, scopes);
                 instrs.push(Instruction::Negate);
             }
             Expr::UnaryNot(inner) => {
-                self.emit_expr(inner, instrs, locals);
+                self.emit_expr(inner, instrs, scopes);
                 instrs.push(Instruction::Not);
             }
             Expr::Call { name, args } => {
                 // Push arguments left-to-right; the VM seeds locals from them.
                 for arg in args {
-                    self.emit_expr(arg, instrs, locals);
+                    self.emit_expr(arg, instrs, scopes);
                 }
                 if let Some(builtin) = builtin_name(name) {
                     instrs.push(Instruction::CallBuiltin(builtin, args.len() as u8));
@@ -422,13 +460,13 @@ impl Compiler {
             }
             Expr::Array(elems) => {
                 for elem in elems {
-                    self.emit_expr(elem, instrs, locals);
+                    self.emit_expr(elem, instrs, scopes);
                 }
                 instrs.push(Instruction::MakeArray(elems.len() as u16));
             }
             Expr::Index { array, index } => {
-                self.emit_expr(array, instrs, locals);
-                self.emit_expr(index, instrs, locals);
+                self.emit_expr(array, instrs, scopes);
+                self.emit_expr(index, instrs, scopes);
                 instrs.push(Instruction::GetIndex);
             }
         }
@@ -623,5 +661,23 @@ mod tests {
             .filter(|i| matches!(i, Instruction::ArrayLen))
             .count();
         assert_eq!(array_len_count, 2);
+    }
+
+    #[test]
+    fn test_compile_if_body_shadowing_gets_distinct_slot() {
+        let (instrs, _) =
+            compile("整数 Ｎ ＝ １０；もし 真 ならば ｛ 整数 Ｎ ＝ ５； ｝整数 結果 ＝ Ｎ；");
+        // LoadConst(0)=10, StoreLocal(0)=outer Ｎ
+        assert_eq!(instrs[0], Instruction::LoadConst(0));
+        assert_eq!(instrs[1], Instruction::StoreLocal(0));
+        // Inner Ｎ inside the if-block must get a distinct slot (1), not slot 0.
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::StoreLocal(1)))
+        );
+        // Final read of outer Ｎ after the if-block must load slot 0, not 1.
+        assert!(instrs.contains(&Instruction::LoadLocal(0)));
+        assert!(!instrs.contains(&Instruction::LoadLocal(1)));
     }
 }

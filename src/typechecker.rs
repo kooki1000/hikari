@@ -217,7 +217,7 @@ fn builtin_sig(name: &str) -> Option<FnSig> {
 }
 
 pub struct TypeChecker {
-    vars: HashMap<String, HikariType>,
+    scopes: Vec<HashMap<String, HikariType>>,
     fns: HashMap<String, FnSig>,
     // Return type expected by the function currently being checked.
     current_return_ty: Option<HikariType>,
@@ -226,10 +226,26 @@ pub struct TypeChecker {
 impl TypeChecker {
     pub fn new() -> Self {
         Self {
-            vars: HashMap::new(),
+            scopes: vec![HashMap::new()],
             fns: HashMap::new(),
             current_return_ty: None,
         }
+    }
+
+    fn enter_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    fn exit_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn declare_var(&mut self, name: &str, ty: HikariType) {
+        self.scopes.last_mut().unwrap().insert(name.to_string(), ty);
+    }
+
+    fn lookup_var(&self, name: &str) -> Option<HikariType> {
+        self.scopes.iter().rev().find_map(|s| s.get(name).cloned())
     }
 
     pub fn check(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
@@ -256,7 +272,7 @@ impl TypeChecker {
                         span: *span,
                     });
                 }
-                self.vars.insert(name.clone(), ty.clone());
+                self.declare_var(name, ty.clone());
                 Ok(())
             }
 
@@ -273,19 +289,19 @@ impl TypeChecker {
                 };
                 self.fns.insert(name.clone(), sig);
 
-                // Enter function scope: save outer state.
-                let outer_vars = self.vars.clone();
+                // Function bodies are fully isolated: they get a brand new
+                // scope stack, matching the VM's independent per-call Frame.
+                let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
                 let outer_return_ty = self.current_return_ty.take();
 
                 for (ty, pname) in params {
-                    self.vars.insert(pname.clone(), ty.clone());
+                    self.declare_var(pname, ty.clone());
                 }
                 self.current_return_ty = Some(return_ty.clone());
 
                 self.check(body)?;
 
-                // Restore outer scope.
-                self.vars = outer_vars;
+                self.scopes = outer_scopes;
                 self.current_return_ty = outer_return_ty;
                 Ok(())
             }
@@ -319,9 +335,13 @@ impl TypeChecker {
                 if cond_ty != HikariType::Bool {
                     return Err(TypeError::ConditionNotBool(cond_ty, *span));
                 }
+                self.enter_scope();
                 self.check(then_body)?;
+                self.exit_scope();
                 if let Some(body) = else_body {
+                    self.enter_scope();
                     self.check(body)?;
+                    self.exit_scope();
                 }
                 Ok(())
             }
@@ -335,7 +355,9 @@ impl TypeChecker {
                 if cond_ty != HikariType::Bool {
                     return Err(TypeError::ConditionNotBool(cond_ty, *span));
                 }
+                self.enter_scope();
                 self.check(body)?;
+                self.exit_scope();
                 Ok(())
             }
 
@@ -346,9 +368,7 @@ impl TypeChecker {
 
             Stmt::Assign { name, value, span } => {
                 let declared = self
-                    .vars
-                    .get(name)
-                    .cloned()
+                    .lookup_var(name)
                     .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), *span))?;
                 let got = self.infer_expr(value, *span)?;
                 if got != declared {
@@ -369,9 +389,7 @@ impl TypeChecker {
                 span,
             } => {
                 let var_ty = self
-                    .vars
-                    .get(name)
-                    .cloned()
+                    .lookup_var(name)
                     .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), *span))?;
                 let elem_ty = match var_ty {
                     HikariType::Array(inner) => *inner,
@@ -425,8 +443,10 @@ impl TypeChecker {
                         span: *span,
                     });
                 }
-                self.vars.insert(var.clone(), HikariType::Int);
+                self.enter_scope();
+                self.declare_var(var, HikariType::Int);
                 self.check(body)?;
+                self.exit_scope();
                 Ok(())
             }
 
@@ -446,8 +466,10 @@ impl TypeChecker {
                         });
                     }
                 };
-                self.vars.insert(var.clone(), elem_ty);
+                self.enter_scope();
+                self.declare_var(var, elem_ty);
                 self.check(body)?;
+                self.exit_scope();
                 Ok(())
             }
         }
@@ -461,9 +483,7 @@ impl TypeChecker {
             Expr::LitBool(_) => Ok(HikariType::Bool),
 
             Expr::Ident(name) => self
-                .vars
-                .get(name)
-                .cloned()
+                .lookup_var(name)
                 .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), span)),
 
             Expr::BinOp { op, lhs, rhs } => {
@@ -1013,5 +1033,73 @@ mod tests {
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(err, TypeError::NotIndexable { .. }));
+    }
+
+    #[test]
+    fn test_typecheck_if_body_var_not_visible_after_block() {
+        let src = "もし 真 ならば ｛ 整数 Ｎ ＝ ５； ｝ 返す Ｎ；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "Ｎ"));
+    }
+
+    #[test]
+    fn test_typecheck_while_body_var_not_visible_after_block() {
+        let src = "間 真 ならば ｛ 整数 Ｎ ＝ ５； ｝ 返す Ｎ；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "Ｎ"));
+    }
+
+    #[test]
+    fn test_typecheck_for_range_var_not_visible_after_loop() {
+        let src = "繰り返す カウンタ ＝ ０ から ５ ならば ｛ 印刷（カウンタ）； ｝返す カウンタ；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "カウンタ"));
+    }
+
+    #[test]
+    fn test_typecheck_for_each_var_not_visible_after_loop() {
+        let src =
+            "整数列 数字 ＝ 【１、２】；各 要素 ： 数字 ならば ｛ 印刷（要素）； ｝返す 要素；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "要素"));
+    }
+
+    #[test]
+    fn test_typecheck_outer_var_visible_inside_nested_block() {
+        let src = "整数 外 ＝ １０；もし 真 ならば ｛ 間 真 ならば ｛ 印刷（外）； ｝ ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_shadowing_does_not_corrupt_outer_type() {
+        // Outer 値 is Int; inner block shadows it with String, then exits.
+        // After the block, 値 should still be Int, so adding it to an Int works.
+        let src =
+            "整数 値 ＝ １；もし 真 ならば ｛ 文字列 値 ＝ 「あ」； ｝ 整数 結果 ＝ 値 ＋ ２；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_function_body_isolated_from_outer_scope() {
+        // 外 is declared in the script scope, not as a param of 関数.
+        // The function body must NOT see it.
+        let src = "整数 外 ＝ １；関数 計算（整数 Ａ）ー＞ 整数 ｛ 返す 外； ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "外"));
+    }
+
+    #[test]
+    fn test_typecheck_if_then_and_else_have_separate_scopes() {
+        let src = "もし 真 ならば ｛ 整数 Ａ ＝ １； ｝ 違えば ｛ 返す Ａ； ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "Ａ"));
     }
 }
