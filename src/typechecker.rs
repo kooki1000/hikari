@@ -39,6 +39,8 @@ pub enum TypeError {
         param: HikariType,
         got: HikariType,
     },
+    // Condition in もし/間 is not Bool.
+    ConditionNotBool(HikariType),
 }
 
 // ── Symbol tables ─────────────────────────────────────────────────────────────
@@ -141,11 +143,7 @@ impl TypeChecker {
             } => {
                 let cond_ty = self.infer_expr(condition)?;
                 if cond_ty != HikariType::Bool {
-                    return Err(TypeError::VarDeclMismatch {
-                        name: "<もし condition>".to_string(),
-                        declared: HikariType::Bool,
-                        got: cond_ty,
-                    });
+                    return Err(TypeError::ConditionNotBool(cond_ty));
                 }
                 self.check(then_body)?;
                 if let Some(body) = else_body {
@@ -157,11 +155,7 @@ impl TypeChecker {
             Stmt::While { condition, body } => {
                 let cond_ty = self.infer_expr(condition)?;
                 if cond_ty != HikariType::Bool {
-                    return Err(TypeError::VarDeclMismatch {
-                        name: "<間 condition>".to_string(),
-                        declared: HikariType::Bool,
-                        got: cond_ty,
-                    });
+                    return Err(TypeError::ConditionNotBool(cond_ty));
                 }
                 self.check(body)?;
                 Ok(())
@@ -316,14 +310,15 @@ mod tests {
         let src = "整数 Ｎ ＝ ０；間 Ｎ ならば ｛ 整数 Ｎ ＝ Ｎ ＋ １； ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
-        assert!(matches!(
-            err,
-            TypeError::VarDeclMismatch {
-                declared: HikariType::Bool,
-                got: HikariType::Int,
-                ..
-            }
-        ));
+        assert!(matches!(err, TypeError::ConditionNotBool(HikariType::Int)));
+    }
+
+    #[test]
+    fn test_typecheck_if_non_bool_condition() {
+        let src = "整数 Ｎ ＝ ０；もし Ｎ ならば ｛ 印刷（Ｎ）； ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::ConditionNotBool(HikariType::Int)));
     }
 
     #[test]

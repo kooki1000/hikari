@@ -117,8 +117,10 @@ impl Vm {
                 }
                 Instruction::Div => {
                     let (l, r) = self.pop2()?;
-                    if r == Value::Int(0) {
-                        return Err(RuntimeError::DivisionByZero);
+                    match &r {
+                        Value::Int(0) => return Err(RuntimeError::DivisionByZero),
+                        Value::Float(f) if *f == 0.0 => return Err(RuntimeError::DivisionByZero),
+                        _ => {}
                     }
                     self.stack.push(arith(l, r, |a, b| a / b, |a, b| a / b)?);
                 }
@@ -145,8 +147,13 @@ impl Vm {
                 }
                 Instruction::JumpIfFalse(offset) => {
                     let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-                    if val == Value::Bool(false) {
-                        self.frames.last_mut().unwrap().ip = offset as usize;
+                    match val {
+                        Value::Bool(b) => {
+                            if !b {
+                                self.frames.last_mut().unwrap().ip = offset as usize;
+                            }
+                        }
+                        _ => return Err(RuntimeError::TypeMismatch),
                     }
                 }
                 Instruction::Jump(offset) => {
@@ -349,6 +356,17 @@ mod tests {
     fn test_vm_division_by_zero_returns_error() {
         // 整数 結果 ＝ １ ／ ０；
         let ast = Parser::new(Lexer::new("整数 結果 ＝ １ ／ ０；").tokenize())
+            .parse()
+            .unwrap();
+        let mut compiler = Compiler::new();
+        let script = compiler.compile(&ast);
+        let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
+        assert_eq!(result, Err(RuntimeError::DivisionByZero));
+    }
+
+    #[test]
+    fn test_vm_float_division_by_zero_returns_error() {
+        let ast = Parser::new(Lexer::new("小数 結果 ＝ １．０ ／ ０．０；").tokenize())
             .parse()
             .unwrap();
         let mut compiler = Compiler::new();

@@ -89,7 +89,7 @@ Hikari's syntax uses Japanese reserved words and full-width characters for all o
 
 ## Architecture
 
-The implementation follows a classic pipeline, built strictly with TDD (60 tests, all passing):
+The implementation follows a classic pipeline, built strictly with TDD (62 tests, all passing):
 
 ```
 Source (.hkr)
