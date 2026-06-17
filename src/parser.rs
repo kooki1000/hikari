@@ -10,6 +10,7 @@ pub enum HikariType {
     Bool,   // 真偽
     Void,   // 無
     Array(Box<HikariType>),
+    Map(Box<HikariType>, Box<HikariType>), // key type, value type
     Record(String), // user-defined record type, identified by its declared name
     Enum(String),   // user-defined enum type, identified by its declared name
 }
@@ -40,6 +41,7 @@ pub enum Expr {
         index: Box<Expr>,
     },
     NewArray(HikariType),
+    MapLit(Vec<(Expr, Expr)>),
     RecordLit {
         type_name: String,
         fields: Vec<(String, Expr)>,
@@ -931,6 +933,23 @@ impl Parser {
                 self.advance(); // consume 】
                 Ok(Expr::Array(elems))
             }
+            // Map literal: ｛ ｝ or ｛ key：val、key：val ｝
+            // Note: record literals are parsed via the Ident branch above (Ident ｛ field：val ｝).
+            // Here a bare ｛ always starts a map literal.
+            TokenKind::LBrace => {
+                let mut pairs = Vec::new();
+                while self.peek() != &TokenKind::RBrace {
+                    let key = self.parse_expr()?;
+                    self.expect(&TokenKind::Colon)?;
+                    let val = self.parse_expr()?;
+                    pairs.push((key, val));
+                    if self.peek() != &TokenKind::RBrace {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                }
+                self.advance(); // consume ｝
+                Ok(Expr::MapLit(pairs))
+            }
             TokenKind::Invalid(text) => Err(ParseError::InvalidNumber { text, span }),
             other => Err(ParseError::UnexpectedExprToken { got: other, span }),
         }?;
@@ -977,6 +996,14 @@ impl Parser {
             TokenKind::TyFloatArray => Ok(HikariType::Array(Box::new(HikariType::Float))),
             TokenKind::TyStringArray => Ok(HikariType::Array(Box::new(HikariType::String))),
             TokenKind::TyBoolArray => Ok(HikariType::Array(Box::new(HikariType::Bool))),
+            TokenKind::KwMap => {
+                self.expect(&TokenKind::Lt)?;
+                let key_ty = self.parse_type()?;
+                self.expect(&TokenKind::Comma)?;
+                let val_ty = self.parse_type()?;
+                self.expect(&TokenKind::Gt)?;
+                Ok(HikariType::Map(Box::new(key_ty), Box::new(val_ty)))
+            }
             TokenKind::Ident(name) => Ok(HikariType::Record(name)),
             other => Err(ParseError::ExpectedType { got: other, span }),
         }
@@ -1018,6 +1045,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwType => "「型」".to_string(),
         TokenKind::KwEnum => "「列挙」".to_string(),
         TokenKind::KwMatch => "「照合」".to_string(),
+        TokenKind::KwMap => "「辞書」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
@@ -1060,6 +1088,13 @@ pub fn hikari_type_japanese(ty: &HikariType) -> String {
         HikariType::Bool => "真偽".to_string(),
         HikariType::Void => "無".to_string(),
         HikariType::Array(inner) => format!("{}列", hikari_type_japanese(inner)),
+        HikariType::Map(k, v) => {
+            format!(
+                "辞書＜{}、{}＞",
+                hikari_type_japanese(k),
+                hikari_type_japanese(v)
+            )
+        }
         HikariType::Record(name) => name.clone(),
         HikariType::Enum(name) => name.clone(),
     }
@@ -1120,6 +1155,7 @@ fn is_type_token(kind: &TokenKind) -> bool {
             | TokenKind::TyFloatArray
             | TokenKind::TyStringArray
             | TokenKind::TyBoolArray
+            | TokenKind::KwMap
     )
 }
 
