@@ -68,7 +68,7 @@ pub enum BuiltinFn {
     MapValues,     // 値一覧
     MapDelete,     // 削除
     // Phase 10: higher-order functions (these are special — they take a fn value)
-    MapArray,    // 地図
+    MapArray,    // マップ
     FilterArray, // 絞り込み
     FoldArray,   // 畳み込み
 }
@@ -156,7 +156,7 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "鍵一覧" => Some(BuiltinFn::MapKeys),
         "値一覧" => Some(BuiltinFn::MapValues),
         "削除" => Some(BuiltinFn::MapDelete),
-        "地図" => Some(BuiltinFn::MapArray),
+        "マップ" => Some(BuiltinFn::MapArray),
         "絞り込み" => Some(BuiltinFn::FilterArray),
         "畳み込み" => Some(BuiltinFn::FoldArray),
         _ => None,
@@ -1180,14 +1180,14 @@ mod tests {
 
     #[test]
     fn test_compile_enum_decl_emits_no_instructions() {
-        let src = "列挙 結果 ｛ 成功（整数） ｝";
+        let src = "構造 結果 ｛ 成功（整数） ｝";
         let (instrs, _) = compile(src);
         assert!(instrs.is_empty());
     }
 
     #[test]
     fn test_compile_variant_construction_emits_make_enum() {
-        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；";
+        let src = "構造 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；";
         let (instrs, _) = compile(src);
         assert!(matches!(
             &instrs[1],
@@ -1198,7 +1198,7 @@ mod tests {
 
     #[test]
     fn test_compile_zero_payload_variant_construction_emits_make_enum_zero() {
-        let src = "列挙 信号 ｛ 赤 ｝信号 値 ＝ 赤（）；";
+        let src = "構造 信号 ｛ 赤 ｝信号 値 ＝ 赤（）；";
         let (instrs, _) = compile(src);
         assert!(matches!(
             &instrs[0],
@@ -1209,7 +1209,7 @@ mod tests {
 
     #[test]
     fn test_compile_match_two_arms_emits_tag_equals_and_correct_jump_targets() {
-        let src = "列挙 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ 青（） ならば ｛ 印刷（２）； ｝ ｝";
+        let src = "構造 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ 青（） ならば ｛ 印刷（２）； ｝ ｝";
         let (instrs, _) = compile(src);
 
         let tag_equals_count = instrs

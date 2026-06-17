@@ -365,7 +365,7 @@ impl Parser {
 
     fn parse_enum_decl(&mut self) -> Result<Stmt, ParseError> {
         let span = self.peek_span();
-        self.advance(); // consume 列挙
+        self.advance(); // consume 構造
         let name = match (self.peek_span(), self.advance().clone()) {
             (_, TokenKind::Ident(n)) => n,
             (s, other) => {
@@ -1107,7 +1107,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwBreak => "「抜ける」".to_string(),
         TokenKind::KwContinue => "「続ける」".to_string(),
         TokenKind::KwType => "「型」".to_string(),
-        TokenKind::KwEnum => "「列挙」".to_string(),
+        TokenKind::KwEnum => "「構造」".to_string(),
         TokenKind::KwMatch => "「照合」".to_string(),
         TokenKind::KwMap => "「辞書」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
@@ -1915,7 +1915,7 @@ mod tests {
 
     #[test]
     fn test_parse_enum_decl_with_payload_and_payloadless_variants() {
-        let src = "列挙 結果 ｛ 成功（整数）、 異常（文字列）、 不明 ｝";
+        let src = "構造 結果 ｛ 成功（整数）、 異常（文字列）、 不明 ｝";
         let ast = parse_helper(src);
         assert!(matches!(
             &ast[0],
@@ -1930,7 +1930,7 @@ mod tests {
 
     #[test]
     fn test_parse_match_stmt_with_multiple_arms_including_zero_payload() {
-        let src = "列挙 結果 ｛ 成功（整数）、 異常 ｝照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ 異常（） ならば ｛ 印刷（０）； ｝ ｝";
+        let src = "構造 結果 ｛ 成功（整数）、 異常 ｝照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ 異常（） ならば ｛ 印刷（０）； ｝ ｝";
         let ast = parse_helper(src);
         let Stmt::Match { subject, arms, .. } = &ast[1] else {
             panic!("expected Match")
@@ -1966,7 +1966,7 @@ mod tests {
 
     #[test]
     fn test_parse_enum_decl_missing_comma_between_variants_returns_error() {
-        let src = "列挙 結果 ｛ 成功 異常 ｝";
+        let src = "構造 結果 ｛ 成功 異常 ｝";
         let tokens = Lexer::new(src).tokenize();
         let err = Parser::new(tokens).parse().unwrap_err();
         assert!(matches!(err, ParseError::UnexpectedToken { .. }));

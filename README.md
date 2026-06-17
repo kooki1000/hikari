@@ -177,10 +177,10 @@ Records have reference semantics, just like arrays: assigning a record to anothe
 
 ### Enums and Pattern Matching
 
-`列挙 名前 ｛ ... ｝` declares an enum type. Each variant is separated by `、`. Variants may carry a payload (parenthesised type list) or have no payload:
+`構造 名前 ｛ ... ｝` declares an enum type. Each variant is separated by `、`. Variants may carry a payload (parenthesised type list) or have no payload:
 
 ```
-列挙 結果 ｛
+構造 結果 ｛
   成功（整数）、
   失敗（文字列）
 ｝
