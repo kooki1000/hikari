@@ -1,5 +1,3 @@
-＃ Phase 9b — Enums and Pattern Matching
-
 構造 結果 ｛
   成功（整数）、
   失敗（文字列）
