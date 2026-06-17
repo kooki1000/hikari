@@ -102,12 +102,14 @@ pub enum TypeError {
         span: Span,
     },
     // A field's value expression doesn't match the field's declared type,
-    // whether at construction time or via field assignment.
+    // whether at construction time or via field assignment. expected/got are
+    // boxed (HikariType grew once Enum(String) was added) to keep TypeError
+    // itself from exceeding clippy's result_large_err threshold.
     FieldTypeMismatch {
         type_name: String,
         field: String,
-        expected: HikariType,
-        got: HikariType,
+        expected: Box<HikariType>,
+        got: Box<HikariType>,
         span: Span,
     },
     // ：フィールド access/assignment on a value that isn't a record.
@@ -115,6 +117,42 @@ pub enum TypeError {
         got: HikariType,
         span: Span,
     },
+    // Two enum variants (within the same enum decl, or across different
+    // enums) share a name; variant names must be globally unique since
+    // there's no ：：-qualified construction to disambiguate them.
+    DuplicateEnumVariant {
+        variant: String,
+        span: Span,
+    },
+    // 照合 subject is not of an enum type.
+    NotAnEnum {
+        got: HikariType,
+        span: Span,
+    },
+    // A 照合 arm names the same variant as an earlier arm.
+    DuplicateMatchArm {
+        variant: String,
+        span: Span,
+    },
+    // A 照合 arm names a variant that doesn't belong to the subject's enum
+    // (typo, or a variant borrowed from a different enum).
+    UndeclaredEnumVariant {
+        enum_name: String,
+        variant: String,
+        span: Span,
+    },
+    // A 照合 statement does not cover every variant of the subject's enum.
+    // Boxed (rather than inline String + Vec<String> + Span fields) to keep
+    // TypeError's overall size from growing past clippy's result_large_err
+    // threshold.
+    NonExhaustiveMatch(Box<NonExhaustiveMatchInfo>),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct NonExhaustiveMatchInfo {
+    pub enum_name: String,
+    pub missing: Vec<String>,
+    pub span: Span,
 }
 
 impl TypeError {
@@ -141,6 +179,11 @@ impl TypeError {
             TypeError::UnknownField { span, .. } => *span,
             TypeError::FieldTypeMismatch { span, .. } => *span,
             TypeError::NotARecord { span, .. } => *span,
+            TypeError::DuplicateEnumVariant { span, .. } => *span,
+            TypeError::NotAnEnum { span, .. } => *span,
+            TypeError::DuplicateMatchArm { span, .. } => *span,
+            TypeError::UndeclaredEnumVariant { span, .. } => *span,
+            TypeError::NonExhaustiveMatch(info) => info.span,
         }
     }
 }
@@ -282,6 +325,34 @@ impl std::fmt::Display for TypeError {
                 "「{}」型の値にはフィールドでアクセスできません。",
                 hikari_type_japanese(got)
             ),
+            TypeError::DuplicateEnumVariant { variant, .. } => write!(
+                f,
+                "変体名「{}」は既に使用されています。（ヒント: 変体名はすべての列挙型で一意である必要があります）",
+                variant
+            ),
+            TypeError::NotAnEnum { got, .. } => write!(
+                f,
+                "「{}」型の値は照合できません。（ヒント: 照合は列挙型の値に対してのみ使用できます）",
+                hikari_type_japanese(got)
+            ),
+            TypeError::DuplicateMatchArm { variant, .. } => write!(
+                f,
+                "変体「{}」に対する場合がすでに指定されています。",
+                variant
+            ),
+            TypeError::UndeclaredEnumVariant {
+                enum_name, variant, ..
+            } => write!(
+                f,
+                "列挙「{}」には変体「{}」がありません。",
+                enum_name, variant
+            ),
+            TypeError::NonExhaustiveMatch(info) => write!(
+                f,
+                "列挙「{}」のすべての場合を網羅していません（未対応: {}）。",
+                info.enum_name,
+                info.missing.join("、")
+            ),
         }
     }
 }
@@ -394,6 +465,10 @@ pub struct TypeChecker {
     loop_depth: u32,
     // Record type name → ordered (field name, field type) pairs.
     records: HashMap<String, Vec<(String, HikariType)>>,
+    // Enum name → ordered (variant name, payload types) pairs.
+    enums: HashMap<String, Vec<(String, Vec<HikariType>)>>,
+    // Variant name → owning enum name (variant names are globally unique).
+    variant_owner: HashMap<String, String>,
 }
 
 impl TypeChecker {
@@ -405,6 +480,8 @@ impl TypeChecker {
             imported_modules: std::collections::HashSet::new(),
             loop_depth: 0,
             records: HashMap::new(),
+            enums: HashMap::new(),
+            variant_owner: HashMap::new(),
         }
     }
 
@@ -431,6 +508,7 @@ impl TypeChecker {
     fn check_type_declared(&self, ty: &HikariType, span: Span) -> Result<(), TypeError> {
         if let HikariType::Record(name) = ty
             && !self.records.contains_key(name)
+            && !self.enums.contains_key(name)
         {
             return Err(TypeError::UndeclaredType(name.clone(), span));
         }
@@ -780,11 +858,113 @@ impl TypeChecker {
                     return Err(TypeError::FieldTypeMismatch {
                         type_name,
                         field: field.clone(),
-                        expected: field_ty,
-                        got: value_ty,
+                        expected: Box::new(field_ty),
+                        got: Box::new(value_ty),
                         span: *span,
                     });
                 }
+                Ok(())
+            }
+
+            Stmt::EnumDecl {
+                name,
+                variants,
+                span,
+            } => {
+                for (variant_name, _) in variants {
+                    if self.variant_owner.contains_key(variant_name) {
+                        return Err(TypeError::DuplicateEnumVariant {
+                            variant: variant_name.clone(),
+                            span: *span,
+                        });
+                    }
+                    self.variant_owner
+                        .insert(variant_name.clone(), name.clone());
+                }
+                self.enums.insert(name.clone(), variants.clone());
+                Ok(())
+            }
+
+            Stmt::Match {
+                subject,
+                arms,
+                span,
+            } => {
+                let subject_ty = self.infer_expr(subject, *span)?;
+                // Enum-typed variables are stored as Record(enum_name) in the
+                // type system (parse_type maps any bare Ident to Record), so
+                // we accept Record(name) when name is a registered enum, as
+                // well as the explicit Enum(name) form.
+                let enum_name = match subject_ty {
+                    HikariType::Enum(name) => name,
+                    HikariType::Record(name) if self.enums.contains_key(&name) => name,
+                    other => {
+                        return Err(TypeError::NotAnEnum {
+                            got: other,
+                            span: *span,
+                        });
+                    }
+                };
+                // Guaranteed present: subject already typechecked to
+                // Enum(enum_name) or Record(enum_name), so enum_name must be registered.
+                let declared_variants = self
+                    .enums
+                    .get(&enum_name)
+                    .expect("enum registered by EnumDecl before any value of its type exists")
+                    .clone();
+
+                let mut covered: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for arm in arms {
+                    if !covered.insert(arm.variant.clone()) {
+                        return Err(TypeError::DuplicateMatchArm {
+                            variant: arm.variant.clone(),
+                            span: *span,
+                        });
+                    }
+
+                    let payload_types = declared_variants
+                        .iter()
+                        .find(|(n, _)| n == &arm.variant)
+                        .map(|(_, tys)| tys.clone())
+                        .ok_or_else(|| TypeError::UndeclaredEnumVariant {
+                            enum_name: enum_name.clone(),
+                            variant: arm.variant.clone(),
+                            span: *span,
+                        })?;
+
+                    if arm.binders.len() != payload_types.len() {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: arm.variant.clone(),
+                            expected: payload_types.len(),
+                            got: arm.binders.len(),
+                            span: *span,
+                        });
+                    }
+
+                    self.enter_scope();
+                    for (binder, ty) in arm.binders.iter().zip(payload_types.iter()) {
+                        self.declare_var(binder, ty.clone());
+                    }
+                    self.check(&arm.body)?;
+                    self.exit_scope();
+                }
+
+                let missing: Vec<String> = declared_variants
+                    .iter()
+                    .map(|(n, _)| n.clone())
+                    .filter(|n| !covered.contains(n))
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(TypeError::NonExhaustiveMatch(Box::new(
+                        NonExhaustiveMatchInfo {
+                            enum_name,
+                            missing,
+                            span: *span,
+                        },
+                    )));
+                }
+
                 Ok(())
             }
         }
@@ -882,6 +1062,37 @@ impl TypeChecker {
             }
 
             Expr::Call { name, args } => {
+                if let Some(owning_enum) = self.variant_owner.get(name) {
+                    let payload_types = self
+                        .enums
+                        .get(owning_enum)
+                        .and_then(|vs| vs.iter().find(|(n, _)| n == name))
+                        .map(|(_, tys)| tys.clone())
+                        .expect("variant_owner entry implies a registered enum/variant");
+                    if args.len() != payload_types.len() {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: payload_types.len(),
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    for (arg, param_ty) in args.iter().zip(payload_types.iter()) {
+                        let arg_ty = self.infer_expr(arg, span)?;
+                        if arg_ty != *param_ty {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: param_ty.clone(),
+                                got: arg_ty,
+                                span,
+                            });
+                        }
+                    }
+                    // Return as Record so the type matches a VarDecl whose
+                    // declared type was parsed as HikariType::Record(enum_name).
+                    return Ok(HikariType::Record(owning_enum.clone()));
+                }
+
                 if let Some(module) = builtin_module(name)
                     && !self.imported_modules.contains(module)
                 {
@@ -1314,8 +1525,8 @@ impl TypeChecker {
                         return Err(TypeError::FieldTypeMismatch {
                             type_name: type_name.clone(),
                             field: fname.clone(),
-                            expected,
-                            got,
+                            expected: Box::new(expected),
+                            got: Box::new(got),
                             span,
                         });
                     }
@@ -2314,14 +2525,13 @@ mod tests {
         let src = "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：「あ」 ｝；";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
-        assert!(matches!(
-            err,
-            TypeError::FieldTypeMismatch {
-                expected: HikariType::Int,
-                got: HikariType::String,
-                ..
+        match err {
+            TypeError::FieldTypeMismatch { expected, got, .. } => {
+                assert_eq!(*expected, HikariType::Int);
+                assert_eq!(*got, HikariType::String);
             }
-        ));
+            other => panic!("expected FieldTypeMismatch, got {:?}", other),
+        }
     }
 
     #[test]
@@ -2336,14 +2546,13 @@ mod tests {
         let src = "型 点 ｛ 整数 ｘ； ｝点 ｐ ＝ 点 ｛ ｘ：１ ｝；ｐ：：ｘ ＝ 「あ」；";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
-        assert!(matches!(
-            err,
-            TypeError::FieldTypeMismatch {
-                expected: HikariType::Int,
-                got: HikariType::String,
-                ..
+        match err {
+            TypeError::FieldTypeMismatch { expected, got, .. } => {
+                assert_eq!(*expected, HikariType::Int);
+                assert_eq!(*got, HikariType::String);
             }
-        ));
+            other => panic!("expected FieldTypeMismatch, got {:?}", other),
+        }
     }
 
     #[test]
@@ -2360,6 +2569,149 @@ mod tests {
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(err, TypeError::UndeclaredType(n, _) if n == "存在しない"));
+    }
+
+    // ── 9b: enums and pattern matching ──────────────────────────────────
+
+    #[test]
+    fn test_typecheck_variant_construction_happy_path() {
+        let src = "列挙 結果 ｛ 成功（整数）、 異常（文字列） ｝結果 値 ＝ 成功（１）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_variant_construction_zero_payload() {
+        let src = "列挙 信号 ｛ 赤、 黄、 青 ｝信号 値 ＝ 赤（）；";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_variant_construction_wrong_arg_count() {
+        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ArgCountMismatch {
+                expected: 1,
+                got: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_variant_construction_wrong_arg_type() {
+        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（「あ」）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ArgTypeMismatch {
+                param: HikariType::Int,
+                got: HikariType::String,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_enum_variant_across_enums() {
+        let src = "列挙 結果 ｛ 成功 ｝列挙 状態 ｛ 成功 ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(
+            matches!(err, TypeError::DuplicateEnumVariant { variant, .. } if variant == "成功")
+        );
+    }
+
+    #[test]
+    fn test_typecheck_match_exhaustive_is_ok() {
+        let src = "列挙 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ 青（） ならば ｛ 印刷（２）； ｝ ｝";
+        let ast = parse(src);
+        assert!(TypeChecker::new().check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_match_non_exhaustive_lists_missing_variant() {
+        let src = "列挙 信号 ｛ 赤、 黄、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        match &err {
+            TypeError::NonExhaustiveMatch(info) => {
+                assert_eq!(info.missing, vec!["黄".to_string(), "青".to_string()]);
+            }
+            other => panic!("expected NonExhaustiveMatch, got {:?}", other),
+        }
+        assert!(err.to_string().contains("黄"));
+        assert!(err.to_string().contains("青"));
+    }
+
+    #[test]
+    fn test_typecheck_match_duplicate_arm() {
+        let src = "列挙 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ ｝ 赤（） ならば ｛ ｝ 青（） ならば ｛ ｝ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::DuplicateMatchArm { variant, .. } if variant == "赤"));
+    }
+
+    #[test]
+    fn test_typecheck_match_arm_from_different_enum_is_undeclared_variant() {
+        let src = "列挙 信号 ｛ 赤、 青 ｝列挙 状態 ｛ 開始 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ ｝ 開始（） ならば ｛ ｝ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::UndeclaredEnumVariant { enum_name, variant, .. }
+            if enum_name == "信号" && variant == "開始"
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_match_arm_wrong_binder_count() {
+        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；照合 値 ｛ 成功（ａ、ｂ） ならば ｛ ｝ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::ArgCountMismatch {
+                expected: 1,
+                got: 2,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_match_on_non_enum_value() {
+        let src = "整数 値 ＝ ５；照合 値 ｛ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(
+            err,
+            TypeError::NotAnEnum {
+                got: HikariType::Int,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_typecheck_match_arm_binder_scoped_to_its_own_arm() {
+        let src = "列挙 結果 ｛ 成功（整数）、 異常（文字列） ｝結果 値 ＝ 成功（１）；照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ 異常（ｅ） ならば ｛ 印刷（ｎ）； ｝ ｝";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "ｎ"));
+    }
+
+    #[test]
+    fn test_typecheck_match_binder_not_visible_after_match() {
+        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ ｝印刷（ｎ）；";
+        let ast = parse(src);
+        let err = TypeChecker::new().check(&ast).unwrap_err();
+        assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "ｎ"));
     }
 
     #[test]

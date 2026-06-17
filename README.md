@@ -175,6 +175,39 @@ Array literals (`【...】`) need at least one element to infer their type from.
 
 Records have reference semantics, just like arrays: assigning a record to another variable aliases the same underlying storage, so mutating a field through either variable is visible through the other.
 
+### Enums and Pattern Matching
+
+`列挙 名前 ｛ ... ｝` declares an enum type. Each variant is separated by `、`. Variants may carry a payload (parenthesised type list) or have no payload:
+
+```
+列挙 結果 ｛
+  成功（整数）、
+  失敗（文字列）
+｝
+```
+
+Construct a variant with call syntax (parens required, even for zero-payload variants):
+
+```
+結果 ｒ ＝ 成功（４２）
+結果 ｅ ＝ 失敗（「エラー」）
+```
+
+Match on an enum value with `照合`. Every arm must use `ならば ｛ ... ｝` and bind payload values to local names. All variants must be covered (exhaustiveness is checked at compile time):
+
+```
+照合 ｒ ｛
+  成功（ｎ） ならば ｛
+    印刷（ｎ）
+  ｝
+  失敗（ｅ） ならば ｛
+    印刷（ｅ）
+  ｝
+｝
+```
+
+Variant names are globally unique across all enums in a program — no `：：`-qualified construction is needed. Arm binders are scoped to their own arm body only.
+
 ### Function Declaration and Call
 
 Parameters and call arguments are comma-separated with `、`:

@@ -11,6 +11,7 @@ pub enum HikariType {
     Void,   // 無
     Array(Box<HikariType>),
     Record(String), // user-defined record type, identified by its declared name
+    Enum(String),   // user-defined enum type, identified by its declared name
 }
 
 // ── AST nodes ────────────────────────────────────────────────────────────────
@@ -146,6 +147,23 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    EnumDecl {
+        name: String,
+        variants: Vec<(String, Vec<HikariType>)>,
+        span: Span,
+    },
+    Match {
+        subject: Expr,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct MatchArm {
+    pub variant: String,
+    pub binders: Vec<String>,
+    pub body: Vec<Stmt>,
 }
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -208,6 +226,11 @@ impl Parser {
         &self.tokens[idx].kind
     }
 
+    fn peek_at(&self, offset: usize) -> &TokenKind {
+        let idx = (self.pos + offset).min(self.tokens.len() - 1);
+        &self.tokens[idx].kind
+    }
+
     fn peek_span(&self) -> Span {
         self.tokens[self.pos].span
     }
@@ -256,6 +279,8 @@ impl Parser {
             TokenKind::KwBreak => self.parse_break(),
             TokenKind::KwContinue => self.parse_continue(),
             TokenKind::KwType => self.parse_type_decl(),
+            TokenKind::KwEnum => self.parse_enum_decl(),
+            TokenKind::KwMatch => self.parse_match(),
             kind if is_type_token(&kind) => self.parse_var_decl(),
             TokenKind::Ident(_) if self.peek_next() == &TokenKind::LBracket => {
                 self.parse_index_assign()
@@ -323,6 +348,109 @@ impl Parser {
         }
         self.expect(&TokenKind::RBrace)?;
         Ok(Stmt::TypeDecl { name, fields, span })
+    }
+
+    fn parse_enum_decl(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        self.advance(); // consume 列挙
+        let name = match (self.peek_span(), self.advance().clone()) {
+            (_, TokenKind::Ident(n)) => n,
+            (s, other) => {
+                return Err(ParseError::ExpectedIdentifier {
+                    got: other,
+                    span: s,
+                });
+            }
+        };
+        self.expect(&TokenKind::LBrace)?;
+        let mut variants = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            let vname = match (self.peek_span(), self.advance().clone()) {
+                (_, TokenKind::Ident(n)) => n,
+                (s, other) => {
+                    return Err(ParseError::ExpectedIdentifier {
+                        got: other,
+                        span: s,
+                    });
+                }
+            };
+            let mut payload = Vec::new();
+            if self.peek() == &TokenKind::LParen {
+                self.advance(); // consume （
+                while self.peek() != &TokenKind::RParen {
+                    payload.push(self.parse_type()?);
+                    if self.peek() != &TokenKind::RParen {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                }
+                self.expect(&TokenKind::RParen)?;
+            }
+            variants.push((vname, payload));
+            if self.peek() != &TokenKind::RBrace {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Stmt::EnumDecl {
+            name,
+            variants,
+            span,
+        })
+    }
+
+    fn parse_match(&mut self) -> Result<Stmt, ParseError> {
+        let span = self.peek_span();
+        self.advance(); // consume 照合
+        let subject = self.parse_expr()?;
+        self.expect(&TokenKind::LBrace)?;
+        let mut arms = Vec::new();
+        while self.peek() != &TokenKind::RBrace {
+            let variant = match (self.peek_span(), self.advance().clone()) {
+                (_, TokenKind::Ident(n)) => n,
+                (s, other) => {
+                    return Err(ParseError::ExpectedIdentifier {
+                        got: other,
+                        span: s,
+                    });
+                }
+            };
+            self.expect(&TokenKind::LParen)?;
+            let mut binders = Vec::new();
+            while self.peek() != &TokenKind::RParen {
+                let bname = match (self.peek_span(), self.advance().clone()) {
+                    (_, TokenKind::Ident(n)) => n,
+                    (s, other) => {
+                        return Err(ParseError::ExpectedIdentifier {
+                            got: other,
+                            span: s,
+                        });
+                    }
+                };
+                binders.push(bname);
+                if self.peek() != &TokenKind::RParen {
+                    self.expect(&TokenKind::Comma)?;
+                }
+            }
+            self.expect(&TokenKind::RParen)?;
+            self.expect(&TokenKind::KwThen)?; // ならば
+            self.expect(&TokenKind::LBrace)?;
+            let mut body = Vec::new();
+            while self.peek() != &TokenKind::RBrace {
+                body.push(self.parse_stmt()?);
+            }
+            self.expect(&TokenKind::RBrace)?;
+            arms.push(MatchArm {
+                variant,
+                binders,
+                body,
+            });
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Stmt::Match {
+            subject,
+            arms,
+            span,
+        })
     }
 
     fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -749,7 +877,10 @@ impl Parser {
                     }
                     self.advance(); // consume ）
                     Ok(Expr::Call { name, args })
-                } else if self.peek() == &TokenKind::LBrace {
+                } else if self.peek() == &TokenKind::LBrace
+                    && matches!(self.peek_at(1), TokenKind::Ident(_))
+                    && self.peek_at(2) == &TokenKind::Colon
+                {
                     self.advance(); // consume ｛
                     let mut fields = Vec::new();
                     while self.peek() != &TokenKind::RBrace {
@@ -885,6 +1016,8 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwBreak => "「抜ける」".to_string(),
         TokenKind::KwContinue => "「続ける」".to_string(),
         TokenKind::KwType => "「型」".to_string(),
+        TokenKind::KwEnum => "「列挙」".to_string(),
+        TokenKind::KwMatch => "「照合」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
@@ -928,6 +1061,7 @@ pub fn hikari_type_japanese(ty: &HikariType) -> String {
         HikariType::Void => "無".to_string(),
         HikariType::Array(inner) => format!("{}列", hikari_type_japanese(inner)),
         HikariType::Record(name) => name.clone(),
+        HikariType::Enum(name) => name.clone(),
     }
 }
 
@@ -1665,6 +1799,95 @@ mod tests {
         let tokens = Lexer::new(src).tokenize();
         let err = Parser::new(tokens).parse().unwrap_err();
         assert!(matches!(err, ParseError::ExpectedIdentifier { .. }));
+    }
+
+    // ── 9b: enums and pattern matching ──────────────────────────────────
+
+    #[test]
+    fn test_parse_enum_decl_with_payload_and_payloadless_variants() {
+        let src = "列挙 結果 ｛ 成功（整数）、 異常（文字列）、 不明 ｝";
+        let ast = parse_helper(src);
+        assert!(matches!(
+            &ast[0],
+            Stmt::EnumDecl { name, variants, .. }
+            if name == "結果" && variants == &[
+                ("成功".to_string(), vec![HikariType::Int]),
+                ("異常".to_string(), vec![HikariType::String]),
+                ("不明".to_string(), vec![]),
+            ]
+        ));
+    }
+
+    #[test]
+    fn test_parse_match_stmt_with_multiple_arms_including_zero_payload() {
+        let src = "列挙 結果 ｛ 成功（整数）、 異常 ｝照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ 異常（） ならば ｛ 印刷（０）； ｝ ｝";
+        let ast = parse_helper(src);
+        let Stmt::Match { subject, arms, .. } = &ast[1] else {
+            panic!("expected Match")
+        };
+        assert!(matches!(subject, Expr::Ident(n) if n == "値"));
+        assert_eq!(arms.len(), 2);
+        assert_eq!(arms[0].variant, "成功");
+        assert_eq!(arms[0].binders, vec!["ｎ".to_string()]);
+        assert_eq!(arms[0].body.len(), 1);
+        assert_eq!(arms[1].variant, "異常");
+        assert!(arms[1].binders.is_empty());
+    }
+
+    #[test]
+    fn test_parse_variant_construction_is_ordinary_call() {
+        let ast = parse_helper("返す 成功（１２３）；");
+        assert!(matches!(
+            &ast[0],
+            Stmt::Return(Some(Expr::Call { name, args }), _)
+            if name == "成功" && args.len() == 1
+        ));
+    }
+
+    #[test]
+    fn test_parse_zero_payload_variant_construction_requires_parens() {
+        let ast = parse_helper("返す 異常（）；");
+        assert!(matches!(
+            &ast[0],
+            Stmt::Return(Some(Expr::Call { name, args }), _)
+            if name == "異常" && args.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_parse_enum_decl_missing_comma_between_variants_returns_error() {
+        let src = "列挙 結果 ｛ 成功 異常 ｝";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedToken { .. }));
+    }
+
+    #[test]
+    fn test_parse_match_arm_missing_then_keyword_returns_error() {
+        let src = "照合 値 ｛ 成功（） ｛ 印刷（０）； ｝ ｝";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::UnexpectedToken {
+                expected: TokenKind::KwThen,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_match_arm_missing_parens_returns_error() {
+        let src = "照合 値 ｛ 成功 ならば ｛ 印刷（０）； ｝ ｝";
+        let tokens = Lexer::new(src).tokenize();
+        let err = Parser::new(tokens).parse().unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::UnexpectedToken {
+                expected: TokenKind::LParen,
+                ..
+            }
+        ));
     }
 
     #[test]

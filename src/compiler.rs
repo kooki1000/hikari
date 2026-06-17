@@ -16,6 +16,14 @@ pub enum Value {
     // Same Rc<RefCell<>> reference-semantics pattern as Array: assigning a
     // record to another variable aliases the same storage.
     Record(std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>),
+    // Unlike Array/Record, enum instances have no mutation operation defined
+    // on them in this design, so plain by-value Clone semantics (no
+    // Rc<RefCell<>>) are correct and simpler.
+    Enum {
+        enum_name: String,
+        variant: String,
+        payload: Vec<Value>,
+    },
 }
 
 // ── Built-in functions ────────────────────────────────────────────────────────
@@ -87,8 +95,14 @@ pub enum Instruction {
     // Field names in the SOURCE order their values were pushed (RecordLit's
     // parsed field order), not necessarily the type's declared field order.
     MakeRecord(Vec<String>),
-    GetField(String), // pop a record, push the named field's value
-    SetField(String), // pop value, pop record, set the named field in place
+    GetField(String),             // pop a record, push the named field's value
+    SetField(String),             // pop value, pop record, set the named field in place
+    MakeEnum(String, String, u8), // MakeEnum(enum_name, variant, payload_count)
+    // Pops a Value::Enum, pushes Bool(its variant == the given name). Does
+    // NOT consume the value for later payload extraction; callers reload
+    // from a local slot if they need the payload after a successful check.
+    TagEquals(String),
+    GetPayload(u8), // pop a Value::Enum, push payload[index] (clone)
 }
 
 pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
@@ -139,11 +153,12 @@ pub struct Chunk {
 
 pub struct Compiler {
     pub constants: Vec<Value>,
-    pub chunks: Vec<Chunk>,         // chunks[0] is the top-level script
-    fn_index: HashMap<String, u16>, // function name → chunk index
-    synthetic_counter: u32,         // disambiguates ForEach's hidden locals
-    script_scopes: Scopes,          // persists slots across repeated compile() calls (REPL)
-    loop_targets: Vec<LoopTarget>,  // enclosing-loop patch points for 抜ける／続ける
+    pub chunks: Vec<Chunk>,                // chunks[0] is the top-level script
+    fn_index: HashMap<String, u16>,        // function name → chunk index
+    synthetic_counter: u32,                // disambiguates ForEach's hidden locals
+    script_scopes: Scopes,                 // persists slots across repeated compile() calls (REPL)
+    loop_targets: Vec<LoopTarget>,         // enclosing-loop patch points for 抜ける／続ける
+    variant_enum: HashMap<String, String>, // variant name → owning enum name
 }
 
 // For While, continue_target is known immediately (loop_start, where the
@@ -215,6 +230,7 @@ impl Compiler {
             synthetic_counter: 0,
             script_scopes: Scopes::new(),
             loop_targets: Vec::new(),
+            variant_enum: HashMap::new(),
         }
     }
 
@@ -551,6 +567,75 @@ impl Compiler {
                 self.emit_expr(value, instrs, scopes);
                 instrs.push(Instruction::SetField(field.clone()));
             }
+            Stmt::EnumDecl { name, variants, .. } => {
+                // No bytecode: registers variant_enum for later codegen,
+                // mirroring TypeDecl's "register during compile, no-op
+                // codegen" pattern.
+                for (variant_name, _) in variants {
+                    self.variant_enum.insert(variant_name.clone(), name.clone());
+                }
+            }
+            Stmt::Match {
+                subject,
+                arms,
+                span: _,
+            } => {
+                // If the subject is a simple identifier, look up its slot and
+                // reload it with LoadLocal before each arm — no synthetic needed.
+                // Otherwise, emit the expression, store it in a synthetic local,
+                // and reload from there (generic fallback).
+                let subject_slot: u16 = if let Expr::Ident(name) = subject {
+                    scopes.lookup(name).expect("match subject not in scope")
+                } else {
+                    self.emit_expr(subject, instrs, scopes);
+                    let slot =
+                        scopes.declare(&format!("__match_subject_{}", self.synthetic_counter));
+                    self.synthetic_counter += 1;
+                    instrs.push(Instruction::StoreLocal(slot));
+                    slot
+                };
+
+                let mut end_jump_idxs = Vec::new();
+                let mut prev_arm_jif_idx: Option<usize> = None;
+
+                for arm in arms {
+                    if let Some(idx) = prev_arm_jif_idx {
+                        let here = instrs.len() as u16;
+                        instrs[idx] = Instruction::JumpIfFalse(here);
+                    }
+
+                    instrs.push(Instruction::LoadLocal(subject_slot));
+                    instrs.push(Instruction::TagEquals(arm.variant.clone()));
+                    let jif_idx = instrs.len();
+                    instrs.push(Instruction::JumpIfFalse(0)); // placeholder; patched by the next arm's start, or left defensively consistent for the last arm
+
+                    scopes.enter();
+                    for (i, binder) in arm.binders.iter().enumerate() {
+                        instrs.push(Instruction::LoadLocal(subject_slot));
+                        instrs.push(Instruction::GetPayload(i as u8));
+                        let binder_slot = scopes.declare(binder);
+                        instrs.push(Instruction::StoreLocal(binder_slot));
+                    }
+                    for s in &arm.body {
+                        self.emit_stmt(s, instrs, scopes);
+                    }
+                    scopes.exit();
+
+                    let end_jump_idx = instrs.len();
+                    instrs.push(Instruction::Jump(0)); // placeholder, patched once after_match is known
+                    end_jump_idxs.push(end_jump_idx);
+
+                    prev_arm_jif_idx = Some(jif_idx);
+                }
+
+                let after_match = instrs.len() as u16;
+                if let Some(idx) = prev_arm_jif_idx {
+                    instrs[idx] = Instruction::JumpIfFalse(after_match);
+                }
+                for idx in end_jump_idxs {
+                    instrs[idx] = Instruction::Jump(after_match);
+                }
+            }
         }
     }
 
@@ -646,7 +731,13 @@ impl Compiler {
                 for arg in args {
                     self.emit_expr(arg, instrs, scopes);
                 }
-                if let Some(builtin) = builtin_name(name) {
+                if let Some(owning_enum) = self.variant_enum.get(name).cloned() {
+                    instrs.push(Instruction::MakeEnum(
+                        owning_enum,
+                        name.clone(),
+                        args.len() as u8,
+                    ));
+                } else if let Some(builtin) = builtin_name(name) {
                     instrs.push(Instruction::CallBuiltin(builtin, args.len() as u8));
                 } else {
                     let fn_idx = self.fn_index[name];
@@ -1014,6 +1105,66 @@ mod tests {
         let src = "型 点 ｛ 整数 ｘ； ｝";
         let (instrs, _) = compile(src);
         assert!(instrs.is_empty());
+    }
+
+    // ── 9b: enums and pattern matching ──────────────────────────────────
+
+    #[test]
+    fn test_compile_enum_decl_emits_no_instructions() {
+        let src = "列挙 結果 ｛ 成功（整数） ｝";
+        let (instrs, _) = compile(src);
+        assert!(instrs.is_empty());
+    }
+
+    #[test]
+    fn test_compile_variant_construction_emits_make_enum() {
+        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；";
+        let (instrs, _) = compile(src);
+        assert!(matches!(
+            &instrs[1],
+            Instruction::MakeEnum(enum_name, variant, 1)
+            if enum_name == "結果" && variant == "成功"
+        ));
+    }
+
+    #[test]
+    fn test_compile_zero_payload_variant_construction_emits_make_enum_zero() {
+        let src = "列挙 信号 ｛ 赤 ｝信号 値 ＝ 赤（）；";
+        let (instrs, _) = compile(src);
+        assert!(matches!(
+            &instrs[0],
+            Instruction::MakeEnum(enum_name, variant, 0)
+            if enum_name == "信号" && variant == "赤"
+        ));
+    }
+
+    #[test]
+    fn test_compile_match_two_arms_emits_tag_equals_and_correct_jump_targets() {
+        let src = "列挙 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ 青（） ならば ｛ 印刷（２）； ｝ ｝";
+        let (instrs, _) = compile(src);
+
+        let tag_equals_count = instrs
+            .iter()
+            .filter(|i| matches!(i, Instruction::TagEquals(_)))
+            .count();
+        assert_eq!(tag_equals_count, 2);
+        assert!(matches!(&instrs[3], Instruction::TagEquals(v) if v == "赤"));
+
+        let after_match = instrs.len() as u16;
+        // The last arm's JumpIfFalse must land exactly at after_match.
+        let last_jif = instrs
+            .iter()
+            .rev()
+            .find(|i| matches!(i, Instruction::JumpIfFalse(_)))
+            .unwrap();
+        assert_eq!(last_jif, &Instruction::JumpIfFalse(after_match));
+
+        // Every arm's trailing Jump (skip-to-end) must also land at after_match.
+        let unconditional_jumps: Vec<&Instruction> = instrs
+            .iter()
+            .filter(|i| matches!(i, Instruction::Jump(n) if *n == after_match))
+            .collect();
+        assert_eq!(unconditional_jumps.len(), 2);
     }
 
     #[test]
