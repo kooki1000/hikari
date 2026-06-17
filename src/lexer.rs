@@ -32,6 +32,8 @@ pub enum TokenKind {
     KwBreak,    // 抜ける
     KwContinue, // 続ける
     KwType,     // 型
+    KwEnum,     // 列挙
+    KwMatch,    // 照合
 
     // Literals
     LitInt(i64),
@@ -225,6 +227,8 @@ impl Lexer {
             "抜ける" => TokenKind::KwBreak,
             "続ける" => TokenKind::KwContinue,
             "型" => TokenKind::KwType,
+            "列挙" => TokenKind::KwEnum,
+            "照合" => TokenKind::KwMatch,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),
@@ -797,6 +801,17 @@ mod tests {
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].kind, TokenKind::KwType);
         assert_eq!(tokens[1].kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_lex_enum_and_match_keywords() {
+        let src = "列挙 照合";
+        let tokens = Lexer::new(src).tokenize();
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![&TokenKind::KwEnum, &TokenKind::KwMatch, &TokenKind::Eof,]
+        );
     }
 
     #[test]
