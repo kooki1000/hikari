@@ -26,7 +26,7 @@ pub enum Value {
         variant: String,
         payload: Vec<Value>,
     },
-    // first-class function pointer
+    // A first-class function pointer.
     Function {
         chunk_index: usize,
         arity: u8,
@@ -67,7 +67,7 @@ pub enum BuiltinFn {
     MapKeys,       // 鍵一覧
     MapValues,     // 値一覧
     MapDelete,     // 削除
-    // higher-order functions (these are special — they take a fn value)
+    // Higher-order functions (special: they take a fn value)
     MapArray,    // マップ
     FilterArray, // 絞り込み
     FoldArray,   // 畳み込み
@@ -118,9 +118,9 @@ pub enum Instruction {
     // from a local slot if they need the payload after a successful check.
     TagEquals(String),
     GetPayload(u8), // pop a Value::Enum, push payload[index] (clone)
-    // push a function value onto the stack
+    // Push a function value onto the stack.
     LoadFn { chunk_index: usize, arity: u8 },
-    // Pop function value and arg_count args off the stack, call the function
+    // Pop function value and arg_count args off the stack, call the function.
     CallValue(u8),
 }
 

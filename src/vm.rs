@@ -541,11 +541,11 @@ impl Vm {
                 // matches the matched variant's payload arity).
                 self.stack.push(payload[index as usize].clone());
             }
-            // push a function value onto the stack
+            // Push a function value onto the stack.
             Instruction::LoadFn { chunk_index, arity } => {
                 self.stack.push(Value::Function { chunk_index, arity });
             }
-            // pop function value + args, push a new frame
+            // Pop the function value and its args, then push a new frame.
             Instruction::CallValue(arg_count) => {
                 let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                 match fn_val {
