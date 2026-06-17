@@ -36,6 +36,9 @@ pub enum TokenKind {
     KwMatch,    // 照合
     KwMap,      // 辞書
 
+    // Phase 10: first-class functions
+    Pipe, // ｜ (U+FF5C full-width vertical bar) — lambda parameter delimiter
+
     // Literals
     LitInt(i64),
     LitFloat(f64),
@@ -351,6 +354,10 @@ impl Lexer {
                         TokenKind::Colon
                     }
                 }
+                '｜' => {
+                    self.advance();
+                    TokenKind::Pipe
+                }
                 '「' => {
                     self.advance();
                     TokenKind::LitString(self.read_string_literal())
@@ -419,6 +426,7 @@ fn is_symbol(ch: char) -> bool {
             | '【'
             | '】'
             | '：'
+            | '｜'
     )
 }
 
