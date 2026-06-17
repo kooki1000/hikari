@@ -327,12 +327,12 @@ impl std::fmt::Display for TypeError {
             ),
             TypeError::DuplicateEnumVariant { variant, .. } => write!(
                 f,
-                "変体名「{}」は既に使用されています。（ヒント: 変体名はすべての列挙型で一意である必要があります）",
+                "変体名「{}」は既に使用されています。（ヒント: 変体名はすべての構造型で一意である必要があります）",
                 variant
             ),
             TypeError::NotAnEnum { got, .. } => write!(
                 f,
-                "「{}」型の値は照合できません。（ヒント: 照合は列挙型の値に対してのみ使用できます）",
+                "「{}」型の値は照合できません。（ヒント: 照合は構造型の値に対してのみ使用できます）",
                 hikari_type_japanese(got)
             ),
             TypeError::DuplicateMatchArm { variant, .. } => write!(
@@ -344,12 +344,12 @@ impl std::fmt::Display for TypeError {
                 enum_name, variant, ..
             } => write!(
                 f,
-                "列挙「{}」には変体「{}」がありません。",
+                "構造「{}」には変体「{}」がありません。",
                 enum_name, variant
             ),
             TypeError::NonExhaustiveMatch(info) => write!(
                 f,
-                "列挙「{}」のすべての場合を網羅していません（未対応: {}）。",
+                "構造「{}」のすべての場合を網羅していません（未対応: {}）。",
                 info.enum_name,
                 info.missing.join("、")
             ),
@@ -427,7 +427,7 @@ fn builtin_module(name: &str) -> Option<&'static str> {
             Some("配列")
         }
         "鍵一覧" | "値一覧" | "削除" => Some("辞書"),
-        "地図" | "絞り込み" | "畳み込み" => Some("関数"),
+        "マップ" | "絞り込み" | "畳み込み" => Some("関数"),
         _ => None,
     }
 }
@@ -951,7 +951,6 @@ impl TypeChecker {
                 // we accept Record(name) when name is a registered enum, as
                 // well as the explicit Enum(name) form.
                 let enum_name = match subject_ty {
-                    HikariType::Enum(name) => name,
                     HikariType::Record(name) if self.enums.contains_key(&name) => name,
                     other => {
                         return Err(TypeError::NotAnEnum {
@@ -1037,7 +1036,7 @@ impl TypeChecker {
                 if let Some(ty) = self.lookup_var(name) {
                     return Ok(ty);
                 }
-                // Phase 10: a bare identifier that names a known function can
+                // a bare identifier that names a known function can
                 // be used as a first-class function value.
                 if let Some(sig) = self.fns.get(name).cloned() {
                     return Ok(HikariType::Fn(sig.params, Box::new(sig.return_ty)));
@@ -1591,8 +1590,8 @@ impl TypeChecker {
                     return Ok(HikariType::Bool);
                 }
 
-                // Phase 10: higher-order function builtins.
-                if name == "地図" {
+                // higher-order function builtins.
+                if name == "マップ" {
                     if args.len() != 2 {
                         return Err(TypeError::ArgCountMismatch {
                             name: name.clone(),
@@ -1756,7 +1755,7 @@ impl TypeChecker {
                     return Ok(sig.return_ty);
                 }
 
-                // Phase 10: check if name is a Fn-typed local variable.
+                // check if name is a Fn-typed local variable.
                 if let Some(var_ty) = self.lookup_var(name) {
                     match var_ty {
                         HikariType::Fn(params, ret) => {
@@ -1956,7 +1955,7 @@ impl TypeChecker {
                     })
             }
 
-            // Phase 10: anonymous function
+            // anonymous function
             Expr::Lambda {
                 params,
                 return_ty,
@@ -3009,21 +3008,21 @@ mod tests {
 
     #[test]
     fn test_typecheck_variant_construction_happy_path() {
-        let src = "列挙 結果 ｛ 成功（整数）、 異常（文字列） ｝結果 値 ＝ 成功（１）；";
+        let src = "構造 結果 ｛ 成功（整数）、 異常（文字列） ｝結果 値 ＝ 成功（１）；";
         let ast = parse(src);
         assert!(TypeChecker::new().check(&ast).is_ok());
     }
 
     #[test]
     fn test_typecheck_variant_construction_zero_payload() {
-        let src = "列挙 信号 ｛ 赤、 黄、 青 ｝信号 値 ＝ 赤（）；";
+        let src = "構造 信号 ｛ 赤、 黄、 青 ｝信号 値 ＝ 赤（）；";
         let ast = parse(src);
         assert!(TypeChecker::new().check(&ast).is_ok());
     }
 
     #[test]
     fn test_typecheck_variant_construction_wrong_arg_count() {
-        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（）；";
+        let src = "構造 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（）；";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(
@@ -3038,7 +3037,7 @@ mod tests {
 
     #[test]
     fn test_typecheck_variant_construction_wrong_arg_type() {
-        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（「あ」）；";
+        let src = "構造 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（「あ」）；";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(
@@ -3053,7 +3052,7 @@ mod tests {
 
     #[test]
     fn test_typecheck_duplicate_enum_variant_across_enums() {
-        let src = "列挙 結果 ｛ 成功 ｝列挙 状態 ｛ 成功 ｝";
+        let src = "構造 結果 ｛ 成功 ｝構造 状態 ｛ 成功 ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(
@@ -3063,14 +3062,14 @@ mod tests {
 
     #[test]
     fn test_typecheck_match_exhaustive_is_ok() {
-        let src = "列挙 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ 青（） ならば ｛ 印刷（２）； ｝ ｝";
+        let src = "構造 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ 青（） ならば ｛ 印刷（２）； ｝ ｝";
         let ast = parse(src);
         assert!(TypeChecker::new().check(&ast).is_ok());
     }
 
     #[test]
     fn test_typecheck_match_non_exhaustive_lists_missing_variant() {
-        let src = "列挙 信号 ｛ 赤、 黄、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ ｝";
+        let src = "構造 信号 ｛ 赤、 黄、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         match &err {
@@ -3085,7 +3084,7 @@ mod tests {
 
     #[test]
     fn test_typecheck_match_duplicate_arm() {
-        let src = "列挙 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ ｝ 赤（） ならば ｛ ｝ 青（） ならば ｛ ｝ ｝";
+        let src = "構造 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ ｝ 赤（） ならば ｛ ｝ 青（） ならば ｛ ｝ ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(err, TypeError::DuplicateMatchArm { variant, .. } if variant == "赤"));
@@ -3093,7 +3092,7 @@ mod tests {
 
     #[test]
     fn test_typecheck_match_arm_from_different_enum_is_undeclared_variant() {
-        let src = "列挙 信号 ｛ 赤、 青 ｝列挙 状態 ｛ 開始 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ ｝ 開始（） ならば ｛ ｝ ｝";
+        let src = "構造 信号 ｛ 赤、 青 ｝構造 状態 ｛ 開始 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ ｝ 開始（） ならば ｛ ｝ ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(
@@ -3105,7 +3104,7 @@ mod tests {
 
     #[test]
     fn test_typecheck_match_arm_wrong_binder_count() {
-        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；照合 値 ｛ 成功（ａ、ｂ） ならば ｛ ｝ ｝";
+        let src = "構造 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；照合 値 ｛ 成功（ａ、ｂ） ならば ｛ ｝ ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(
@@ -3134,7 +3133,7 @@ mod tests {
 
     #[test]
     fn test_typecheck_match_arm_binder_scoped_to_its_own_arm() {
-        let src = "列挙 結果 ｛ 成功（整数）、 異常（文字列） ｝結果 値 ＝ 成功（１）；照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ 異常（ｅ） ならば ｛ 印刷（ｎ）； ｝ ｝";
+        let src = "構造 結果 ｛ 成功（整数）、 異常（文字列） ｝結果 値 ＝ 成功（１）；照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ 異常（ｅ） ならば ｛ 印刷（ｎ）； ｝ ｝";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "ｎ"));
@@ -3142,7 +3141,7 @@ mod tests {
 
     #[test]
     fn test_typecheck_match_binder_not_visible_after_match() {
-        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ ｝印刷（ｎ）；";
+        let src = "構造 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ ｝印刷（ｎ）；";
         let ast = parse(src);
         let err = TypeChecker::new().check(&ast).unwrap_err();
         assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "ｎ"));

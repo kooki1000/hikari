@@ -225,7 +225,7 @@ impl Vm {
                 // Execution continues inside the new frame on the next iteration.
             }
             Instruction::CallBuiltin(builtin, argc) => {
-                // Phase 10: HOF builtins need access to the frame machinery,
+                // HOF builtins need access to the frame machinery,
                 // so they are handled here rather than in call_builtin.
                 match builtin {
                     BuiltinFn::MapArray => {
@@ -541,11 +541,11 @@ impl Vm {
                 // matches the matched variant's payload arity).
                 self.stack.push(payload[index as usize].clone());
             }
-            // Phase 10: push a function value onto the stack
+            // push a function value onto the stack
             Instruction::LoadFn { chunk_index, arity } => {
                 self.stack.push(Value::Function { chunk_index, arity });
             }
-            // Phase 10: pop function value + args, push a new frame
+            // pop function value + args, push a new frame
             Instruction::CallValue(arg_count) => {
                 let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                 match fn_val {
@@ -651,7 +651,7 @@ impl Vm {
         Ok((lhs, rhs))
     }
 
-    /// Phase 10: call a chunk by index with the given arguments and run it to
+    /// call a chunk by index with the given arguments and run it to
     /// completion, returning the produced value. Used by HOF builtins.
     fn call_function(
         &mut self,
@@ -667,7 +667,7 @@ impl Vm {
             if self.frames.len() == target_depth {
                 // The called frame finished; its return value (if any) is on
                 // the stack. Pop and return it.
-                return Ok(self.stack.pop().ok_or(RuntimeError::StackUnderflow)?);
+                return self.stack.pop().ok_or(RuntimeError::StackUnderflow);
             }
             match self.step()? {
                 StepResult::Continue => {}
@@ -1063,7 +1063,7 @@ fn call_builtin(builtin: BuiltinFn, args: &mut Vec<Value>) -> Result<Value, Runt
             }
             _ => Err(RuntimeError::TypeMismatch),
         },
-        // Phase 10: HOF builtins are handled directly in step() since they
+        // HOF builtins are handled directly in step() since they
         // need access to the frame machinery; they never reach call_builtin.
         BuiltinFn::MapArray | BuiltinFn::FilterArray | BuiltinFn::FoldArray => {
             unreachable!("HOF builtins are handled in step()")
@@ -1979,26 +1979,26 @@ mod tests {
 
     #[test]
     fn test_vm_construct_and_print_payload_and_payloadless_variants() {
-        let src = "列挙 結果 ｛ 成功（整数）、 異常 ｝印刷（成功（１２３））；印刷（異常（））；";
+        let src = "構造 結果 ｛ 成功（整数）、 異常 ｝印刷（成功（１２３））；印刷（異常（））；";
         let result = run(src);
         assert_eq!(result, None);
     }
 
     #[test]
     fn test_vm_match_dispatches_to_correct_arm_for_each_variant() {
-        let src = "列挙 信号 ｛ 赤、 黄、 青 ｝関数 名前（信号 値）ー＞ 整数 ｛ 照合 値 ｛ 赤（） ならば ｛ 返す １； ｝ 黄（） ならば ｛ 返す ２； ｝ 青（） ならば ｛ 返す ３； ｝ ｝返す ０； ｝返す 名前（赤（）） ＊ １００ ＋ 名前（黄（）） ＊ １０ ＋ 名前（青（））；";
+        let src = "構造 信号 ｛ 赤、 黄、 青 ｝関数 名前（信号 値）ー＞ 整数 ｛ 照合 値 ｛ 赤（） ならば ｛ 返す １； ｝ 黄（） ならば ｛ 返す ２； ｝ 青（） ならば ｛ 返す ３； ｝ ｝返す ０； ｝返す 名前（赤（）） ＊ １００ ＋ 名前（黄（）） ＊ １０ ＋ 名前（青（））；";
         assert_eq!(run(src), Some(Value::Int(123)));
     }
 
     #[test]
     fn test_vm_match_binder_receives_correct_payload_values_in_order() {
-        let src = "列挙 結果 ｛ 点（整数、整数） ｝結果 値 ＝ 点（３、４）；照合 値 ｛ 点（ｘ、ｙ） ならば ｛ 返す ｘ ＊ １０ ＋ ｙ； ｝ ｝";
+        let src = "構造 結果 ｛ 点（整数、整数） ｝結果 値 ＝ 点（３、４）；照合 値 ｛ 点（ｘ、ｙ） ならば ｛ 返す ｘ ＊ １０ ＋ ｙ； ｝ ｝";
         assert_eq!(run(src), Some(Value::Int(34)));
     }
 
     #[test]
     fn test_vm_non_exhaustive_match_rejected_at_typecheck_time() {
-        let src = "列挙 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ ｝ ｝";
+        let src = "構造 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ ｝ ｝";
         let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
         let err = crate::typechecker::TypeChecker::new().check(&ast);
         assert!(err.is_err());
@@ -2071,8 +2071,6 @@ mod tests {
         assert_eq!(run(src), Some(Value::Int(42)));
     }
 
-    // ── Phase 10: first-class functions ──────────────────────────────────
-
     #[test]
     fn test_vm_lambda_creation_and_call() {
         // Lambda stored in var, then called through var.
@@ -2090,8 +2088,8 @@ mod tests {
 
     #[test]
     fn test_vm_map_array_with_named_function() {
-        // 地図 HOF with named function
-        let src = "取り込む 「関数」；関数 二倍（整数 ｎ）ー＞ 整数 ｛ 返す ｎ ＊ ２； ｝整数列 nums ＝ 【１、２、３】；整数列 result ＝ 地図（nums、二倍）；返す result【２】；";
+        // マップ HOF with named function
+        let src = "取り込む 「関数」；関数 二倍（整数 ｎ）ー＞ 整数 ｛ 返す ｎ ＊ ２； ｝整数列 nums ＝ 【１、２、３】；整数列 result ＝ マップ（nums、二倍）；返す result【２】；";
         assert_eq!(run(src), Some(Value::Int(6)));
     }
 

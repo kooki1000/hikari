@@ -11,9 +11,8 @@ pub enum HikariType {
     Void,   // 無
     Array(Box<HikariType>),
     Map(Box<HikariType>, Box<HikariType>), // key type, value type
-    Record(String), // user-defined record type, identified by its declared name
-    Enum(String),   // user-defined enum type, identified by its declared name
-    // Phase 10: function type — 関数＜(T1、T2) → R＞
+    Record(String), // user-defined record/enum type, identified by its declared name
+    // function type — 関数＜(T1、T2) → R＞
     Fn(Vec<HikariType>, Box<HikariType>),
 }
 
@@ -52,7 +51,7 @@ pub enum Expr {
         record: Box<Expr>,
         field: String,
     },
-    // Phase 10: anonymous function (lambda) — ｜params｜ → return_ty ｛ body ｝
+    // anonymous function (lambda) — ｜params｜ → return_ty ｛ body ｝
     Lambda {
         params: Vec<(String, HikariType)>,
         return_ty: HikariType,
@@ -277,7 +276,7 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
         match self.peek().clone() {
-            // Phase 10: 関数＜...＞ name ＝ expr;  is a var decl with Fn type.
+            // 関数＜...＞ name ＝ expr;  is a var decl with Fn type.
             // 関数 name（...） → ... ｛ ... ｝ is a named fn decl.
             TokenKind::KwFn if self.peek_next() == &TokenKind::Lt => self.parse_var_decl(),
             TokenKind::KwFn => self.parse_fn_decl(),
@@ -365,7 +364,7 @@ impl Parser {
 
     fn parse_enum_decl(&mut self) -> Result<Stmt, ParseError> {
         let span = self.peek_span();
-        self.advance(); // consume 列挙
+        self.advance(); // consume 構造
         let name = match (self.peek_span(), self.advance().clone()) {
             (_, TokenKind::Ident(n)) => n,
             (s, other) => {
@@ -871,7 +870,7 @@ impl Parser {
             let inner = self.parse_primary()?;
             return Ok(Expr::UnaryNot(Box::new(inner)));
         }
-        // Phase 10: lambda — ｜ param：type、...｜ → return_ty ｛ body ｝
+        // lambda — ｜ param：type、...｜ → return_ty ｛ body ｝
         if self.peek() == &TokenKind::Pipe {
             self.advance(); // consume ｜
             let mut params = Vec::new();
@@ -1051,7 +1050,7 @@ impl Parser {
                 self.expect(&TokenKind::Gt)?;
                 Ok(HikariType::Map(Box::new(key_ty), Box::new(val_ty)))
             }
-            // Phase 10: 関数＜(T1、T2) → R＞
+            // 関数＜(T1、T2) → R＞
             TokenKind::KwFn => {
                 self.expect(&TokenKind::Lt)?;
                 self.expect(&TokenKind::LParen)?;
@@ -1107,7 +1106,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwBreak => "「抜ける」".to_string(),
         TokenKind::KwContinue => "「続ける」".to_string(),
         TokenKind::KwType => "「型」".to_string(),
-        TokenKind::KwEnum => "「列挙」".to_string(),
+        TokenKind::KwEnum => "「構造」".to_string(),
         TokenKind::KwMatch => "「照合」".to_string(),
         TokenKind::KwMap => "「辞書」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
@@ -1161,7 +1160,6 @@ pub fn hikari_type_japanese(ty: &HikariType) -> String {
             )
         }
         HikariType::Record(name) => name.clone(),
-        HikariType::Enum(name) => name.clone(),
         HikariType::Fn(params, ret) => {
             let param_strs: Vec<String> = params.iter().map(hikari_type_japanese).collect();
             format!(
@@ -1915,7 +1913,7 @@ mod tests {
 
     #[test]
     fn test_parse_enum_decl_with_payload_and_payloadless_variants() {
-        let src = "列挙 結果 ｛ 成功（整数）、 異常（文字列）、 不明 ｝";
+        let src = "構造 結果 ｛ 成功（整数）、 異常（文字列）、 不明 ｝";
         let ast = parse_helper(src);
         assert!(matches!(
             &ast[0],
@@ -1930,7 +1928,7 @@ mod tests {
 
     #[test]
     fn test_parse_match_stmt_with_multiple_arms_including_zero_payload() {
-        let src = "列挙 結果 ｛ 成功（整数）、 異常 ｝照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ 異常（） ならば ｛ 印刷（０）； ｝ ｝";
+        let src = "構造 結果 ｛ 成功（整数）、 異常 ｝照合 値 ｛ 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝ 異常（） ならば ｛ 印刷（０）； ｝ ｝";
         let ast = parse_helper(src);
         let Stmt::Match { subject, arms, .. } = &ast[1] else {
             panic!("expected Match")
@@ -1966,7 +1964,7 @@ mod tests {
 
     #[test]
     fn test_parse_enum_decl_missing_comma_between_variants_returns_error() {
-        let src = "列挙 結果 ｛ 成功 異常 ｝";
+        let src = "構造 結果 ｛ 成功 異常 ｝";
         let tokens = Lexer::new(src).tokenize();
         let err = Parser::new(tokens).parse().unwrap_err();
         assert!(matches!(err, ParseError::UnexpectedToken { .. }));

@@ -76,8 +76,8 @@ access (`ｐ。ｘ`), and field assignment. Requires: a new `HikariType::Record(
 a registry of declared types in the type checker, `Value::Record(Rc<RefCell<...>>)`
 in the VM, and `GetField`/`SetField`/`MakeRecord` instructions.
 
-**9b. 列挙型とパターン照合（Enums & Pattern Matching）**
-Sum types (`列挙 結果 ｛ 成功（整数）、失敗（文字列）｝`) plus a `照合`/match statement.
+**9b. 構造型とパターン照合（Enums & Pattern Matching）**
+Sum types (`構造 結果 ｛ 成功（整数）、失敗（文字列）｝`) plus a `照合`/match statement.
 This subsumes a lot: it gives a principled way to model absence/optionality and
 errors as values, complementing try/catch.
 
@@ -91,13 +91,13 @@ a `Value::Map`. Hugely useful for real programs (counting, grouping, caching).
 
 **10a. 関数値とラムダ**
 Functions as values, a `関数型` type, and anonymous functions, enabling
-`地図`/`絞り込み`/`畳み込み` (map/filter/reduce) over arrays as ordinary library
+`マップ`/`絞り込み`/`畳み込み` (map/filter/reduce) over arrays as ordinary library
 functions instead of language built-ins. Requires closures or at minimum
 function-pointer values; closures need captured-environment support in the VM.
 
 **10b. ジェネリクス（Generics）**
 Even minimal parametric types (`配列＜Ｔ＞`, generic `要素数`, generic
-`地図＜Ｔ、Ｕ＞`) would remove the current need to special-case every builtin's
+`マップ＜Ｔ、Ｕ＞`) would remove the current need to special-case every builtin's
 types by hand in the type checker.
 
 ---

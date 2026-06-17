@@ -32,11 +32,10 @@ pub enum TokenKind {
     KwBreak,    // 抜ける
     KwContinue, // 続ける
     KwType,     // 型
-    KwEnum,     // 列挙
+    KwEnum,     // 構造
     KwMatch,    // 照合
     KwMap,      // 辞書
 
-    // Phase 10: first-class functions
     Pipe, // ｜ (U+FF5C full-width vertical bar) — lambda parameter delimiter
 
     // Literals
@@ -231,7 +230,7 @@ impl Lexer {
             "抜ける" => TokenKind::KwBreak,
             "続ける" => TokenKind::KwContinue,
             "型" => TokenKind::KwType,
-            "列挙" => TokenKind::KwEnum,
+            "構造" => TokenKind::KwEnum,
             "照合" => TokenKind::KwMatch,
             "辞書" => TokenKind::KwMap,
             "真" => TokenKind::LitTrue,
@@ -815,7 +814,7 @@ mod tests {
 
     #[test]
     fn test_lex_enum_and_match_keywords() {
-        let src = "列挙 照合";
+        let src = "構造 照合";
         let tokens = Lexer::new(src).tokenize();
         let kinds: Vec<&TokenKind> = tokens.iter().map(|t| &t.kind).collect();
         assert_eq!(

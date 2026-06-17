@@ -1,6 +1,4 @@
-＃ Phase 9b — Enums and Pattern Matching
-
-列挙 結果 ｛
+構造 結果 ｛
   成功（整数）、
   失敗（文字列）
 ｝
@@ -17,7 +15,7 @@
 ｝
 
 ＃ Unit (zero-payload) variants
-列挙 信号 ｛
+構造 信号 ｛
   赤、
   黄、
   青

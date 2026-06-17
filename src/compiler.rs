@@ -26,7 +26,7 @@ pub enum Value {
         variant: String,
         payload: Vec<Value>,
     },
-    // Phase 10: first-class function pointer
+    // first-class function pointer
     Function {
         chunk_index: usize,
         arity: u8,
@@ -67,8 +67,8 @@ pub enum BuiltinFn {
     MapKeys,       // 鍵一覧
     MapValues,     // 値一覧
     MapDelete,     // 削除
-    // Phase 10: higher-order functions (these are special — they take a fn value)
-    MapArray,    // 地図
+    // higher-order functions (these are special — they take a fn value)
+    MapArray,    // マップ
     FilterArray, // 絞り込み
     FoldArray,   // 畳み込み
 }
@@ -118,7 +118,7 @@ pub enum Instruction {
     // from a local slot if they need the payload after a successful check.
     TagEquals(String),
     GetPayload(u8), // pop a Value::Enum, push payload[index] (clone)
-    // Phase 10: push a function value onto the stack
+    // push a function value onto the stack
     LoadFn { chunk_index: usize, arity: u8 },
     // Pop function value and arg_count args off the stack, call the function
     CallValue(u8),
@@ -156,7 +156,7 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "鍵一覧" => Some(BuiltinFn::MapKeys),
         "値一覧" => Some(BuiltinFn::MapValues),
         "削除" => Some(BuiltinFn::MapDelete),
-        "地図" => Some(BuiltinFn::MapArray),
+        "マップ" => Some(BuiltinFn::MapArray),
         "絞り込み" => Some(BuiltinFn::FilterArray),
         "畳み込み" => Some(BuiltinFn::FoldArray),
         _ => None,
@@ -683,7 +683,7 @@ impl Compiler {
                 instrs.push(Instruction::LoadConst(idx));
             }
             Expr::Ident(name) => {
-                // Phase 10: if the ident names a local variable, load it.
+                // if the ident names a local variable, load it.
                 // If it names a known function (used as a value), emit LoadFn.
                 if let Some(slot) = scopes.lookup(name) {
                     instrs.push(Instruction::LoadLocal(slot));
@@ -777,7 +777,7 @@ impl Compiler {
                 } else if let Some(builtin) = builtin_name(name) {
                     instrs.push(Instruction::CallBuiltin(builtin, args.len() as u8));
                 } else if let Some(slot) = scopes.lookup(name) {
-                    // Phase 10: calling a Fn-typed local variable.
+                    // calling a Fn-typed local variable.
                     instrs.push(Instruction::LoadLocal(slot));
                     instrs.push(Instruction::CallValue(args.len() as u8));
                 } else {
@@ -818,7 +818,7 @@ impl Compiler {
                 self.emit_expr(record, instrs, scopes);
                 instrs.push(Instruction::GetField(field.clone()));
             }
-            // Phase 10: compile a lambda into a new chunk, emit LoadFn.
+            // compile a lambda into a new chunk, emit LoadFn.
             Expr::Lambda { params, body, .. } => {
                 // Reserve a chunk slot.
                 let chunk_index = self.chunks.len();
@@ -1180,14 +1180,14 @@ mod tests {
 
     #[test]
     fn test_compile_enum_decl_emits_no_instructions() {
-        let src = "列挙 結果 ｛ 成功（整数） ｝";
+        let src = "構造 結果 ｛ 成功（整数） ｝";
         let (instrs, _) = compile(src);
         assert!(instrs.is_empty());
     }
 
     #[test]
     fn test_compile_variant_construction_emits_make_enum() {
-        let src = "列挙 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；";
+        let src = "構造 結果 ｛ 成功（整数） ｝結果 値 ＝ 成功（１）；";
         let (instrs, _) = compile(src);
         assert!(matches!(
             &instrs[1],
@@ -1198,7 +1198,7 @@ mod tests {
 
     #[test]
     fn test_compile_zero_payload_variant_construction_emits_make_enum_zero() {
-        let src = "列挙 信号 ｛ 赤 ｝信号 値 ＝ 赤（）；";
+        let src = "構造 信号 ｛ 赤 ｝信号 値 ＝ 赤（）；";
         let (instrs, _) = compile(src);
         assert!(matches!(
             &instrs[0],
@@ -1209,7 +1209,7 @@ mod tests {
 
     #[test]
     fn test_compile_match_two_arms_emits_tag_equals_and_correct_jump_targets() {
-        let src = "列挙 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ 青（） ならば ｛ 印刷（２）； ｝ ｝";
+        let src = "構造 信号 ｛ 赤、 青 ｝信号 値 ＝ 赤（）；照合 値 ｛ 赤（） ならば ｛ 印刷（１）； ｝ 青（） ならば ｛ 印刷（２）； ｝ ｝";
         let (instrs, _) = compile(src);
 
         let tag_equals_count = instrs
