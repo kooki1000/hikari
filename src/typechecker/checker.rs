@@ -1,0 +1,571 @@
+use std::collections::HashMap;
+
+use crate::lexer::Span;
+use crate::modules::STDLIB_MODULES;
+use crate::parser::{Expr, HikariType, Stmt};
+
+use super::error::{NonExhaustiveMatchInfo, TypeError};
+use super::symbols::{FnSig, always_returns};
+
+pub struct TypeChecker {
+    pub(super) scopes: Vec<HashMap<String, HikariType>>,
+    pub(super) fns: HashMap<String, FnSig>,
+    // Return type expected by the function currently being checked.
+    pub(super) current_return_ty: Option<HikariType>,
+    pub(super) imported_modules: std::collections::HashSet<String>,
+    // Number of enclosing 間／繰り返す／各 bodies; 抜ける／続ける require > 0.
+    pub(super) loop_depth: u32,
+    // Record type name → ordered (field name, field type) pairs.
+    pub(super) records: HashMap<String, Vec<(String, HikariType)>>,
+    // Enum name → ordered (variant name, payload types) pairs.
+    pub(super) enums: HashMap<String, Vec<(String, Vec<HikariType>)>>,
+    // Variant name → owning enum name (variant names are globally unique).
+    pub(super) variant_owner: HashMap<String, String>,
+}
+
+impl TypeChecker {
+    pub fn new() -> Self {
+        Self {
+            scopes: vec![HashMap::new()],
+            fns: HashMap::new(),
+            current_return_ty: None,
+            imported_modules: std::collections::HashSet::new(),
+            loop_depth: 0,
+            records: HashMap::new(),
+            enums: HashMap::new(),
+            variant_owner: HashMap::new(),
+        }
+    }
+
+    pub(super) fn enter_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    pub(super) fn exit_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    pub(super) fn declare_var(&mut self, name: &str, ty: HikariType) {
+        self.scopes.last_mut().unwrap().insert(name.to_string(), ty);
+    }
+
+    pub(super) fn lookup_var(&self, name: &str) -> Option<HikariType> {
+        self.scopes.iter().rev().find_map(|s| s.get(name).cloned())
+    }
+
+    // parse_type's Ident arm accepts ANY identifier as a syntactically valid
+    // type, even ones that aren't declared record types, so this is the
+    // gatekeeper that rejects undeclared record names wherever a type is
+    // actually used (VarDecl, function params/return type).
+    pub(super) fn check_type_declared(&self, ty: &HikariType, span: Span) -> Result<(), TypeError> {
+        match ty {
+            HikariType::Record(name)
+                if !self.records.contains_key(name) && !self.enums.contains_key(name) =>
+            {
+                Err(TypeError::UndeclaredType(name.clone(), span))
+            }
+            HikariType::Map(k, v) => {
+                self.check_type_declared(k, span)?;
+                self.check_type_declared(v, span)
+            }
+            HikariType::Array(inner) => self.check_type_declared(inner, span),
+            HikariType::Fn(params, ret) => {
+                for p in params {
+                    self.check_type_declared(p, span)?;
+                }
+                self.check_type_declared(ret, span)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    pub fn check(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        for stmt in stmts {
+            self.check_stmt(stmt)?;
+        }
+        Ok(())
+    }
+
+    fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
+        match stmt {
+            Stmt::VarDecl {
+                ty,
+                name,
+                value,
+                span,
+            } => {
+                self.check_type_declared(ty, *span)?;
+                // Special case: an empty map literal ｛｝ is valid if the declared
+                // type is a Map — infer_expr can't deduce the element types from nothing,
+                // so we skip the inference and trust the annotation.
+                if matches!(value, Expr::MapLit(pairs) if pairs.is_empty()) {
+                    if !matches!(ty, HikariType::Map(..)) {
+                        return Err(TypeError::VarDeclMismatch {
+                            name: name.clone(),
+                            declared: ty.clone(),
+                            got: HikariType::Map(
+                                Box::new(HikariType::String),
+                                Box::new(HikariType::Void),
+                            ),
+                            span: *span,
+                        });
+                    }
+                    self.declare_var(name, ty.clone());
+                    return Ok(());
+                }
+                let inferred = self.infer_expr(value, *span)?;
+                if inferred != *ty {
+                    return Err(TypeError::VarDeclMismatch {
+                        name: name.clone(),
+                        declared: ty.clone(),
+                        got: inferred,
+                        span: *span,
+                    });
+                }
+                self.declare_var(name, ty.clone());
+                Ok(())
+            }
+
+            Stmt::FnDecl {
+                name,
+                params,
+                return_ty,
+                body,
+                span,
+            } => {
+                for (ty, _) in params {
+                    self.check_type_declared(ty, *span)?;
+                }
+                self.check_type_declared(return_ty, *span)?;
+                let sig = FnSig {
+                    params: params.iter().map(|(t, _)| t.clone()).collect(),
+                    return_ty: return_ty.clone(),
+                };
+                self.fns.insert(name.clone(), sig);
+
+                // Function bodies are fully isolated: they get a brand new
+                // scope stack, matching the VM's independent per-call Frame.
+                let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+                let outer_return_ty = self.current_return_ty.take();
+                // A 抜ける／続ける written inside a nested 関数 body must not
+                // be considered "inside a loop" just because the call site
+                // (or even the declaration site) happens to sit inside one.
+                let outer_loop_depth = std::mem::take(&mut self.loop_depth);
+
+                for (ty, pname) in params {
+                    self.declare_var(pname, ty.clone());
+                }
+                self.current_return_ty = Some(return_ty.clone());
+
+                self.check(body)?;
+
+                if *return_ty != HikariType::Void && !always_returns(body) {
+                    return Err(TypeError::MissingReturn {
+                        name: name.clone(),
+                        span: *span,
+                    });
+                }
+
+                self.scopes = outer_scopes;
+                self.current_return_ty = outer_return_ty;
+                self.loop_depth = outer_loop_depth;
+                Ok(())
+            }
+
+            Stmt::Return(expr, span) => {
+                match expr {
+                    Some(expr) => {
+                        let got = self.infer_expr(expr, *span)?;
+                        if let Some(expected) = &self.current_return_ty
+                            && got != *expected
+                        {
+                            return Err(TypeError::ReturnTypeMismatch {
+                                expected: expected.clone(),
+                                got,
+                                span: *span,
+                            });
+                        }
+                    }
+                    None => {
+                        if let Some(expected) = &self.current_return_ty
+                            && *expected != HikariType::Void
+                        {
+                            return Err(TypeError::ReturnTypeMismatch {
+                                expected: expected.clone(),
+                                got: HikariType::Void,
+                                span: *span,
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
+
+            Stmt::Break(span) => {
+                if self.loop_depth == 0 {
+                    return Err(TypeError::ControlFlowOutsideLoop {
+                        keyword: "抜ける".to_string(),
+                        span: *span,
+                    });
+                }
+                Ok(())
+            }
+
+            Stmt::Continue(span) => {
+                if self.loop_depth == 0 {
+                    return Err(TypeError::ControlFlowOutsideLoop {
+                        keyword: "続ける".to_string(),
+                        span: *span,
+                    });
+                }
+                Ok(())
+            }
+
+            Stmt::Print(expr, span) => {
+                self.infer_expr(expr, *span)?;
+                Ok(())
+            }
+
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+                span,
+            } => {
+                let cond_ty = self.infer_expr(condition, *span)?;
+                if cond_ty != HikariType::Bool {
+                    return Err(TypeError::ConditionNotBool(cond_ty, *span));
+                }
+                self.enter_scope();
+                self.check(then_body)?;
+                self.exit_scope();
+                if let Some(body) = else_body {
+                    self.enter_scope();
+                    self.check(body)?;
+                    self.exit_scope();
+                }
+                Ok(())
+            }
+
+            Stmt::While {
+                condition,
+                body,
+                span,
+            } => {
+                let cond_ty = self.infer_expr(condition, *span)?;
+                if cond_ty != HikariType::Bool {
+                    return Err(TypeError::ConditionNotBool(cond_ty, *span));
+                }
+                self.enter_scope();
+                self.loop_depth += 1;
+                self.check(body)?;
+                self.loop_depth -= 1;
+                self.exit_scope();
+                Ok(())
+            }
+
+            Stmt::Expr(expr, span) => {
+                self.infer_expr(expr, *span)?;
+                Ok(())
+            }
+
+            Stmt::Assign { name, value, span } => {
+                let declared = self
+                    .lookup_var(name)
+                    .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), *span))?;
+                let got = self.infer_expr(value, *span)?;
+                if got != declared {
+                    return Err(TypeError::VarDeclMismatch {
+                        name: name.clone(),
+                        declared,
+                        got,
+                        span: *span,
+                    });
+                }
+                Ok(())
+            }
+
+            Stmt::IndexAssign {
+                name,
+                index,
+                value,
+                span,
+            } => {
+                let var_ty = self
+                    .lookup_var(name)
+                    .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), *span))?;
+                match var_ty {
+                    HikariType::Array(elem_ty) => {
+                        let index_ty = self.infer_expr(index, *span)?;
+                        if index_ty != HikariType::Int {
+                            return Err(TypeError::IndexNotInt {
+                                got: index_ty,
+                                span: *span,
+                            });
+                        }
+                        let value_ty = self.infer_expr(value, *span)?;
+                        if value_ty != *elem_ty {
+                            return Err(TypeError::ArrayElementTypeMismatch {
+                                expected: *elem_ty,
+                                got: value_ty,
+                                span: *span,
+                            });
+                        }
+                    }
+                    HikariType::Map(key_ty, val_ty) => {
+                        let index_ty = self.infer_expr(index, *span)?;
+                        if index_ty != *key_ty {
+                            return Err(TypeError::IndexNotInt {
+                                got: index_ty,
+                                span: *span,
+                            });
+                        }
+                        let value_ty = self.infer_expr(value, *span)?;
+                        if value_ty != *val_ty {
+                            return Err(TypeError::ArrayElementTypeMismatch {
+                                expected: *val_ty,
+                                got: value_ty,
+                                span: *span,
+                            });
+                        }
+                    }
+                    other => {
+                        return Err(TypeError::NotIndexable {
+                            got: other,
+                            span: *span,
+                        });
+                    }
+                }
+                Ok(())
+            }
+
+            Stmt::ForRange {
+                var,
+                from,
+                to,
+                body,
+                span,
+            } => {
+                let from_ty = self.infer_expr(from, *span)?;
+                let to_ty = self.infer_expr(to, *span)?;
+                if from_ty != HikariType::Int {
+                    return Err(TypeError::ArgTypeMismatch {
+                        name: var.clone(),
+                        param: HikariType::Int,
+                        got: from_ty,
+                        span: *span,
+                    });
+                }
+                if to_ty != HikariType::Int {
+                    return Err(TypeError::ArgTypeMismatch {
+                        name: var.clone(),
+                        param: HikariType::Int,
+                        got: to_ty,
+                        span: *span,
+                    });
+                }
+                self.enter_scope();
+                self.declare_var(var, HikariType::Int);
+                self.loop_depth += 1;
+                self.check(body)?;
+                self.loop_depth -= 1;
+                self.exit_scope();
+                Ok(())
+            }
+
+            Stmt::ForEach {
+                var,
+                array,
+                body,
+                span,
+            } => {
+                let array_ty = self.infer_expr(array, *span)?;
+                let elem_ty = match array_ty {
+                    HikariType::Array(inner) => *inner,
+                    other => {
+                        return Err(TypeError::NotIndexable {
+                            got: other,
+                            span: *span,
+                        });
+                    }
+                };
+                self.enter_scope();
+                self.declare_var(var, elem_ty);
+                self.loop_depth += 1;
+                self.check(body)?;
+                self.loop_depth -= 1;
+                self.exit_scope();
+                Ok(())
+            }
+
+            Stmt::TryCatch {
+                try_body,
+                error_var,
+                catch_body,
+                ..
+            } => {
+                self.enter_scope();
+                self.check(try_body)?;
+                self.exit_scope();
+
+                self.enter_scope();
+                self.declare_var(error_var, HikariType::String);
+                self.check(catch_body)?;
+                self.exit_scope();
+                Ok(())
+            }
+
+            Stmt::Import { name, .. } => {
+                if STDLIB_MODULES.contains(&name.as_str()) {
+                    self.imported_modules.insert(name.clone());
+                }
+                Ok(())
+            }
+
+            Stmt::TypeDecl { name, fields, .. } => {
+                let entry = fields.iter().map(|(t, n)| (n.clone(), t.clone())).collect();
+                self.records.insert(name.clone(), entry);
+                Ok(())
+            }
+
+            Stmt::FieldAssign {
+                record,
+                field,
+                value,
+                span,
+            } => {
+                let record_ty = self.infer_expr(record, *span)?;
+                let type_name = match record_ty {
+                    HikariType::Record(name) => name,
+                    other => {
+                        return Err(TypeError::NotARecord {
+                            got: other,
+                            span: *span,
+                        });
+                    }
+                };
+                let field_ty = self
+                    .records
+                    .get(&type_name)
+                    .and_then(|fs| fs.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone()))
+                    .ok_or_else(|| TypeError::UnknownField {
+                        type_name: type_name.clone(),
+                        field: field.clone(),
+                        span: *span,
+                    })?;
+                let value_ty = self.infer_expr(value, *span)?;
+                if value_ty != field_ty {
+                    return Err(TypeError::FieldTypeMismatch {
+                        type_name,
+                        field: field.clone(),
+                        expected: Box::new(field_ty),
+                        got: Box::new(value_ty),
+                        span: *span,
+                    });
+                }
+                Ok(())
+            }
+
+            Stmt::EnumDecl {
+                name,
+                variants,
+                span,
+            } => {
+                for (variant_name, _) in variants {
+                    if self.variant_owner.contains_key(variant_name) {
+                        return Err(TypeError::DuplicateEnumVariant {
+                            variant: variant_name.clone(),
+                            span: *span,
+                        });
+                    }
+                    self.variant_owner
+                        .insert(variant_name.clone(), name.clone());
+                }
+                self.enums.insert(name.clone(), variants.clone());
+                Ok(())
+            }
+
+            Stmt::Match {
+                subject,
+                arms,
+                span,
+            } => {
+                let subject_ty = self.infer_expr(subject, *span)?;
+                // Enum-typed variables are stored as Record(enum_name) in the
+                // type system (parse_type maps any bare Ident to Record), so
+                // we accept Record(name) when name is a registered enum, as
+                // well as the explicit Enum(name) form.
+                let enum_name = match subject_ty {
+                    HikariType::Record(name) if self.enums.contains_key(&name) => name,
+                    other => {
+                        return Err(TypeError::NotAnEnum {
+                            got: other,
+                            span: *span,
+                        });
+                    }
+                };
+                // Guaranteed present: subject already typechecked to
+                // Enum(enum_name) or Record(enum_name), so enum_name must be registered.
+                let declared_variants = self
+                    .enums
+                    .get(&enum_name)
+                    .expect("enum registered by EnumDecl before any value of its type exists")
+                    .clone();
+
+                let mut covered: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for arm in arms {
+                    if !covered.insert(arm.variant.clone()) {
+                        return Err(TypeError::DuplicateMatchArm {
+                            variant: arm.variant.clone(),
+                            span: *span,
+                        });
+                    }
+
+                    let payload_types = declared_variants
+                        .iter()
+                        .find(|(n, _)| n == &arm.variant)
+                        .map(|(_, tys)| tys.clone())
+                        .ok_or_else(|| TypeError::UndeclaredEnumVariant {
+                            enum_name: enum_name.clone(),
+                            variant: arm.variant.clone(),
+                            span: *span,
+                        })?;
+
+                    if arm.binders.len() != payload_types.len() {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: arm.variant.clone(),
+                            expected: payload_types.len(),
+                            got: arm.binders.len(),
+                            span: *span,
+                        });
+                    }
+
+                    self.enter_scope();
+                    for (binder, ty) in arm.binders.iter().zip(payload_types.iter()) {
+                        self.declare_var(binder, ty.clone());
+                    }
+                    self.check(&arm.body)?;
+                    self.exit_scope();
+                }
+
+                let missing: Vec<String> = declared_variants
+                    .iter()
+                    .map(|(n, _)| n.clone())
+                    .filter(|n| !covered.contains(n))
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(TypeError::NonExhaustiveMatch(Box::new(
+                        NonExhaustiveMatchInfo {
+                            enum_name,
+                            missing,
+                            span: *span,
+                        },
+                    )));
+                }
+
+                Ok(())
+            }
+        }
+    }
+}
