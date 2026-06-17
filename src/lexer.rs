@@ -34,6 +34,7 @@ pub enum TokenKind {
     KwType,     // 型
     KwEnum,     // 列挙
     KwMatch,    // 照合
+    KwMap,      // 辞書
 
     // Literals
     LitInt(i64),
@@ -229,6 +230,7 @@ impl Lexer {
             "型" => TokenKind::KwType,
             "列挙" => TokenKind::KwEnum,
             "照合" => TokenKind::KwMatch,
+            "辞書" => TokenKind::KwMap,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),

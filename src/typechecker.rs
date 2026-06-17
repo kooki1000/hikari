@@ -422,10 +422,11 @@ fn builtin_module(name: &str) -> Option<&'static str> {
     match name {
         "絶対値" | "平方根" | "乱数" | "最大" | "最小" | "累乗" | "切り捨て" | "切り上げ"
         | "四捨五入" | "余り" => Some("数学"),
-        "分割" | "結合" | "含む" | "置換" => Some("文字列"),
+        "分割" | "結合" | "置換" => Some("文字列"),
         "要素数" | "追加" | "取り出す" | "含む配列" | "位置" | "逆順" | "整列" | "部分列" => {
             Some("配列")
         }
+        "鍵一覧" | "値一覧" | "削除" => Some("辞書"),
         _ => None,
     }
 }
@@ -506,13 +507,19 @@ impl TypeChecker {
     // gatekeeper that rejects undeclared record names wherever a type is
     // actually used (VarDecl, function params/return type).
     fn check_type_declared(&self, ty: &HikariType, span: Span) -> Result<(), TypeError> {
-        if let HikariType::Record(name) = ty
-            && !self.records.contains_key(name)
-            && !self.enums.contains_key(name)
-        {
-            return Err(TypeError::UndeclaredType(name.clone(), span));
+        match ty {
+            HikariType::Record(name)
+                if !self.records.contains_key(name) && !self.enums.contains_key(name) =>
+            {
+                Err(TypeError::UndeclaredType(name.clone(), span))
+            }
+            HikariType::Map(k, v) => {
+                self.check_type_declared(k, span)?;
+                self.check_type_declared(v, span)
+            }
+            HikariType::Array(inner) => self.check_type_declared(inner, span),
+            _ => Ok(()),
         }
-        Ok(())
     }
 
     pub fn check(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
@@ -531,6 +538,24 @@ impl TypeChecker {
                 span,
             } => {
                 self.check_type_declared(ty, *span)?;
+                // Special case: an empty map literal ｛｝ is valid if the declared
+                // type is a Map — infer_expr can't deduce the element types from nothing,
+                // so we skip the inference and trust the annotation.
+                if matches!(value, Expr::MapLit(pairs) if pairs.is_empty()) {
+                    if !matches!(ty, HikariType::Map(..)) {
+                        return Err(TypeError::VarDeclMismatch {
+                            name: name.clone(),
+                            declared: ty.clone(),
+                            got: HikariType::Map(
+                                Box::new(HikariType::String),
+                                Box::new(HikariType::Void),
+                            ),
+                            span: *span,
+                        });
+                    }
+                    self.declare_var(name, ty.clone());
+                    return Ok(());
+                }
                 let inferred = self.infer_expr(value, *span)?;
                 if inferred != *ty {
                     return Err(TypeError::VarDeclMismatch {
@@ -712,29 +737,47 @@ impl TypeChecker {
                 let var_ty = self
                     .lookup_var(name)
                     .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), *span))?;
-                let elem_ty = match var_ty {
-                    HikariType::Array(inner) => *inner,
+                match var_ty {
+                    HikariType::Array(elem_ty) => {
+                        let index_ty = self.infer_expr(index, *span)?;
+                        if index_ty != HikariType::Int {
+                            return Err(TypeError::IndexNotInt {
+                                got: index_ty,
+                                span: *span,
+                            });
+                        }
+                        let value_ty = self.infer_expr(value, *span)?;
+                        if value_ty != *elem_ty {
+                            return Err(TypeError::ArrayElementTypeMismatch {
+                                expected: *elem_ty,
+                                got: value_ty,
+                                span: *span,
+                            });
+                        }
+                    }
+                    HikariType::Map(key_ty, val_ty) => {
+                        let index_ty = self.infer_expr(index, *span)?;
+                        if index_ty != *key_ty {
+                            return Err(TypeError::IndexNotInt {
+                                got: index_ty,
+                                span: *span,
+                            });
+                        }
+                        let value_ty = self.infer_expr(value, *span)?;
+                        if value_ty != *val_ty {
+                            return Err(TypeError::ArrayElementTypeMismatch {
+                                expected: *val_ty,
+                                got: value_ty,
+                                span: *span,
+                            });
+                        }
+                    }
                     other => {
                         return Err(TypeError::NotIndexable {
                             got: other,
                             span: *span,
                         });
                     }
-                };
-                let index_ty = self.infer_expr(index, *span)?;
-                if index_ty != HikariType::Int {
-                    return Err(TypeError::IndexNotInt {
-                        got: index_ty,
-                        span: *span,
-                    });
-                }
-                let value_ty = self.infer_expr(value, *span)?;
-                if value_ty != elem_ty {
-                    return Err(TypeError::ArrayElementTypeMismatch {
-                        expected: elem_ty,
-                        got: value_ty,
-                        span: *span,
-                    });
                 }
                 Ok(())
             }
@@ -816,7 +859,7 @@ impl TypeChecker {
             }
 
             Stmt::Import { name, .. } => {
-                if name == "数学" || name == "文字列" || name == "配列" {
+                if name == "数学" || name == "文字列" || name == "配列" || name == "辞書" {
                     self.imported_modules.insert(name.clone());
                 }
                 Ok(())
@@ -1386,6 +1429,147 @@ impl TypeChecker {
                     return Ok(arr_ty);
                 }
 
+                // Map builtins (require 辞書 module import).
+                if name == "鍵一覧" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    match arg_ty {
+                        HikariType::Map(k, _) => {
+                            return Ok(HikariType::Array(k));
+                        }
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Map(
+                                    Box::new(HikariType::String),
+                                    Box::new(HikariType::Void),
+                                ),
+                                got: other,
+                                span,
+                            });
+                        }
+                    }
+                }
+
+                if name == "値一覧" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    match arg_ty {
+                        HikariType::Map(_, v) => {
+                            return Ok(HikariType::Array(v));
+                        }
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Map(
+                                    Box::new(HikariType::String),
+                                    Box::new(HikariType::Void),
+                                ),
+                                got: other,
+                                span,
+                            });
+                        }
+                    }
+                }
+
+                if name == "削除" {
+                    if args.len() != 2 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let map_ty = self.infer_expr(&args[0], span)?;
+                    let key_ty = match map_ty {
+                        HikariType::Map(k, _) => *k,
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Map(
+                                    Box::new(HikariType::String),
+                                    Box::new(HikariType::Void),
+                                ),
+                                got: other,
+                                span,
+                            });
+                        }
+                    };
+                    let arg_key_ty = self.infer_expr(&args[1], span)?;
+                    if arg_key_ty != key_ty {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: key_ty,
+                            got: arg_key_ty,
+                            span,
+                        });
+                    }
+                    return Ok(HikariType::Void);
+                }
+
+                // 含む is polymorphic: String × String → Bool (文字列 module)
+                // or Map × Key → Bool (辞書 module).
+                if name == "含む" && args.len() == 2 {
+                    let first_ty = self.infer_expr(&args[0], span)?;
+                    if let HikariType::Map(k, _) = &first_ty {
+                        // Map membership check — requires 辞書 import.
+                        if !self.imported_modules.contains("辞書") {
+                            return Err(TypeError::ModuleNotImported {
+                                name: name.clone(),
+                                module: "辞書".to_string(),
+                                span,
+                            });
+                        }
+                        let key_arg = self.infer_expr(&args[1], span)?;
+                        if key_arg != **k {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: (**k).clone(),
+                                got: key_arg,
+                                span,
+                            });
+                        }
+                        return Ok(HikariType::Bool);
+                    }
+                    // Fall through to 文字列-module 含む (String × String).
+                    if !self.imported_modules.contains("文字列") {
+                        return Err(TypeError::ModuleNotImported {
+                            name: name.clone(),
+                            module: "文字列".to_string(),
+                            span,
+                        });
+                    }
+                    let second_ty = self.infer_expr(&args[1], span)?;
+                    if first_ty != HikariType::String || second_ty != HikariType::String {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::String,
+                            got: if first_ty != HikariType::String {
+                                first_ty
+                            } else {
+                                second_ty
+                            },
+                            span,
+                        });
+                    }
+                    return Ok(HikariType::Bool);
+                }
+
                 if let Some(sig) = builtin_sig(name) {
                     if args.len() != sig.params.len() {
                         return Err(TypeError::ArgCountMismatch {
@@ -1471,18 +1655,60 @@ impl TypeChecker {
 
             Expr::Index { array, index } => {
                 let array_ty = self.infer_expr(array, span)?;
-                let elem_ty = match array_ty {
-                    HikariType::Array(inner) => *inner,
-                    other => return Err(TypeError::NotIndexable { got: other, span }),
-                };
-                let index_ty = self.infer_expr(index, span)?;
-                if index_ty != HikariType::Int {
-                    return Err(TypeError::IndexNotInt {
-                        got: index_ty,
-                        span,
-                    });
+                match array_ty {
+                    HikariType::Array(inner) => {
+                        let index_ty = self.infer_expr(index, span)?;
+                        if index_ty != HikariType::Int {
+                            return Err(TypeError::IndexNotInt {
+                                got: index_ty,
+                                span,
+                            });
+                        }
+                        Ok(*inner)
+                    }
+                    HikariType::Map(key_ty, val_ty) => {
+                        let index_ty = self.infer_expr(index, span)?;
+                        if index_ty != *key_ty {
+                            return Err(TypeError::IndexNotInt {
+                                got: index_ty,
+                                span,
+                            });
+                        }
+                        Ok(*val_ty)
+                    }
+                    other => Err(TypeError::NotIndexable { got: other, span }),
                 }
-                Ok(elem_ty)
+            }
+
+            Expr::MapLit(pairs) => {
+                // Empty map literal ｛｝ is handled by the VarDecl special-case
+                // above; reaching here with an empty literal is an error.
+                let Some((first_k, first_v)) = pairs.first() else {
+                    return Err(TypeError::EmptyArrayLiteral(span));
+                };
+                let key_ty = self.infer_expr(first_k, span)?;
+                if key_ty != HikariType::String {
+                    return Err(TypeError::IndexNotInt { got: key_ty, span });
+                }
+                let val_ty = self.infer_expr(first_v, span)?;
+                for (k, v) in &pairs[1..] {
+                    let kt = self.infer_expr(k, span)?;
+                    if kt != HikariType::String {
+                        return Err(TypeError::IndexNotInt { got: kt, span });
+                    }
+                    let vt = self.infer_expr(v, span)?;
+                    if vt != val_ty {
+                        return Err(TypeError::ArrayElementTypeMismatch {
+                            expected: val_ty.clone(),
+                            got: vt,
+                            span,
+                        });
+                    }
+                }
+                Ok(HikariType::Map(
+                    Box::new(HikariType::String),
+                    Box::new(val_ty),
+                ))
             }
 
             Expr::NewArray(ty) => Ok(HikariType::Array(Box::new(ty.clone()))),

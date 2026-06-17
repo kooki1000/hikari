@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use std::collections::HashMap;
+
 use crate::compiler::{BuiltinFn, Chunk, Instruction, Value};
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -17,6 +19,8 @@ pub enum RuntimeError {
     // 取り出す on an empty array: there is no valid index to report, so this
     // gets its own variant rather than overloading IndexOutOfBounds.
     EmptyArray,
+    // Map key lookup failed.
+    KeyNotFound(String),
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -44,6 +48,9 @@ impl std::fmt::Display for RuntimeError {
             }
             RuntimeError::EmptyArray => {
                 write!(f, "空の配列から要素を取り出すことはできません。")
+            }
+            RuntimeError::KeyNotFound(key) => {
+                write!(f, "辞書にキー「{}」が見つかりません。", key)
             }
         }
     }
@@ -305,6 +312,21 @@ impl Vm {
                     self.stack.push(val);
                 }
             }
+            Instruction::MakeMap(n) => {
+                let stack_len = self.stack.len();
+                let pairs = self.stack.split_off(stack_len - (n as usize) * 2);
+                let mut map = HashMap::new();
+                let mut iter = pairs.into_iter();
+                while let (Some(k), Some(v)) = (iter.next(), iter.next()) {
+                    match k {
+                        Value::Str(s) => {
+                            map.insert(s, v);
+                        }
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    }
+                }
+                self.stack.push(Value::Map(Rc::new(RefCell::new(map))));
+            }
             Instruction::MakeArray(n) => {
                 let stack_len = self.stack.len();
                 let elements = self.stack.split_off(stack_len - n as usize);
@@ -312,41 +334,66 @@ impl Vm {
                     .push(Value::Array(Rc::new(RefCell::new(elements))));
             }
             Instruction::GetIndex => {
-                let index = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
-                    Value::Int(i) => i,
+                let index_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                let collection = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                match collection {
+                    Value::Array(arr) => {
+                        let index = match index_val {
+                            Value::Int(i) => i,
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let borrowed = arr.borrow();
+                        if index < 0 || index as usize >= borrowed.len() {
+                            return Err(RuntimeError::IndexOutOfBounds {
+                                index,
+                                len: borrowed.len(),
+                            });
+                        }
+                        self.stack.push(borrowed[index as usize].clone());
+                    }
+                    Value::Map(map) => {
+                        let key = match index_val {
+                            Value::Str(s) => s,
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let borrowed = map.borrow();
+                        let val = borrowed
+                            .get(&key)
+                            .ok_or_else(|| RuntimeError::KeyNotFound(key.clone()))?
+                            .clone();
+                        self.stack.push(val);
+                    }
                     _ => return Err(RuntimeError::TypeMismatch),
-                };
-                let arr = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
-                    Value::Array(a) => a,
-                    _ => return Err(RuntimeError::TypeMismatch),
-                };
-                let borrowed = arr.borrow();
-                if index < 0 || index as usize >= borrowed.len() {
-                    return Err(RuntimeError::IndexOutOfBounds {
-                        index,
-                        len: borrowed.len(),
-                    });
                 }
-                self.stack.push(borrowed[index as usize].clone());
             }
             Instruction::SetIndex => {
                 let value = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-                let index = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
-                    Value::Int(i) => i,
+                let index_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                let collection = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                match collection {
+                    Value::Array(arr) => {
+                        let index = match index_val {
+                            Value::Int(i) => i,
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let mut borrowed = arr.borrow_mut();
+                        if index < 0 || index as usize >= borrowed.len() {
+                            return Err(RuntimeError::IndexOutOfBounds {
+                                index,
+                                len: borrowed.len(),
+                            });
+                        }
+                        borrowed[index as usize] = value;
+                    }
+                    Value::Map(map) => {
+                        let key = match index_val {
+                            Value::Str(s) => s,
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        map.borrow_mut().insert(key, value);
+                    }
                     _ => return Err(RuntimeError::TypeMismatch),
-                };
-                let arr = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
-                    Value::Array(a) => a,
-                    _ => return Err(RuntimeError::TypeMismatch),
-                };
-                let mut borrowed = arr.borrow_mut();
-                if index < 0 || index as usize >= borrowed.len() {
-                    return Err(RuntimeError::IndexOutOfBounds {
-                        index,
-                        len: borrowed.len(),
-                    });
                 }
-                borrowed[index as usize] = value;
             }
             Instruction::ArrayLen => {
                 let arr = match self.stack.pop().ok_or(RuntimeError::StackUnderflow)? {
@@ -540,6 +587,22 @@ pub fn display_value(val: &Value) -> String {
                     .join("、")
             )
         }
+        Value::Map(map) => {
+            let borrowed = map.borrow();
+            let mut keys: Vec<&String> = borrowed.keys().collect();
+            keys.sort();
+            if keys.is_empty() {
+                "｛｝".to_string()
+            } else {
+                format!(
+                    "｛{}｝",
+                    keys.iter()
+                        .map(|k| format!("「{}」：{}", k, display_value(&borrowed[*k])))
+                        .collect::<Vec<_>>()
+                        .join("、")
+                )
+            }
+        }
         Value::Enum {
             variant, payload, ..
         } => {
@@ -718,6 +781,9 @@ fn call_builtin(builtin: BuiltinFn, args: &mut Vec<Value>) -> Result<Value, Runt
         },
         BuiltinFn::Contains => match (args.first().cloned(), args.get(1).cloned()) {
             (Some(Value::Str(s)), Some(Value::Str(needle))) => Ok(Value::Bool(s.contains(&needle))),
+            (Some(Value::Map(m)), Some(Value::Str(key))) => {
+                Ok(Value::Bool(m.borrow().contains_key(&key)))
+            }
             _ => Err(RuntimeError::TypeMismatch),
         },
         BuiltinFn::Replace => {
@@ -842,6 +908,38 @@ fn call_builtin(builtin: BuiltinFn, args: &mut Vec<Value>) -> Result<Value, Runt
                 _ => Err(RuntimeError::TypeMismatch),
             }
         }
+        BuiltinFn::MapKeys => match args.pop() {
+            Some(Value::Map(m)) => {
+                let borrowed = m.borrow();
+                let mut keys: Vec<Value> = borrowed.keys().map(|k| Value::Str(k.clone())).collect();
+                // Sort for deterministic ordering.
+                keys.sort_by(|a, b| match (a, b) {
+                    (Value::Str(x), Value::Str(y)) => x.cmp(y),
+                    _ => std::cmp::Ordering::Equal,
+                });
+                Ok(Value::Array(Rc::new(RefCell::new(keys))))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::MapValues => match args.pop() {
+            Some(Value::Map(m)) => {
+                let borrowed = m.borrow();
+                // Sort by key for deterministic ordering.
+                let mut entries: Vec<(&String, &Value)> = borrowed.iter().collect();
+                entries.sort_by_key(|(k, _)| k.as_str());
+                let vals: Vec<Value> = entries.into_iter().map(|(_, v)| v.clone()).collect();
+                Ok(Value::Array(Rc::new(RefCell::new(vals))))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::MapDelete => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Map(m)), Some(Value::Str(key))) => {
+                m.borrow_mut().remove(&key);
+                // 削除 is 無-typed; return a placeholder like Push does.
+                Ok(Value::Int(0))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
     }
 }
 
@@ -1796,5 +1894,52 @@ mod tests {
             }
             other => panic!("expected Array, got {:?}", other),
         }
+    }
+
+    // ── 9c: maps ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_vm_map_literal_creation_and_lookup() {
+        let src = "取り込む 「辞書」；辞書＜文字列、整数＞ スコア ＝ ｛ 「アリス」：１００、「ボブ」：８５ ｝；返す スコア【「アリス」】；";
+        assert_eq!(run(src), Some(Value::Int(100)));
+    }
+
+    #[test]
+    fn test_vm_map_insert_and_contains() {
+        let src = "取り込む 「辞書」；辞書＜文字列、整数＞ m ＝ ｛ 「あ」：１ ｝；m【「い」】 ＝ ２；真偽 結果 ＝ 含む（m、「い」）；返す 結果；";
+        assert_eq!(run(src), Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_vm_map_keys_and_values_builtins() {
+        // 鍵一覧 returns an array of string keys sorted alphabetically.
+        let src = "取り込む 「辞書」；辞書＜文字列、整数＞ m ＝ ｛ 「い」：２、「あ」：１ ｝；文字列列 ks ＝ 鍵一覧（m）；返す ks【０】；";
+        assert_eq!(run(src), Some(Value::Str("あ".to_string())));
+
+        // 値一覧 returns values in key-sorted order.
+        let src2 = "取り込む 「辞書」；辞書＜文字列、整数＞ m ＝ ｛ 「い」：２、「あ」：１ ｝；整数列 vs ＝ 値一覧（m）；返す vs【０】；";
+        assert_eq!(run(src2), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn test_vm_map_delete_removes_key() {
+        let src = "取り込む 「辞書」；辞書＜文字列、整数＞ m ＝ ｛ 「あ」：１、「い」：２ ｝；削除（m、「あ」）；返す 含む（m、「あ」）；";
+        assert_eq!(run(src), Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_vm_map_missing_key_returns_error() {
+        let src =
+            "取り込む 「辞書」；辞書＜文字列、整数＞ m ＝ ｛ 「あ」：１ ｝；返す m【「い」】；";
+        assert_eq!(
+            run_result(src),
+            Err(RuntimeError::KeyNotFound("い".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_vm_empty_map_literal_and_insert() {
+        let src = "取り込む 「辞書」；辞書＜文字列、整数＞ m ＝ ｛｝；m【「キー」】 ＝ ４２；返す m【「キー」】；";
+        assert_eq!(run(src), Some(Value::Int(42)));
     }
 }

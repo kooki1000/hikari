@@ -16,6 +16,8 @@ pub enum Value {
     // Same Rc<RefCell<>> reference-semantics pattern as Array: assigning a
     // record to another variable aliases the same storage.
     Record(std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>),
+    // Same Rc<RefCell<>> reference-semantics pattern as Array/Record.
+    Map(std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>),
     // Unlike Array/Record, enum instances have no mutation operation defined
     // on them in this design, so plain by-value Clone semantics (no
     // Rc<RefCell<>>) are correct and simpler.
@@ -57,6 +59,9 @@ pub enum BuiltinFn {
     Reverse,       // 逆順
     Sort,          // 整列
     Slice,         // 部分列
+    MapKeys,       // 鍵一覧
+    MapValues,     // 値一覧
+    MapDelete,     // 削除
 }
 
 // ── Instruction set ───────────────────────────────────────────────────────────
@@ -86,6 +91,7 @@ pub enum Instruction {
     CallBuiltin(BuiltinFn, u8), // CallBuiltin(builtin, arg_count)
     Print,                      // pop and print top of stack
     Return,
+    MakeMap(u16),       // pop 2*n values (key,val pairs), push a new Value::Map
     MakeArray(u16),     // pop n values (in order), push a new Value::Array
     GetIndex,           // pop index, pop array, push the element at index
     SetIndex,           // pop value, pop index, pop array, mutate array in place
@@ -134,6 +140,9 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "逆順" => Some(BuiltinFn::Reverse),
         "整列" => Some(BuiltinFn::Sort),
         "部分列" => Some(BuiltinFn::Slice),
+        "鍵一覧" => Some(BuiltinFn::MapKeys),
+        "値一覧" => Some(BuiltinFn::MapValues),
+        "削除" => Some(BuiltinFn::MapDelete),
         _ => None,
     }
 }
@@ -749,6 +758,13 @@ impl Compiler {
                     self.emit_expr(elem, instrs, scopes);
                 }
                 instrs.push(Instruction::MakeArray(elems.len() as u16));
+            }
+            Expr::MapLit(pairs) => {
+                for (k, v) in pairs {
+                    self.emit_expr(k, instrs, scopes);
+                    self.emit_expr(v, instrs, scopes);
+                }
+                instrs.push(Instruction::MakeMap(pairs.len() as u16));
             }
             Expr::Index { array, index } => {
                 self.emit_expr(array, instrs, scopes);

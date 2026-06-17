@@ -208,6 +208,46 @@ Match on an enum value with `照合`. Every arm must use `ならば ｛ ... ｝`
 
 Variant names are globally unique across all enums in a program — no `：：`-qualified construction is needed. Arm binders are scoped to their own arm body only.
 
+### Maps / 辞書
+
+`辞書＜K、V＞` is an associative map from keys of type K to values of type V. Keys must be `文字列`.
+
+```
+辞書＜文字列、整数＞ スコア ＝ ｛ 「アリス」：１００、「ボブ」：８５ ｝
+
+＃ Lookup (runtime error if key missing)
+整数 ｖ ＝ スコア【「アリス」】
+
+＃ Insert / update
+スコア【「キャロル」】 ＝ ９２
+```
+
+An empty map literal `｛｝` is valid when the declared type is a `辞書`:
+
+```
+辞書＜文字列、整数＞ m ＝ ｛｝
+```
+
+Map builtins (require `取り込む 「辞書」`):
+
+| 関数 | 説明 | 戻り型 |
+|---|---|---|
+| `鍵一覧（m）` | returns all keys as an array | `文字列列` |
+| `値一覧（m）` | returns all values as an array | `V列` |
+| `含む（m、key）` | tests key membership | `真偽` |
+| `削除（m、key）` | removes the key from the map | `無` |
+
+```
+取り込む 「辞書」；
+
+辞書＜文字列、整数＞ スコア ＝ ｛ 「アリス」：１００、「ボブ」：８５ ｝
+文字列列 名前 ＝ 鍵一覧（スコア）
+真偽 存在 ＝ 含む（スコア、「アリス」）
+削除（スコア、「ボブ」）
+```
+
+Maps have reference semantics: assigning a map to another variable aliases the same underlying storage.
+
 ### Function Declaration and Call
 
 Parameters and call arguments are comma-separated with `、`:
