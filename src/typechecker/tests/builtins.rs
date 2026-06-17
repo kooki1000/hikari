@@ -1,0 +1,291 @@
+use super::*;
+
+#[test]
+fn test_typecheck_math_builtins_after_import() {
+    let src = "取り込む 「数学」；整数 結果 ＝ 絶対値（ー５）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let src = "取り込む 「数学」；小数 結果 ＝ 平方根（９）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let src = "取り込む 「数学」；整数 結果 ＝ 乱数（１、１０）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let src = "取り込む 「数学」；整数 結果 ＝ 最大（１、２）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let src = "取り込む 「数学」；小数 結果 ＝ 最小（１．０、２．０）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+#[test]
+fn test_typecheck_string_builtins_after_import() {
+    let src = "取り込む 「文字列」；文字列列 結果 ＝ 分割（「あ、い」、「、」）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let src = "取り込む 「文字列」；文字列 結果 ＝ 結合（【「あ」、「い」】、「、」）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let src = "取り込む 「文字列」；真偽 結果 ＝ 含む（「あいう」、「い」）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let src = "取り込む 「文字列」；文字列 結果 ＝ 置換（「あいう」、「い」、「え」）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+#[test]
+fn test_typecheck_stdlib_builtin_without_import_fails() {
+    let src = "整数 結果 ＝ 絶対値（ー５）；";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::ModuleNotImported { module, .. } if module == "数学"
+    ));
+
+    let src = "真偽 結果 ＝ 含む（「あ」、「い」）；";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::ModuleNotImported { module, .. } if module == "文字列"
+    ));
+}
+
+#[test]
+fn test_typecheck_abs_sqrt_polymorphic_mismatch() {
+    let src = "取り込む 「数学」；整数 結果 ＝ 絶対値（「文字」）；";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+
+    let src = "取り込む 「数学」；小数 結果 ＝ 平方根（「文字」）；";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_max_min_polymorphic_mismatch() {
+    let src = "取り込む 「数学」；整数 結果 ＝ 最大（１、「あ」）；";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+
+    let src = "取り込む 「数学」；文字列 結果 ＝ 最小（「あ」、「い」）；";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_arithmetic_on_bool_is_rejected() {
+    // 真 ＋ 偽 has matching operand types but ＋ is undefined for 真偽.
+    let ast = parse("真偽 結果 ＝ 真 ＋ 偽；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::BinOpMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_subtraction_on_strings_is_rejected() {
+    // ＋ concatenates strings, but ー/＊/／ are numbers-only.
+    let ast = parse("文字列 結果 ＝ 「あ」 ー 「い」；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::BinOpMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_ordering_on_strings_is_rejected() {
+    // ＜/＞/≦/≧ are only defined for numbers.
+    let ast = parse("真偽 結果 ＝ 「あ」 ＜ 「い」；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::BinOpMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_equality_on_strings_is_allowed() {
+    // ＝＝/≠ remain valid for any two values of the same type.
+    let ast = parse("真偽 結果 ＝ 「あ」 ＝＝ 「い」；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+#[test]
+fn test_typecheck_string_concatenation_still_allowed() {
+    let ast = parse("文字列 結果 ＝ 「あ」 ＋ 「い」；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+// ── 7a: modulo ───────────────────────────────────────────────────────
+
+#[test]
+fn test_typecheck_modulo_numeric_only() {
+    let ast = parse("整数 結果 ＝ １０ ％ ３；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("文字列 結果 ＝ 「あ」 ％ 「い」；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::BinOpMismatch { .. }));
+}
+
+// ── 7b: array builtins ──────────────────────────────────────────────
+
+#[test]
+fn test_typecheck_array_builtins_require_import() {
+    let ast = parse("整数列 数字 ＝ 【１】；整数 結果 ＝ 要素数（数字）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::ModuleNotImported { module, .. } if module == "配列"
+    ));
+}
+
+#[test]
+fn test_typecheck_array_len_happy_and_mismatch() {
+    let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整数 結果 ＝ 要素数（数字）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「配列」；整数 結果 ＝ 要素数（５）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_push_happy_and_mismatch() {
+    let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；追加（数字、２）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；追加（数字、「あ」）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_pop_happy_and_mismatch() {
+    let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整数 結果 ＝ 取り出す（数字）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「配列」；整数 結果 ＝ 取り出す（５）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_contains_array_and_index_of_happy_and_mismatch() {
+    let ast =
+        parse("取り込む 「配列」；整数列 数字 ＝ 【１】；真偽 結果 ＝ 含む配列（数字、１）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整数 結果 ＝ 位置（数字、１）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast =
+        parse("取り込む 「配列」；整数列 数字 ＝ 【１】；真偽 結果 ＝ 含む配列（数字、「あ」）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_reverse_happy_and_mismatch() {
+    let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整数列 結果 ＝ 逆順（数字）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「配列」；整数 結果 ＝ 逆順（５）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_sort_happy_and_rejects_bool_array() {
+    let ast = parse("取り込む 「配列」；整数列 数字 ＝ 【１】；整列（数字）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「配列」；真偽列 旗 ＝ 【真】；整列（旗）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_slice_happy_and_mismatch() {
+    let ast = parse(
+        "取り込む 「配列」；整数列 数字 ＝ 【１、２】；整数列 結果 ＝ 部分列（数字、０、１）；",
+    );
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse(
+        "取り込む 「配列」；整数列 数字 ＝ 【１】；整数列 結果 ＝ 部分列（数字、「あ」、１）；",
+    );
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_new_array_expr() {
+    let ast = parse("整数列 数字 ＝ 新配列＜整数＞；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("小数列 数字 ＝ 新配列＜小数＞；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("文字列列 文字 ＝ 新配列＜文字列＞；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("真偽列 旗 ＝ 新配列＜真偽＞；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+// ── 7c: more math builtins ─────────────────────────────────────────
+
+#[test]
+fn test_typecheck_pow_happy_and_mismatch() {
+    let ast = parse("取り込む 「数学」；整数 結果 ＝ 累乗（２、３）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「数学」；整数 結果 ＝ 累乗（２、「あ」）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_floor_ceil_round_happy_and_reject_int() {
+    let ast = parse("取り込む 「数学」；整数 結果 ＝ 切り捨て（３．５）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「数学」；整数 結果 ＝ 切り上げ（３．５）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「数学」；整数 結果 ＝ 四捨五入（３．５）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「数学」；整数 結果 ＝ 切り捨て（３）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_remainder_function_form() {
+    let ast = parse("取り込む 「数学」；整数 結果 ＝ 余り（１０、３）；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+
+    let ast = parse("取り込む 「数学」；整数 結果 ＝ 余り（１０、「あ」）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}
+
+#[test]
+fn test_typecheck_math_builtins_without_import_fails() {
+    let ast = parse("整数 結果 ＝ 累乗（２、３）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::ModuleNotImported { module, .. } if module == "数学"
+    ));
+}
