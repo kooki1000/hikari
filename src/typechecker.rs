@@ -427,6 +427,7 @@ fn builtin_module(name: &str) -> Option<&'static str> {
             Some("配列")
         }
         "鍵一覧" | "値一覧" | "削除" => Some("辞書"),
+        "地図" | "絞り込み" | "畳み込み" => Some("関数"),
         _ => None,
     }
 }
@@ -518,6 +519,12 @@ impl TypeChecker {
                 self.check_type_declared(v, span)
             }
             HikariType::Array(inner) => self.check_type_declared(inner, span),
+            HikariType::Fn(params, ret) => {
+                for p in params {
+                    self.check_type_declared(p, span)?;
+                }
+                self.check_type_declared(ret, span)
+            }
             _ => Ok(()),
         }
     }
@@ -859,7 +866,12 @@ impl TypeChecker {
             }
 
             Stmt::Import { name, .. } => {
-                if name == "数学" || name == "文字列" || name == "配列" || name == "辞書" {
+                if name == "数学"
+                    || name == "文字列"
+                    || name == "配列"
+                    || name == "辞書"
+                    || name == "関数"
+                {
                     self.imported_modules.insert(name.clone());
                 }
                 Ok(())
@@ -1013,16 +1025,25 @@ impl TypeChecker {
         }
     }
 
-    fn infer_expr(&self, expr: &Expr, span: Span) -> Result<HikariType, TypeError> {
+    fn infer_expr(&mut self, expr: &Expr, span: Span) -> Result<HikariType, TypeError> {
         match expr {
             Expr::LitInt(_) => Ok(HikariType::Int),
             Expr::LitFloat(_) => Ok(HikariType::Float),
             Expr::LitString(_) => Ok(HikariType::String),
             Expr::LitBool(_) => Ok(HikariType::Bool),
 
-            Expr::Ident(name) => self
-                .lookup_var(name)
-                .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), span)),
+            Expr::Ident(name) => {
+                // First look up in local variable scope.
+                if let Some(ty) = self.lookup_var(name) {
+                    return Ok(ty);
+                }
+                // Phase 10: a bare identifier that names a known function can
+                // be used as a first-class function value.
+                if let Some(sig) = self.fns.get(name).cloned() {
+                    return Ok(HikariType::Fn(sig.params, Box::new(sig.return_ty)));
+                }
+                Err(TypeError::UndeclaredVariable(name.clone(), span))
+            }
 
             Expr::BinOp { op, lhs, rhs } => {
                 let lty = self.infer_expr(lhs, span)?;
@@ -1105,10 +1126,10 @@ impl TypeChecker {
             }
 
             Expr::Call { name, args } => {
-                if let Some(owning_enum) = self.variant_owner.get(name) {
+                if let Some(owning_enum) = self.variant_owner.get(name).cloned() {
                     let payload_types = self
                         .enums
-                        .get(owning_enum)
+                        .get(&owning_enum)
                         .and_then(|vs| vs.iter().find(|(n, _)| n == name))
                         .map(|(_, tys)| tys.clone())
                         .expect("variant_owner entry implies a registered enum/variant");
@@ -1133,7 +1154,7 @@ impl TypeChecker {
                     }
                     // Return as Record so the type matches a VarDecl whose
                     // declared type was parsed as HikariType::Record(enum_name).
-                    return Ok(HikariType::Record(owning_enum.clone()));
+                    return Ok(HikariType::Record(owning_enum));
                 }
 
                 if let Some(module) = builtin_module(name)
@@ -1570,6 +1591,133 @@ impl TypeChecker {
                     return Ok(HikariType::Bool);
                 }
 
+                // Phase 10: higher-order function builtins.
+                if name == "地図" {
+                    if args.len() != 2 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let elem_ty = match arr_ty {
+                        HikariType::Array(inner) => *inner,
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: other,
+                                span,
+                            });
+                        }
+                    };
+                    let fn_ty = self.infer_expr(&args[1], span)?;
+                    let ret_ty = match fn_ty {
+                        HikariType::Fn(params, ret)
+                            if params.len() == 1 && params[0] == elem_ty =>
+                        {
+                            *ret
+                        }
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Fn(vec![elem_ty], Box::new(HikariType::Int)),
+                                got: other,
+                                span,
+                            });
+                        }
+                    };
+                    return Ok(HikariType::Array(Box::new(ret_ty)));
+                }
+
+                if name == "絞り込み" {
+                    if args.len() != 2 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let elem_ty = match arr_ty.clone() {
+                        HikariType::Array(inner) => *inner,
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: other,
+                                span,
+                            });
+                        }
+                    };
+                    let fn_ty = self.infer_expr(&args[1], span)?;
+                    match fn_ty {
+                        HikariType::Fn(params, ret)
+                            if params.len() == 1
+                                && params[0] == elem_ty
+                                && *ret == HikariType::Bool => {}
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Fn(
+                                    vec![elem_ty.clone()],
+                                    Box::new(HikariType::Bool),
+                                ),
+                                got: other,
+                                span,
+                            });
+                        }
+                    }
+                    return Ok(arr_ty);
+                }
+
+                if name == "畳み込み" {
+                    if args.len() != 3 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 3,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let elem_ty = match arr_ty {
+                        HikariType::Array(inner) => *inner,
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: other,
+                                span,
+                            });
+                        }
+                    };
+                    let acc_ty = self.infer_expr(&args[1], span)?;
+                    let fn_ty = self.infer_expr(&args[2], span)?;
+                    match &fn_ty {
+                        HikariType::Fn(params, ret)
+                            if params.len() == 2
+                                && params[0] == acc_ty
+                                && params[1] == elem_ty
+                                && **ret == acc_ty => {}
+                        other => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Fn(
+                                    vec![acc_ty.clone(), elem_ty],
+                                    Box::new(acc_ty.clone()),
+                                ),
+                                got: other.clone(),
+                                span,
+                            });
+                        }
+                    }
+                    return Ok(acc_ty);
+                }
+
                 if let Some(sig) = builtin_sig(name) {
                     if args.len() != sig.params.len() {
                         return Err(TypeError::ArgCountMismatch {
@@ -1606,6 +1754,37 @@ impl TypeChecker {
                         }
                     }
                     return Ok(sig.return_ty);
+                }
+
+                // Phase 10: check if name is a Fn-typed local variable.
+                if let Some(var_ty) = self.lookup_var(name) {
+                    match var_ty {
+                        HikariType::Fn(params, ret) => {
+                            if args.len() != params.len() {
+                                return Err(TypeError::ArgCountMismatch {
+                                    name: name.clone(),
+                                    expected: params.len(),
+                                    got: args.len(),
+                                    span,
+                                });
+                            }
+                            for (arg, param_ty) in args.iter().zip(params.iter()) {
+                                let arg_ty = self.infer_expr(arg, span)?;
+                                if arg_ty != *param_ty {
+                                    return Err(TypeError::ArgTypeMismatch {
+                                        name: name.clone(),
+                                        param: param_ty.clone(),
+                                        got: arg_ty,
+                                        span,
+                                    });
+                                }
+                            }
+                            return Ok(*ret);
+                        }
+                        _ => {
+                            return Err(TypeError::UndeclaredFunction(name.clone(), span));
+                        }
+                    }
                 }
 
                 let sig = self
@@ -1775,6 +1954,35 @@ impl TypeChecker {
                         field: field.clone(),
                         span,
                     })
+            }
+
+            // Phase 10: anonymous function
+            Expr::Lambda {
+                params,
+                return_ty,
+                body,
+            } => {
+                // Type-check the lambda body in an isolated function scope.
+                let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+                let outer_return_ty = self.current_return_ty.take();
+                let outer_loop_depth = std::mem::take(&mut self.loop_depth);
+
+                for (pname, pty) in params {
+                    self.check_type_declared(pty, span)?;
+                    self.declare_var(pname, pty.clone());
+                }
+                self.check_type_declared(return_ty, span)?;
+                self.current_return_ty = Some(return_ty.clone());
+
+                self.check(body)?;
+
+                // Restore outer context.
+                self.scopes = outer_scopes;
+                self.current_return_ty = outer_return_ty;
+                self.loop_depth = outer_loop_depth;
+
+                let param_types: Vec<HikariType> = params.iter().map(|(_, t)| t.clone()).collect();
+                Ok(HikariType::Fn(param_types, Box::new(return_ty.clone())))
             }
         }
     }

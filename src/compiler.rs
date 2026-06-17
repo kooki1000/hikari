@@ -26,6 +26,11 @@ pub enum Value {
         variant: String,
         payload: Vec<Value>,
     },
+    // Phase 10: first-class function pointer
+    Function {
+        chunk_index: usize,
+        arity: u8,
+    },
 }
 
 // ── Built-in functions ────────────────────────────────────────────────────────
@@ -62,6 +67,10 @@ pub enum BuiltinFn {
     MapKeys,       // 鍵一覧
     MapValues,     // 値一覧
     MapDelete,     // 削除
+    // Phase 10: higher-order functions (these are special — they take a fn value)
+    MapArray,    // 地図
+    FilterArray, // 絞り込み
+    FoldArray,   // 畳み込み
 }
 
 // ── Instruction set ───────────────────────────────────────────────────────────
@@ -109,6 +118,10 @@ pub enum Instruction {
     // from a local slot if they need the payload after a successful check.
     TagEquals(String),
     GetPayload(u8), // pop a Value::Enum, push payload[index] (clone)
+    // Phase 10: push a function value onto the stack
+    LoadFn { chunk_index: usize, arity: u8 },
+    // Pop function value and arg_count args off the stack, call the function
+    CallValue(u8),
 }
 
 pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
@@ -143,6 +156,9 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "鍵一覧" => Some(BuiltinFn::MapKeys),
         "値一覧" => Some(BuiltinFn::MapValues),
         "削除" => Some(BuiltinFn::MapDelete),
+        "地図" => Some(BuiltinFn::MapArray),
+        "絞り込み" => Some(BuiltinFn::FilterArray),
+        "畳み込み" => Some(BuiltinFn::FoldArray),
         _ => None,
     }
 }
@@ -667,10 +683,22 @@ impl Compiler {
                 instrs.push(Instruction::LoadConst(idx));
             }
             Expr::Ident(name) => {
-                let slot = scopes
-                    .lookup(name)
-                    .expect("declared name must resolve to a slot (guaranteed by typechecker)");
-                instrs.push(Instruction::LoadLocal(slot));
+                // Phase 10: if the ident names a local variable, load it.
+                // If it names a known function (used as a value), emit LoadFn.
+                if let Some(slot) = scopes.lookup(name) {
+                    instrs.push(Instruction::LoadLocal(slot));
+                } else if let Some(&fn_idx) = self.fn_index.get(name.as_str()) {
+                    let arity = self.chunks[fn_idx as usize].param_count;
+                    instrs.push(Instruction::LoadFn {
+                        chunk_index: fn_idx as usize,
+                        arity,
+                    });
+                } else {
+                    panic!(
+                        "declared name must resolve to a slot or function (guaranteed by typechecker): {}",
+                        name
+                    );
+                }
             }
             Expr::BinOp {
                 op: BinOpKind::And,
@@ -748,6 +776,10 @@ impl Compiler {
                     ));
                 } else if let Some(builtin) = builtin_name(name) {
                     instrs.push(Instruction::CallBuiltin(builtin, args.len() as u8));
+                } else if let Some(slot) = scopes.lookup(name) {
+                    // Phase 10: calling a Fn-typed local variable.
+                    instrs.push(Instruction::LoadLocal(slot));
+                    instrs.push(Instruction::CallValue(args.len() as u8));
                 } else {
                     let fn_idx = self.fn_index[name];
                     instrs.push(Instruction::Call(fn_idx, args.len() as u8));
@@ -785,6 +817,27 @@ impl Compiler {
             Expr::FieldAccess { record, field } => {
                 self.emit_expr(record, instrs, scopes);
                 instrs.push(Instruction::GetField(field.clone()));
+            }
+            // Phase 10: compile a lambda into a new chunk, emit LoadFn.
+            Expr::Lambda { params, body, .. } => {
+                // Reserve a chunk slot.
+                let chunk_index = self.chunks.len();
+                let arity = params.len() as u8;
+                self.chunks.push(Chunk {
+                    instructions: Vec::new(),
+                    param_count: arity,
+                });
+                // Compile body into a fresh scope.
+                let mut fn_scopes = Scopes::new();
+                for (pname, _) in params {
+                    fn_scopes.declare(pname);
+                }
+                let mut fn_instrs = Vec::new();
+                for s in body {
+                    self.emit_stmt(s, &mut fn_instrs, &mut fn_scopes);
+                }
+                self.chunks[chunk_index].instructions = fn_instrs;
+                instrs.push(Instruction::LoadFn { chunk_index, arity });
             }
         }
     }

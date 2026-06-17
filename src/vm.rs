@@ -225,10 +225,83 @@ impl Vm {
                 // Execution continues inside the new frame on the next iteration.
             }
             Instruction::CallBuiltin(builtin, argc) => {
-                let stack_len = self.stack.len();
-                let mut args = self.stack.split_off(stack_len - argc as usize);
-                let result = call_builtin(builtin, &mut args)?;
-                self.stack.push(result);
+                // Phase 10: HOF builtins need access to the frame machinery,
+                // so they are handled here rather than in call_builtin.
+                match builtin {
+                    BuiltinFn::MapArray => {
+                        // Stack: [..., array, fn_val]
+                        let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let (chunk_index, _arity) = match fn_val {
+                            Value::Function { chunk_index, arity } => (chunk_index, arity),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let elements = match arr_val {
+                            Value::Array(a) => a.borrow().clone(),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let mut results = Vec::new();
+                        for elem in elements {
+                            let result = self.call_function(chunk_index, vec![elem])?;
+                            results.push(result);
+                        }
+                        self.stack
+                            .push(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(
+                                results,
+                            ))));
+                    }
+                    BuiltinFn::FilterArray => {
+                        // Stack: [..., array, fn_val]
+                        let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let (chunk_index, _arity) = match fn_val {
+                            Value::Function { chunk_index, arity } => (chunk_index, arity),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let elements = match arr_val {
+                            Value::Array(a) => a.borrow().clone(),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let mut results = Vec::new();
+                        for elem in elements {
+                            let result = self.call_function(chunk_index, vec![elem.clone()])?;
+                            match result {
+                                Value::Bool(true) => results.push(elem),
+                                Value::Bool(false) => {}
+                                _ => return Err(RuntimeError::TypeMismatch),
+                            }
+                        }
+                        self.stack
+                            .push(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(
+                                results,
+                            ))));
+                    }
+                    BuiltinFn::FoldArray => {
+                        // Stack: [..., array, init, fn_val]
+                        let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let init = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let (chunk_index, _arity) = match fn_val {
+                            Value::Function { chunk_index, arity } => (chunk_index, arity),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let elements = match arr_val {
+                            Value::Array(a) => a.borrow().clone(),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let mut acc = init;
+                        for elem in elements {
+                            acc = self.call_function(chunk_index, vec![acc, elem])?;
+                        }
+                        self.stack.push(acc);
+                    }
+                    _ => {
+                        let stack_len = self.stack.len();
+                        let mut args = self.stack.split_off(stack_len - argc as usize);
+                        let result = call_builtin(builtin, &mut args)?;
+                        self.stack.push(result);
+                    }
+                }
             }
             Instruction::Equal => {
                 let (l, r) = self.pop2()?;
@@ -468,6 +541,27 @@ impl Vm {
                 // matches the matched variant's payload arity).
                 self.stack.push(payload[index as usize].clone());
             }
+            // Phase 10: push a function value onto the stack
+            Instruction::LoadFn { chunk_index, arity } => {
+                self.stack.push(Value::Function { chunk_index, arity });
+            }
+            // Phase 10: pop function value + args, push a new frame
+            Instruction::CallValue(arg_count) => {
+                let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                match fn_val {
+                    Value::Function { chunk_index, arity } => {
+                        if arg_count != arity {
+                            return Err(RuntimeError::TypeMismatch);
+                        }
+                        let chunk = &self.chunks[chunk_index];
+                        let stack_len = self.stack.len();
+                        let args = self.stack.split_off(stack_len - arg_count as usize);
+                        let new_frame = Frame::new(chunk, args);
+                        self.frames.push(new_frame);
+                    }
+                    _ => return Err(RuntimeError::TypeMismatch),
+                }
+            }
         }
 
         Ok(StepResult::Continue)
@@ -556,6 +650,32 @@ impl Vm {
         let lhs = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
         Ok((lhs, rhs))
     }
+
+    /// Phase 10: call a chunk by index with the given arguments and run it to
+    /// completion, returning the produced value. Used by HOF builtins.
+    fn call_function(
+        &mut self,
+        chunk_index: usize,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let chunk = &self.chunks[chunk_index];
+        let frame = Frame::new(chunk, args);
+        let target_depth = self.frames.len(); // depth BEFORE pushing the new frame
+        self.frames.push(frame);
+        // Run until we pop back to target_depth.
+        loop {
+            if self.frames.len() == target_depth {
+                // The called frame finished; its return value (if any) is on
+                // the stack. Pop and return it.
+                return Ok(self.stack.pop().ok_or(RuntimeError::StackUnderflow)?);
+            }
+            match self.step()? {
+                StepResult::Continue => {}
+                StepResult::Halt(Some(v)) => return Ok(v),
+                StepResult::Halt(None) => return Err(RuntimeError::StackUnderflow),
+            }
+        }
+    }
 }
 
 pub fn display_value(val: &Value) -> String {
@@ -619,6 +739,9 @@ pub fn display_value(val: &Value) -> String {
                         .join("、")
                 )
             }
+        }
+        Value::Function { chunk_index, arity } => {
+            format!("関数＜チャンク{}、引数{}＞", chunk_index, arity)
         }
     }
 }
@@ -940,6 +1063,11 @@ fn call_builtin(builtin: BuiltinFn, args: &mut Vec<Value>) -> Result<Value, Runt
             }
             _ => Err(RuntimeError::TypeMismatch),
         },
+        // Phase 10: HOF builtins are handled directly in step() since they
+        // need access to the frame machinery; they never reach call_builtin.
+        BuiltinFn::MapArray | BuiltinFn::FilterArray | BuiltinFn::FoldArray => {
+            unreachable!("HOF builtins are handled in step()")
+        }
     }
 }
 
@@ -1941,5 +2069,43 @@ mod tests {
     fn test_vm_empty_map_literal_and_insert() {
         let src = "取り込む 「辞書」；辞書＜文字列、整数＞ m ＝ ｛｝；m【「キー」】 ＝ ４２；返す m【「キー」】；";
         assert_eq!(run(src), Some(Value::Int(42)));
+    }
+
+    // ── Phase 10: first-class functions ──────────────────────────────────
+
+    #[test]
+    fn test_vm_lambda_creation_and_call() {
+        // Lambda stored in var, then called through var.
+        // The var decl ends with ；ー
+        let src = "関数＜（整数） ー＞ 整数＞ f ＝ ｜ｎ：整数｜ ー＞ 整数 ｛ 返す ｎ ＊ ２； ｝；返す f（５）；";
+        assert_eq!(run(src), Some(Value::Int(10)));
+    }
+
+    #[test]
+    fn test_vm_named_function_as_value() {
+        // Named function used as a first-class value.
+        let src = "関数 二倍（整数 ｎ）ー＞ 整数 ｛ 返す ｎ ＊ ２； ｝関数＜（整数） ー＞ 整数＞ f ＝ 二倍；返す f（７）；";
+        assert_eq!(run(src), Some(Value::Int(14)));
+    }
+
+    #[test]
+    fn test_vm_map_array_with_named_function() {
+        // 地図 HOF with named function
+        let src = "取り込む 「関数」；関数 二倍（整数 ｎ）ー＞ 整数 ｛ 返す ｎ ＊ ２； ｝整数列 nums ＝ 【１、２、３】；整数列 result ＝ 地図（nums、二倍）；返す result【２】；";
+        assert_eq!(run(src), Some(Value::Int(6)));
+    }
+
+    #[test]
+    fn test_vm_filter_array_with_lambda() {
+        // 絞り込み HOF with lambda predicate (lambda is an argument, no extra ；)
+        let src = "取り込む 「関数」；取り込む 「配列」；整数列 nums ＝ 【１、２、３、４、５】；整数列 evens ＝ 絞り込み（nums、｜ｎ：整数｜ ー＞ 真偽 ｛ 返す ｎ ％ ２ ＝＝ ０； ｝）；返す 要素数（evens）；";
+        assert_eq!(run(src), Some(Value::Int(2)));
+    }
+
+    #[test]
+    fn test_vm_fold_array() {
+        // 畳み込み sum
+        let src = "取り込む 「関数」；整数列 nums ＝ 【１、２、３、４、５】；整数 total ＝ 畳み込み（nums、０、｜acc：整数、ｎ：整数｜ ー＞ 整数 ｛ 返す acc ＋ ｎ； ｝）；返す total；";
+        assert_eq!(run(src), Some(Value::Int(15)));
     }
 }

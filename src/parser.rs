@@ -13,6 +13,8 @@ pub enum HikariType {
     Map(Box<HikariType>, Box<HikariType>), // key type, value type
     Record(String), // user-defined record type, identified by its declared name
     Enum(String),   // user-defined enum type, identified by its declared name
+    // Phase 10: function type — 関数＜(T1、T2) → R＞
+    Fn(Vec<HikariType>, Box<HikariType>),
 }
 
 // ── AST nodes ────────────────────────────────────────────────────────────────
@@ -49,6 +51,12 @@ pub enum Expr {
     FieldAccess {
         record: Box<Expr>,
         field: String,
+    },
+    // Phase 10: anonymous function (lambda) — ｜params｜ → return_ty ｛ body ｝
+    Lambda {
+        params: Vec<(String, HikariType)>,
+        return_ty: HikariType,
+        body: Vec<Stmt>,
     },
 }
 
@@ -269,6 +277,9 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
         match self.peek().clone() {
+            // Phase 10: 関数＜...＞ name ＝ expr;  is a var decl with Fn type.
+            // 関数 name（...） → ... ｛ ... ｝ is a named fn decl.
+            TokenKind::KwFn if self.peek_next() == &TokenKind::Lt => self.parse_var_decl(),
             TokenKind::KwFn => self.parse_fn_decl(),
             TokenKind::KwReturn => self.parse_return(),
             TokenKind::KwPrint => self.parse_print(),
@@ -860,6 +871,42 @@ impl Parser {
             let inner = self.parse_primary()?;
             return Ok(Expr::UnaryNot(Box::new(inner)));
         }
+        // Phase 10: lambda — ｜ param：type、...｜ → return_ty ｛ body ｝
+        if self.peek() == &TokenKind::Pipe {
+            self.advance(); // consume ｜
+            let mut params = Vec::new();
+            while self.peek() != &TokenKind::Pipe {
+                let pname = match (self.peek_span(), self.advance().clone()) {
+                    (_, TokenKind::Ident(n)) => n,
+                    (s, other) => {
+                        return Err(ParseError::ExpectedIdentifier {
+                            got: other,
+                            span: s,
+                        });
+                    }
+                };
+                self.expect(&TokenKind::Colon)?;
+                let pty = self.parse_type()?;
+                params.push((pname, pty));
+                if self.peek() != &TokenKind::Pipe {
+                    self.expect(&TokenKind::Comma)?;
+                }
+            }
+            self.expect(&TokenKind::Pipe)?; // consume closing ｜
+            self.expect(&TokenKind::Arrow)?;
+            let return_ty = self.parse_type()?;
+            self.expect(&TokenKind::LBrace)?;
+            let mut body = Vec::new();
+            while self.peek() != &TokenKind::RBrace {
+                body.push(self.parse_stmt()?);
+            }
+            self.expect(&TokenKind::RBrace)?;
+            return Ok(Expr::Lambda {
+                params,
+                return_ty,
+                body,
+            });
+        }
         let span = self.peek_span();
         let mut expr = match self.advance().clone() {
             TokenKind::LitInt(n) => Ok(Expr::LitInt(n)),
@@ -1004,6 +1051,23 @@ impl Parser {
                 self.expect(&TokenKind::Gt)?;
                 Ok(HikariType::Map(Box::new(key_ty), Box::new(val_ty)))
             }
+            // Phase 10: 関数＜(T1、T2) → R＞
+            TokenKind::KwFn => {
+                self.expect(&TokenKind::Lt)?;
+                self.expect(&TokenKind::LParen)?;
+                let mut param_types = Vec::new();
+                while self.peek() != &TokenKind::RParen {
+                    param_types.push(self.parse_type()?);
+                    if self.peek() != &TokenKind::RParen {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                }
+                self.expect(&TokenKind::RParen)?;
+                self.expect(&TokenKind::Arrow)?;
+                let ret_ty = self.parse_type()?;
+                self.expect(&TokenKind::Gt)?;
+                Ok(HikariType::Fn(param_types, Box::new(ret_ty)))
+            }
             TokenKind::Ident(name) => Ok(HikariType::Record(name)),
             other => Err(ParseError::ExpectedType { got: other, span }),
         }
@@ -1074,6 +1138,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::RBracket => "「】」".to_string(),
         TokenKind::Colon => "「：」".to_string(),
         TokenKind::DoubleColon => "「：：」".to_string(),
+        TokenKind::Pipe => "「｜」".to_string(),
         TokenKind::Ident(name) => format!("識別子「{}」", name),
         TokenKind::Invalid(text) => format!("不正な字句「{}」", text),
         TokenKind::Eof => "ファイルの末尾".to_string(),
@@ -1097,6 +1162,14 @@ pub fn hikari_type_japanese(ty: &HikariType) -> String {
         }
         HikariType::Record(name) => name.clone(),
         HikariType::Enum(name) => name.clone(),
+        HikariType::Fn(params, ret) => {
+            let param_strs: Vec<String> = params.iter().map(hikari_type_japanese).collect();
+            format!(
+                "関数＜({}) → {}＞",
+                param_strs.join("、"),
+                hikari_type_japanese(ret)
+            )
+        }
     }
 }
 
@@ -1156,6 +1229,7 @@ fn is_type_token(kind: &TokenKind) -> bool {
             | TokenKind::TyStringArray
             | TokenKind::TyBoolArray
             | TokenKind::KwMap
+            | TokenKind::KwFn
     )
 }
 
