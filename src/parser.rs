@@ -12,7 +12,7 @@ pub enum HikariType {
     Array(Box<HikariType>),
     Map(Box<HikariType>, Box<HikariType>), // key type, value type
     Record(String), // user-defined record/enum type, identified by its declared name
-    // Phase 10: function type — 関数＜(T1、T2) → R＞
+    // function type — 関数＜(T1、T2) → R＞
     Fn(Vec<HikariType>, Box<HikariType>),
 }
 
@@ -51,7 +51,7 @@ pub enum Expr {
         record: Box<Expr>,
         field: String,
     },
-    // Phase 10: anonymous function (lambda) — ｜params｜ → return_ty ｛ body ｝
+    // anonymous function (lambda) — ｜params｜ → return_ty ｛ body ｝
     Lambda {
         params: Vec<(String, HikariType)>,
         return_ty: HikariType,
@@ -276,7 +276,7 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
         match self.peek().clone() {
-            // Phase 10: 関数＜...＞ name ＝ expr;  is a var decl with Fn type.
+            // 関数＜...＞ name ＝ expr;  is a var decl with Fn type.
             // 関数 name（...） → ... ｛ ... ｝ is a named fn decl.
             TokenKind::KwFn if self.peek_next() == &TokenKind::Lt => self.parse_var_decl(),
             TokenKind::KwFn => self.parse_fn_decl(),
@@ -870,7 +870,7 @@ impl Parser {
             let inner = self.parse_primary()?;
             return Ok(Expr::UnaryNot(Box::new(inner)));
         }
-        // Phase 10: lambda — ｜ param：type、...｜ → return_ty ｛ body ｝
+        // lambda — ｜ param：type、...｜ → return_ty ｛ body ｝
         if self.peek() == &TokenKind::Pipe {
             self.advance(); // consume ｜
             let mut params = Vec::new();
@@ -1050,7 +1050,7 @@ impl Parser {
                 self.expect(&TokenKind::Gt)?;
                 Ok(HikariType::Map(Box::new(key_ty), Box::new(val_ty)))
             }
-            // Phase 10: 関数＜(T1、T2) → R＞
+            // 関数＜(T1、T2) → R＞
             TokenKind::KwFn => {
                 self.expect(&TokenKind::Lt)?;
                 self.expect(&TokenKind::LParen)?;

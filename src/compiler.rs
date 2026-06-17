@@ -26,7 +26,7 @@ pub enum Value {
         variant: String,
         payload: Vec<Value>,
     },
-    // Phase 10: first-class function pointer
+    // first-class function pointer
     Function {
         chunk_index: usize,
         arity: u8,
@@ -67,7 +67,7 @@ pub enum BuiltinFn {
     MapKeys,       // 鍵一覧
     MapValues,     // 値一覧
     MapDelete,     // 削除
-    // Phase 10: higher-order functions (these are special — they take a fn value)
+    // higher-order functions (these are special — they take a fn value)
     MapArray,    // マップ
     FilterArray, // 絞り込み
     FoldArray,   // 畳み込み
@@ -118,7 +118,7 @@ pub enum Instruction {
     // from a local slot if they need the payload after a successful check.
     TagEquals(String),
     GetPayload(u8), // pop a Value::Enum, push payload[index] (clone)
-    // Phase 10: push a function value onto the stack
+    // push a function value onto the stack
     LoadFn { chunk_index: usize, arity: u8 },
     // Pop function value and arg_count args off the stack, call the function
     CallValue(u8),
@@ -683,7 +683,7 @@ impl Compiler {
                 instrs.push(Instruction::LoadConst(idx));
             }
             Expr::Ident(name) => {
-                // Phase 10: if the ident names a local variable, load it.
+                // if the ident names a local variable, load it.
                 // If it names a known function (used as a value), emit LoadFn.
                 if let Some(slot) = scopes.lookup(name) {
                     instrs.push(Instruction::LoadLocal(slot));
@@ -777,7 +777,7 @@ impl Compiler {
                 } else if let Some(builtin) = builtin_name(name) {
                     instrs.push(Instruction::CallBuiltin(builtin, args.len() as u8));
                 } else if let Some(slot) = scopes.lookup(name) {
-                    // Phase 10: calling a Fn-typed local variable.
+                    // calling a Fn-typed local variable.
                     instrs.push(Instruction::LoadLocal(slot));
                     instrs.push(Instruction::CallValue(args.len() as u8));
                 } else {
@@ -818,7 +818,7 @@ impl Compiler {
                 self.emit_expr(record, instrs, scopes);
                 instrs.push(Instruction::GetField(field.clone()));
             }
-            // Phase 10: compile a lambda into a new chunk, emit LoadFn.
+            // compile a lambda into a new chunk, emit LoadFn.
             Expr::Lambda { params, body, .. } => {
                 // Reserve a chunk slot.
                 let chunk_index = self.chunks.len();

@@ -1036,7 +1036,7 @@ impl TypeChecker {
                 if let Some(ty) = self.lookup_var(name) {
                     return Ok(ty);
                 }
-                // Phase 10: a bare identifier that names a known function can
+                // a bare identifier that names a known function can
                 // be used as a first-class function value.
                 if let Some(sig) = self.fns.get(name).cloned() {
                     return Ok(HikariType::Fn(sig.params, Box::new(sig.return_ty)));
@@ -1590,7 +1590,7 @@ impl TypeChecker {
                     return Ok(HikariType::Bool);
                 }
 
-                // Phase 10: higher-order function builtins.
+                // higher-order function builtins.
                 if name == "マップ" {
                     if args.len() != 2 {
                         return Err(TypeError::ArgCountMismatch {
@@ -1755,7 +1755,7 @@ impl TypeChecker {
                     return Ok(sig.return_ty);
                 }
 
-                // Phase 10: check if name is a Fn-typed local variable.
+                // check if name is a Fn-typed local variable.
                 if let Some(var_ty) = self.lookup_var(name) {
                     match var_ty {
                         HikariType::Fn(params, ret) => {
@@ -1955,7 +1955,7 @@ impl TypeChecker {
                     })
             }
 
-            // Phase 10: anonymous function
+            // anonymous function
             Expr::Lambda {
                 params,
                 return_ty,

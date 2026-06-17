@@ -225,7 +225,7 @@ impl Vm {
                 // Execution continues inside the new frame on the next iteration.
             }
             Instruction::CallBuiltin(builtin, argc) => {
-                // Phase 10: HOF builtins need access to the frame machinery,
+                // HOF builtins need access to the frame machinery,
                 // so they are handled here rather than in call_builtin.
                 match builtin {
                     BuiltinFn::MapArray => {
@@ -541,11 +541,11 @@ impl Vm {
                 // matches the matched variant's payload arity).
                 self.stack.push(payload[index as usize].clone());
             }
-            // Phase 10: push a function value onto the stack
+            // push a function value onto the stack
             Instruction::LoadFn { chunk_index, arity } => {
                 self.stack.push(Value::Function { chunk_index, arity });
             }
-            // Phase 10: pop function value + args, push a new frame
+            // pop function value + args, push a new frame
             Instruction::CallValue(arg_count) => {
                 let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                 match fn_val {
@@ -651,7 +651,7 @@ impl Vm {
         Ok((lhs, rhs))
     }
 
-    /// Phase 10: call a chunk by index with the given arguments and run it to
+    /// call a chunk by index with the given arguments and run it to
     /// completion, returning the produced value. Used by HOF builtins.
     fn call_function(
         &mut self,
@@ -1063,7 +1063,7 @@ fn call_builtin(builtin: BuiltinFn, args: &mut Vec<Value>) -> Result<Value, Runt
             }
             _ => Err(RuntimeError::TypeMismatch),
         },
-        // Phase 10: HOF builtins are handled directly in step() since they
+        // HOF builtins are handled directly in step() since they
         // need access to the frame machinery; they never reach call_builtin.
         BuiltinFn::MapArray | BuiltinFn::FilterArray | BuiltinFn::FoldArray => {
             unreachable!("HOF builtins are handled in step()")
@@ -2070,8 +2070,6 @@ mod tests {
         let src = "取り込む 「辞書」；辞書＜文字列、整数＞ m ＝ ｛｝；m【「キー」】 ＝ ４２；返す m【「キー」】；";
         assert_eq!(run(src), Some(Value::Int(42)));
     }
-
-    // ── Phase 10: first-class functions ──────────────────────────────────
 
     #[test]
     fn test_vm_lambda_creation_and_call() {

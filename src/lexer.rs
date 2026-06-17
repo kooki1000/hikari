@@ -36,7 +36,6 @@ pub enum TokenKind {
     KwMatch,    // 照合
     KwMap,      // 辞書
 
-    // Phase 10: first-class functions
     Pipe, // ｜ (U+FF5C full-width vertical bar) — lambda parameter delimiter
 
     // Literals
