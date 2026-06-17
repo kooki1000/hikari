@@ -667,7 +667,7 @@ impl Vm {
             if self.frames.len() == target_depth {
                 // The called frame finished; its return value (if any) is on
                 // the stack. Pop and return it.
-                return Ok(self.stack.pop().ok_or(RuntimeError::StackUnderflow)?);
+                return self.stack.pop().ok_or(RuntimeError::StackUnderflow);
             }
             match self.step()? {
                 StepResult::Continue => {}

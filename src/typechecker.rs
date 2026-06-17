@@ -951,7 +951,6 @@ impl TypeChecker {
                 // we accept Record(name) when name is a registered enum, as
                 // well as the explicit Enum(name) form.
                 let enum_name = match subject_ty {
-                    HikariType::Enum(name) => name,
                     HikariType::Record(name) if self.enums.contains_key(&name) => name,
                     other => {
                         return Err(TypeError::NotAnEnum {

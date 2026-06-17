@@ -11,8 +11,7 @@ pub enum HikariType {
     Void,   // 無
     Array(Box<HikariType>),
     Map(Box<HikariType>, Box<HikariType>), // key type, value type
-    Record(String), // user-defined record type, identified by its declared name
-    Enum(String),   // user-defined enum type, identified by its declared name
+    Record(String), // user-defined record/enum type, identified by its declared name
     // Phase 10: function type — 関数＜(T1、T2) → R＞
     Fn(Vec<HikariType>, Box<HikariType>),
 }
@@ -1161,7 +1160,6 @@ pub fn hikari_type_japanese(ty: &HikariType) -> String {
             )
         }
         HikariType::Record(name) => name.clone(),
-        HikariType::Enum(name) => name.clone(),
         HikariType::Fn(params, ret) => {
             let param_strs: Vec<String> = params.iter().map(hikari_type_japanese).collect();
             format!(
