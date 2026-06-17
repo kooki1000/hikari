@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::lexer::Span;
+use crate::modules::{MOD_ARRAY, MOD_FUNC, MOD_MAP, MOD_MATH, MOD_STRING, STDLIB_MODULES};
 use crate::parser::{BinOpKind, Expr, HikariType, Stmt, hikari_type_japanese};
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -421,13 +422,13 @@ fn builtin_sig(name: &str) -> Option<FnSig> {
 fn builtin_module(name: &str) -> Option<&'static str> {
     match name {
         "絶対値" | "平方根" | "乱数" | "最大" | "最小" | "累乗" | "切り捨て" | "切り上げ"
-        | "四捨五入" | "余り" => Some("数学"),
-        "分割" | "結合" | "置換" => Some("文字列"),
+        | "四捨五入" | "余り" => Some(MOD_MATH),
+        "分割" | "結合" | "置換" => Some(MOD_STRING),
         "要素数" | "追加" | "取り出す" | "含む配列" | "位置" | "逆順" | "整列" | "部分列" => {
-            Some("配列")
+            Some(MOD_ARRAY)
         }
-        "鍵一覧" | "値一覧" | "削除" => Some("辞書"),
-        "マップ" | "絞り込み" | "畳み込み" => Some("関数"),
+        "鍵一覧" | "値一覧" | "削除" => Some(MOD_MAP),
+        "マップ" | "絞り込み" | "畳み込み" => Some(MOD_FUNC),
         _ => None,
     }
 }
@@ -866,12 +867,7 @@ impl TypeChecker {
             }
 
             Stmt::Import { name, .. } => {
-                if name == "数学"
-                    || name == "文字列"
-                    || name == "配列"
-                    || name == "辞書"
-                    || name == "関数"
-                {
+                if STDLIB_MODULES.contains(&name.as_str()) {
                     self.imported_modules.insert(name.clone());
                 }
                 Ok(())
@@ -1590,7 +1586,7 @@ impl TypeChecker {
                     return Ok(HikariType::Bool);
                 }
 
-                // higher-order function builtins.
+                // Higher-order function builtins.
                 if name == "マップ" {
                     if args.len() != 2 {
                         return Err(TypeError::ArgCountMismatch {
@@ -1755,7 +1751,7 @@ impl TypeChecker {
                     return Ok(sig.return_ty);
                 }
 
-                // check if name is a Fn-typed local variable.
+                // Check if name is a Fn-typed local variable.
                 if let Some(var_ty) = self.lookup_var(name) {
                     match var_ty {
                         HikariType::Fn(params, ret) => {
@@ -1955,7 +1951,7 @@ impl TypeChecker {
                     })
             }
 
-            // anonymous function
+            // Anonymous function (lambda).
             Expr::Lambda {
                 params,
                 return_ty,
@@ -1974,6 +1970,16 @@ impl TypeChecker {
                 self.current_return_ty = Some(return_ty.clone());
 
                 self.check(body)?;
+
+                // A non-無 lambda must guarantee a return on every path, just
+                // like a named 関数; otherwise the VM falls off the end of its
+                // chunk with no value to return and underflows the stack.
+                if *return_ty != HikariType::Void && !always_returns(body) {
+                    return Err(TypeError::MissingReturn {
+                        name: "＜無名関数＞".to_string(),
+                        span,
+                    });
+                }
 
                 // Restore outer context.
                 self.scopes = outer_scopes;

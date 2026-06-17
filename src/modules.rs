@@ -4,7 +4,16 @@ use std::path::{Path, PathBuf};
 use crate::lexer::Lexer;
 use crate::parser::{Parser, Stmt};
 
-const STDLIB_MODULES: [&str; 3] = ["数学", "文字列", "配列"];
+// Canonical names of the built-in stdlib modules. These constants are the
+// single source of truth: the typechecker references them when gating builtins
+// and when recording 取り込む'd modules, so the lists can never drift apart.
+pub const MOD_MATH: &str = "数学";
+pub const MOD_STRING: &str = "文字列";
+pub const MOD_ARRAY: &str = "配列";
+pub const MOD_MAP: &str = "辞書";
+pub const MOD_FUNC: &str = "関数";
+
+pub const STDLIB_MODULES: [&str; 5] = [MOD_MATH, MOD_STRING, MOD_ARRAY, MOD_MAP, MOD_FUNC];
 
 // Imports are only resolved at the top level of a file: the roadmap's
 // examples only ever show 取り込む as a top-level statement, so nested
