@@ -7,7 +7,7 @@
 // unreachable in hand-written programs — the check guards against silent
 // corruption, not normal use.
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum CompileError {
     /// More than 65,535 distinct constants in one program.
     TooManyConstants(usize),

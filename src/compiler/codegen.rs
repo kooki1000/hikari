@@ -11,6 +11,10 @@ use super::value::Value;
 
 // ── Compiler ──────────────────────────────────────────────────────────────────
 
+// Clone lets the REPL snapshot the compiler before a line and roll back to it
+// if the line fails, keeping its persistent slot/constant/chunk state in sync
+// with the type checker (which is rolled back the same way).
+#[derive(Clone)]
 pub struct Compiler {
     pub constants: Vec<Value>,
     pub chunks: Vec<Chunk>, // chunks[0] is the top-level script
@@ -37,16 +41,19 @@ pub struct Compiler {
 // forever, so those continues are deferred via continue_jump_idxs and
 // back-patched once the increment's start index is known, the same way
 // break_jump_idxs is back-patched once after_loop is known.
+#[derive(Clone)]
 enum ContinueTarget {
     Known(usize),
     Deferred(Vec<usize>),
 }
 
+#[derive(Clone)]
 struct LoopTarget {
     continue_target: ContinueTarget,
     break_jump_idxs: Vec<usize>,
 }
 
+#[derive(Clone)]
 struct Scopes {
     frames: Vec<HashMap<String, u16>>,
     next_slot: u16,

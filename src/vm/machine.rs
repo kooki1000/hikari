@@ -667,6 +667,18 @@ impl Vm {
                         frame.ip = handler.catch_target;
                     } else {
                         self.error_span = self.current_error_span();
+                        // Reset transient execution state so the REPL session
+                        // can continue cleanly after an uncaught error: drop any
+                        // in-progress call frames, clear the operand stack and
+                        // pending try handlers, and park frame 0 at the end of
+                        // its instructions (the next line appends after it).
+                        // Frame 0's locals are kept — persistent REPL bindings
+                        // live there, and any slot the failed line wrote is
+                        // overwritten before it can be read again.
+                        self.frames.truncate(1);
+                        self.frames[0].ip = self.frames[0].instructions.len();
+                        self.stack.clear();
+                        self.try_stack.clear();
                         return Err(e);
                     }
                 }

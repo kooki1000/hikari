@@ -19,7 +19,7 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(407 tests passing):
+(410 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -32,7 +32,7 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １１b | Formatted print — `印字` (no-newline) ✅; multi-value `印刷` ✅ | ✅ **Done** |
 | １１c / １３e | Program args & env access (`引数`/`環境変数`, `環境` module) | ✅ **Done** |
 | １１d | Runtime error source spans | ✅ **Done** |
-| １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅, boundary checks ✅; lints, REPL txn, fuzz still open | 🟡 **Partial** |
+| １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅, boundary checks ✅, REPL txn ✅; lints & fuzz still open | 🟡 **Partial** |
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
 
 The remaining sections below describe the open work. Completed work is marked ✅
@@ -40,6 +40,16 @@ inline. Current focus: **remaining robustness (12) and generics (10b).**
 
 ### Shipped since this status was added
 
+- **12 — REPL transactionality.** A REPL line that fails at any stage (type,
+  compile, or runtime) now leaves no half-applied state. The driver snapshots the
+  persistent `TypeChecker` and `Compiler` (both `Clone`) before each line and rolls
+  them back on failure, so e.g. `整数 ａ ＝ １； 整数 ｂ ＝ 「x」；` no longer
+  half-declares `ａ`. The VM also resets its transient state (drops in-progress call
+  frames, clears the stack and pending try handlers, parks frame 0) on an uncaught
+  error in `run_repl_line` — fixing a latent bug where leftover call frames could
+  resume on the next line. Persistent bindings in frame 0 survive; only the failed
+  line's effects are discarded (already-printed output and in-place mutations of
+  pre-existing collections are inherently not rolled back).
 - **12 — Bytecode boundary hardening.** The bytecode encodes some counts in
   fixed-width fields (`u16` constant-pool/jump/chunk indices, `u8` arg/payload/
   capture counts); exceeding one used to silently wrap and miscompile. `compile`
@@ -234,9 +244,10 @@ These harden the implementation itself rather than adding language features.
   frame-push path raises a clean, catchable `再帰が深すぎます`
   (`RuntimeError::StackOverflow`) instead of unbounded growth.
 - **未使用変数・到達不能コードの警告 (still open):** beginner-friendly lints.
-- **REPL のトランザクション性:** a line that type-checks partway then fails currently
-  leaves the persistent checker with half-declared state; make per-line evaluation
-  all-or-nothing.
+- **REPL のトランザクション性 ✅ done:** the driver snapshots the persistent
+  `TypeChecker` and `Compiler` before each line and restores them if the line fails
+  at any stage, and the VM resets its transient state on an uncaught error, so a
+  partially-evaluated line leaves no half-applied declarations.
 - **テスト:** property-based / fuzz testing of the lexer and parser to catch the next
   class of panics-on-malformed-input before users do.
 
@@ -279,11 +290,11 @@ arguments are exposed through `引数（）` (see **11c**).
 
 Shipped so far: **7–9, 10a (closures), 11a, 11b (multi-value print), 11c/13e
 (program args & env), 11d, most of 12 (recursion limit, dynamic locals,
-`Rc<[Instruction]>` cheap frames, boundary hardening), 13 (CLI).** Remaining, in
-recommended order:
+`Rc<[Instruction]>` cheap frames, boundary hardening, REPL transactionality),
+13 (CLI).** Remaining, in recommended order:
 
 ```
-Phase 12  (beginner lints → unused vars / unreachable code; REPL txn; lexer/parser fuzz)
+Phase 12  (beginner lints → unused vars / unreachable code; lexer/parser fuzz)
 Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff
 ```
 

@@ -11,7 +11,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::{env, fs, process};
 
-use compiler::{CompileError, Compiler};
+use compiler::{CompileError, Compiler, Value};
 use lexer::Lexer;
 use parser::Parser;
 use typechecker::TypeChecker;
@@ -163,49 +163,56 @@ fn run_repl() {
             continue;
         }
 
-        let tokens = Lexer::new(line).tokenize();
-        let ast = match Parser::new(tokens).parse() {
-            Ok(ast) => ast,
-            Err(e) => {
-                eprintln!("{}", diagnostic::render(line, e.span(), &e.to_string()));
-                continue;
-            }
-        };
+        // Per-line transactionality: snapshot the persistent checker and
+        // compiler so a line that fails at any stage (type, compile, or
+        // runtime) leaves no half-applied declarations behind. The VM resets
+        // its own transient state on an uncaught error (see run_repl_line).
+        let checker_snapshot = checker.clone();
+        let compiler_snapshot = compiler.clone();
 
-        let entry_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let ast = match modules::resolve_imports(ast, &entry_dir, &mut HashSet::new()) {
-            Ok(ast) => ast,
-            Err(e) => {
-                eprintln!("{}", e);
-                continue;
-            }
-        };
-
-        if let Err(e) = checker.check(&ast) {
-            eprintln!("{}", diagnostic::render(line, e.span(), &e.to_string()));
-            continue;
-        }
-
-        let instrs = match compiler.compile(&ast) {
-            Ok(instrs) => instrs,
-            Err(e) => {
-                eprintln!("コンパイルエラー: {}", e);
-                continue;
-            }
-        };
-        let line_spans = compiler.script_spans.clone();
-        vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
-
-        match vm.run_repl_line(instrs, line_spans) {
+        match eval_repl_line(line, &mut checker, &mut compiler, &mut vm) {
             Ok(Some(v)) => println!("{}", display_value(&v)),
             Ok(None) => {}
-            Err(e) => match vm.error_span() {
-                Some(span) => eprintln!(
-                    "{}",
-                    diagnostic::render(line, span, &format!("実行時エラー: {}", e))
-                ),
-                None => eprintln!("実行時エラー: {}", e),
-            },
+            Err(msg) => {
+                eprintln!("{}", msg);
+                checker = checker_snapshot;
+                compiler = compiler_snapshot;
+            }
         }
     }
+}
+
+/// Evaluate one REPL line against the persistent checker/compiler/VM, returning
+/// the produced value (if any) or a rendered error message. On `Err` the caller
+/// rolls the checker and compiler back to their pre-line snapshots.
+fn eval_repl_line(
+    line: &str,
+    checker: &mut TypeChecker,
+    compiler: &mut Compiler,
+    vm: &mut Vm,
+) -> Result<Option<Value>, String> {
+    let tokens = Lexer::new(line).tokenize();
+    let ast = Parser::new(tokens)
+        .parse()
+        .map_err(|e| diagnostic::render(line, e.span(), &e.to_string()))?;
+
+    let entry_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let ast = modules::resolve_imports(ast, &entry_dir, &mut HashSet::new())
+        .map_err(|e| e.to_string())?;
+
+    checker
+        .check(&ast)
+        .map_err(|e| diagnostic::render(line, e.span(), &e.to_string()))?;
+
+    let instrs = compiler
+        .compile(&ast)
+        .map_err(|e| format!("コンパイルエラー: {}", e))?;
+    let line_spans = compiler.script_spans.clone();
+    vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
+
+    vm.run_repl_line(instrs, line_spans)
+        .map_err(|e| match vm.error_span() {
+            Some(span) => diagnostic::render(line, span, &format!("実行時エラー: {}", e)),
+            None => format!("実行時エラー: {}", e),
+        })
 }
