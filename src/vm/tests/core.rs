@@ -130,7 +130,7 @@ fn test_vm_division_by_zero_returns_error() {
         .parse()
         .unwrap();
     let mut compiler = Compiler::new();
-    let script = compiler.compile(&ast);
+    let script = compiler.compile(&ast).unwrap();
     let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
     assert_eq!(result, Err(RuntimeError::DivisionByZero));
 }
@@ -141,7 +141,7 @@ fn test_vm_float_division_by_zero_returns_error() {
         .parse()
         .unwrap();
     let mut compiler = Compiler::new();
-    let script = compiler.compile(&ast);
+    let script = compiler.compile(&ast).unwrap();
     let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
     assert_eq!(result, Err(RuntimeError::DivisionByZero));
 }
@@ -246,7 +246,7 @@ fn test_vm_builtin_parse_int_invalid_returns_error() {
         .parse()
         .unwrap();
     let mut compiler = Compiler::new();
-    let script = compiler.compile(&ast);
+    let script = compiler.compile(&ast).unwrap();
     let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
     assert!(matches!(result, Err(RuntimeError::InvalidConversion(_))));
 }
