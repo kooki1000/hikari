@@ -1,8 +1,18 @@
 use crate::lexer::Span;
 
-/// Render a rustc-style diagnostic pointing at `span` within `source`,
-/// prefixed by `message`.
+/// Render a rustc-style error diagnostic pointing at `span` within `source`.
 pub fn render(source: &str, span: Span, message: &str) -> String {
+    render_labeled(source, span, "エラー", message)
+}
+
+/// Like `render`, but labeled as a warning rather than an error.
+pub fn render_warning(source: &str, span: Span, message: &str) -> String {
+    render_labeled(source, span, "警告", message)
+}
+
+/// Render a rustc-style diagnostic pointing at `span` within `source`,
+/// prefixed by `label` and `message`.
+fn render_labeled(source: &str, span: Span, label: &str, message: &str) -> String {
     let line_text = source
         .lines()
         .nth(span.line.saturating_sub(1))
@@ -15,7 +25,8 @@ pub fn render(source: &str, span: Span, message: &str) -> String {
     let underline_len = span.len.max(1);
 
     format!(
-        "エラー: {message}\n{gutter} --> {line}:{col}\n{gutter} |\n{line_num} | {line_text}\n{gutter} | {pointer_pad}{underline}",
+        "{label}: {message}\n{gutter} --> {line}:{col}\n{gutter} |\n{line_num} | {line_text}\n{gutter} | {pointer_pad}{underline}",
+        label = label,
         message = message,
         gutter = gutter,
         line = span.line,

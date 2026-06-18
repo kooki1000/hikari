@@ -27,6 +27,11 @@ pub enum ParseError {
         text: String,
         span: Span,
     },
+    // Input nested past the parser's depth limit (guards against stack overflow
+    // on hostile input like thousands of nested parentheses).
+    TooDeeplyNested {
+        span: Span,
+    },
 }
 
 impl ParseError {
@@ -37,6 +42,7 @@ impl ParseError {
             ParseError::ExpectedType { span, .. } => *span,
             ParseError::UnexpectedExprToken { span, .. } => *span,
             ParseError::InvalidNumber { span, .. } => *span,
+            ParseError::TooDeeplyNested { span } => *span,
         }
     }
 }
@@ -79,6 +85,9 @@ impl std::fmt::Display for ParseError {
             }
             ParseError::InvalidNumber { text, .. } => {
                 write!(f, "「{}」は正しい数値ではありません。", text)
+            }
+            ParseError::TooDeeplyNested { .. } => {
+                write!(f, "式または文の入れ子が深すぎます。")
             }
         }
     }

@@ -8,11 +8,25 @@ use super::error::ParseError;
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    // Current statement/expression nesting depth. Bounded so deeply nested
+    // input (e.g. thousands of `（`) is rejected with a clean error instead of
+    // overflowing the recursive-descent parser's stack.
+    depth: usize,
 }
+
+// Max nesting before parsing gives up. Each level descends the whole
+// precedence-climbing chain of large parse functions, so one nesting level costs
+// many KB of stack; this is kept low enough to stay safe even on a small (2 MB)
+// thread stack, yet far deeper than any hand-written program nests.
+const MAX_DEPTH: usize = 32;
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            depth: 0,
+        }
     }
 
     fn peek(&self) -> &TokenKind {
@@ -63,7 +77,29 @@ impl Parser {
         Ok(stmts)
     }
 
+    // Increment nesting depth, run `f`, then restore it. Rejects input nested
+    // past MAX_DEPTH so the parser can't overflow its stack on hostile input.
+    fn with_depth<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<T, ParseError> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            self.depth -= 1;
+            return Err(ParseError::TooDeeplyNested {
+                span: self.peek_span(),
+            });
+        }
+        let result = f(self);
+        self.depth -= 1;
+        result
+    }
+
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
+        self.with_depth(Self::parse_stmt_inner)
+    }
+
+    fn parse_stmt_inner(&mut self) -> Result<Stmt, ParseError> {
         match self.peek().clone() {
             // 関数＜...＞ name ＝ expr;  is a var decl with Fn type.
             // 関数 name（...） → ... ｛ ... ｝ is a named fn decl.
@@ -562,7 +598,7 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_or()
+        self.with_depth(Self::parse_or)
     }
 
     // Logical OR: lowest precedence (または)

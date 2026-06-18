@@ -147,3 +147,32 @@ fn test_parse_return_with_expr_still_works() {
     let ast = parse_helper("返す ５；");
     assert!(matches!(ast[0], Stmt::Return(Some(Expr::LitInt(5)), _)));
 }
+
+// ── recursion-depth limit (Phase 12 fuzz hardening) ──────────────────
+
+#[test]
+fn test_parse_deeply_nested_parens_errors_not_overflows() {
+    // Thousands of nested parens used to overflow the parser's stack; now it
+    // is a clean error.
+    let src = format!("整数 ａ ＝ {}１{}；", "（".repeat(5000), "）".repeat(5000));
+    let err = Parser::new(Lexer::new(&src).tokenize())
+        .parse()
+        .unwrap_err();
+    assert!(matches!(err, ParseError::TooDeeplyNested { .. }));
+}
+
+#[test]
+fn test_parse_deeply_nested_blocks_errors_not_overflows() {
+    let src = "もし 真 ならば ｛".repeat(5000);
+    let err = Parser::new(Lexer::new(&src).tokenize())
+        .parse()
+        .unwrap_err();
+    assert!(matches!(err, ParseError::TooDeeplyNested { .. }));
+}
+
+#[test]
+fn test_parse_modestly_nested_input_is_accepted() {
+    // Ordinary nesting depth must still parse fine.
+    let src = format!("整数 ａ ＝ {}１{}；", "（".repeat(20), "）".repeat(20));
+    assert!(Parser::new(Lexer::new(&src).tokenize()).parse().is_ok());
+}
