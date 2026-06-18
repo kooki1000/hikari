@@ -19,7 +19,7 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(395 tests passing):
+(396 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -32,7 +32,7 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １１b | Formatted print — `印字` (no-newline) ✅; multi-value `印刷` ✅ | ✅ **Done** |
 | １１c / １３e | Program args & env access (`引数`/`環境変数`, `環境` module) | ✅ **Done** |
 | １１d | Runtime error source spans | ✅ **Done** |
-| １２ | Robustness — recursion limit ✅; `Rc<[Instruction]>`, boundary checks, lints | 🟡 **Partial** |
+| １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅; boundary checks, lints, REPL txn, fuzz still open | 🟡 **Partial** |
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
 
 The remaining sections below describe the open work. Completed work is marked ✅
@@ -40,6 +40,14 @@ inline. Current focus: **remaining robustness (12) and generics (10b).**
 
 ### Shipped since this status was added
 
+- **12 — Cheap call frames (`Rc<[Instruction]>`).** `Chunk` now holds its
+  instructions and span checkpoints as `Rc<[…]>`, and a call `Frame` shares them
+  with an O(1) refcount bump instead of cloning the whole body on every call. This
+  makes recursion O(depth) instead of O(depth × body size). The REPL rebuilds
+  frame 0's slice when appending a line (once per line, not a hot path).
+- **12 — Dynamic locals (already resolved).** The earlier "fixed 256 locals that
+  silently corrupt" concern is moot: `INITIAL_LOCALS` is only a starting capacity
+  and `Frame::set_local` grows the slot vector on demand.
 - **11b — Multi-value `印刷`.** `印刷` takes zero or more `、`-separated values,
   printed space-separated with a trailing newline (`印刷（）` prints a blank line).
   `Stmt::Print` now holds a `Vec<Expr>`; the `Print` instruction became
@@ -200,17 +208,23 @@ carry no spans, so sub-expression precision would require adding spans to the AS
 
 These harden the implementation itself rather than adding language features.
 
-- **任意精度・境界の見直し:** the constant pool is `u16`-indexed, arg counts are
-  `u8`, and each frame has a fixed 256 locals — all silently wrap/corrupt at the
-  boundary. Replace with checked widening or dynamic sizing.
-- **再帰の性能:** `Frame::new` clones the whole chunk's instruction vector on every
-  call (`chunk.instructions.clone()` in `src/vm/frame.rs`), making recursion
-  O(chunk size) per call. Share instructions via `Rc<[Instruction]>` so frames are cheap.
-- **スタック深度の上限 (still open):** the call path in `src/vm/machine.rs` has **no
-  recursion/frame-depth guard** — `frame_depth` exists only for try/catch unwinding,
-  so infinite recursion grows memory unbounded instead of raising a clean
-  `再帰が深すぎます` error. Small fix, high safety payoff.
-- **未使用変数・到達不能コードの警告:** beginner-friendly lints.
+- **任意精度・境界の見直し (still open):** the constant pool is `u16`-indexed, arg
+  counts are `u8`, chunk/function indices are `u16`, and jump offsets are `u16` — a
+  program that exceeds any of these silently wraps in the compiler instead of being
+  rejected. (The "fixed 256 locals" part of this concern is already resolved — see
+  below.) The clean fix makes the compiler fallible and emits a "プログラムが
+  大きすぎます" diagnostic at the offending cast; these limits are unreachable in
+  hand-written programs but the silent wrap is a latent correctness bug.
+- **再帰の性能 ✅ done:** `Chunk` instructions/spans are now `Rc<[…]>` and a call
+  `Frame` shares them (refcount bump), so recursion is O(depth), not
+  O(depth × body size). Previously `Frame::new` cloned the whole body per call.
+- **フレームのローカル ✅ done:** `INITIAL_LOCALS` is just a starting capacity;
+  `Frame::set_local` grows the slot vector on demand, so there is no hard 256-slot
+  ceiling and no silent corruption.
+- **スタック深度の上限 ✅ done:** a `MAX_FRAME_DEPTH` (1024) guard on every
+  frame-push path raises a clean, catchable `再帰が深すぎます`
+  (`RuntimeError::StackOverflow`) instead of unbounded growth.
+- **未使用変数・到達不能コードの警告 (still open):** beginner-friendly lints.
 - **REPL のトランザクション性:** a line that type-checks partway then fails currently
   leaves the persistent checker with half-declared state; make per-line evaluation
   all-or-nothing.
@@ -255,11 +269,11 @@ arguments are exposed through `引数（）` (see **11c**).
 ## Suggested ordering
 
 Shipped so far: **7–9, 10a (closures), 11a, 11b (multi-value print), 11c/13e
-(program args & env), 11d, recursion limit (12), 13 (CLI).** Remaining, in
-recommended order:
+(program args & env), 11d, and the bulk of 12 (recursion limit, dynamic locals,
+`Rc<[Instruction]>` cheap frames), 13 (CLI).** Remaining, in recommended order:
 
 ```
-Phase 12  (Rc<[Instruction]> + boundary hardening + lints) ← mechanical perf/safety
+Phase 12  (boundary hardening → fallible compiler; then lints, REPL txn, fuzz)
 Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff
 ```
 

@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::lexer::Span;
 
 use super::builtins::BuiltinFn;
@@ -67,10 +69,13 @@ pub enum Instruction {
 // ── Function chunk ────────────────────────────────────────────────────────────
 
 // One compiled function: its instructions and the number of parameters
-// (params occupy locals[0..param_count]).
+// (params occupy locals[0..param_count]). `instructions` and `spans` are
+// reference-counted slices so a call `Frame` can share them with an O(1)
+// refcount bump instead of cloning the whole body on every call (cheap
+// recursion); they are immutable once compiled.
 #[derive(Debug, Clone)]
 pub struct Chunk {
-    pub instructions: Vec<Instruction>,
+    pub instructions: Rc<[Instruction]>,
     #[allow(dead_code)] // reserved for arity checking in the type checker
     pub param_count: u8,
     // Source-span checkpoints in ascending instruction-index order: each
@@ -78,5 +83,5 @@ pub struct Chunk {
     // statement at `span`, until the next checkpoint". Recorded per statement
     // (expressions have no spans), so a runtime error maps to its statement's
     // source line. See `Frame::span_at`, which performs the lookup at runtime.
-    pub spans: Vec<(usize, Span)>,
+    pub spans: Rc<[(usize, Span)]>,
 }

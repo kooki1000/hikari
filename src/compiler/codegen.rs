@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::lexer::Span;
 use crate::parser::{BinOpKind, Expr, Stmt};
@@ -105,9 +106,9 @@ impl Compiler {
                 let idx = self.chunks.len() as u16;
                 self.fn_index.insert(name.clone(), idx);
                 self.chunks.push(Chunk {
-                    instructions: Vec::new(),
+                    instructions: Rc::from([]),
                     param_count: params.len() as u8,
-                    spans: Vec::new(),
+                    spans: Rc::from([]),
                 });
             }
         }
@@ -133,8 +134,8 @@ impl Compiler {
                     for s in body {
                         self.emit_stmt(s, &mut fn_instrs, &mut fn_spans, &mut fn_scopes);
                     }
-                    self.chunks[idx].instructions = fn_instrs;
-                    self.chunks[idx].spans = fn_spans;
+                    self.chunks[idx].instructions = fn_instrs.into();
+                    self.chunks[idx].spans = fn_spans.into();
                 }
                 other => {
                     self.emit_stmt(
@@ -720,9 +721,9 @@ impl Compiler {
                 let chunk_index = self.chunks.len();
                 let arity = params.len() as u8;
                 self.chunks.push(Chunk {
-                    instructions: Vec::new(),
+                    instructions: Rc::from([]),
                     param_count: arity,
-                    spans: Vec::new(),
+                    spans: Rc::from([]),
                 });
                 // Params take slots 0..arity; captures take arity..arity+C, so
                 // body references resolve as ordinary locals.
@@ -738,8 +739,8 @@ impl Compiler {
                 for s in body {
                     self.emit_stmt(s, &mut fn_instrs, &mut fn_spans, &mut fn_scopes);
                 }
-                self.chunks[chunk_index].instructions = fn_instrs;
-                self.chunks[chunk_index].spans = fn_spans;
+                self.chunks[chunk_index].instructions = fn_instrs.into();
+                self.chunks[chunk_index].spans = fn_spans.into();
 
                 if captures.is_empty() {
                     instrs.push(Instruction::LoadFn { chunk_index, arity });
