@@ -1,6 +1,7 @@
 mod compiler;
 mod diagnostic;
 mod lexer;
+mod lints;
 mod modules;
 mod parser;
 mod typechecker;
@@ -101,6 +102,10 @@ fn run_source(source: &str, entry_dir: &Path, program_args: Vec<String>) {
         process::exit(1);
     });
 
+    // Lint the user's own file (before imports merge in library code), but only
+    // surface the warnings once the program is known to be type-valid.
+    let warnings = lints::check(&ast);
+
     let ast = modules::resolve_imports(ast, entry_dir, &mut HashSet::new()).unwrap_or_else(|e| {
         eprintln!("{}", e);
         process::exit(1);
@@ -109,6 +114,10 @@ fn run_source(source: &str, entry_dir: &Path, program_args: Vec<String>) {
     if let Err(e) = TypeChecker::new().check(&ast) {
         eprintln!("{}", diagnostic::render(source, e.span(), &e.to_string()));
         process::exit(1);
+    }
+
+    for w in &warnings {
+        eprintln!("{}", diagnostic::render_warning(source, w.span, &w.message));
     }
 
     let mut compiler = Compiler::new();

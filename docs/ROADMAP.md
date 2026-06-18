@@ -19,7 +19,7 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(410 tests passing):
+(423 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -32,7 +32,7 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １１b | Formatted print — `印字` (no-newline) ✅; multi-value `印刷` ✅ | ✅ **Done** |
 | １１c / １３e | Program args & env access (`引数`/`環境変数`, `環境` module) | ✅ **Done** |
 | １１d | Runtime error source spans | ✅ **Done** |
-| １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅, boundary checks ✅, REPL txn ✅; lints & fuzz still open | 🟡 **Partial** |
+| １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅, boundary checks ✅, REPL txn ✅, lints ✅; fuzz still open | 🟡 **Partial** |
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
 
 The remaining sections below describe the open work. Completed work is marked ✅
@@ -40,6 +40,14 @@ inline. Current focus: **remaining robustness (12) and generics (10b).**
 
 ### Shipped since this status was added
 
+- **12 — Beginner lints.** A non-fatal lint pass (`src/lints.rs`) runs after type
+  checking succeeds and surfaces two warnings via `diagnostic::render_warning`:
+  *unused local variable* (a `型 名前 ＝ …；` never read — parameters, loop vars,
+  match binders, and the 失敗 error variable are exempt; scoped so shadowing
+  resolves correctly and closure captures count as uses) and *unreachable code*
+  (statements after a `返す`／`抜ける`／`続ける` in the same block). Linting runs on
+  the user's own file before imports merge in library code, and is skipped in the
+  REPL (where per-line "unused" would be noise). Warnings never reject a program.
 - **12 — REPL transactionality.** A REPL line that fails at any stage (type,
   compile, or runtime) now leaves no half-applied state. The driver snapshots the
   persistent `TypeChecker` and `Compiler` (both `Clone`) before each line and rolls
@@ -243,7 +251,9 @@ These harden the implementation itself rather than adding language features.
 - **スタック深度の上限 ✅ done:** a `MAX_FRAME_DEPTH` (1024) guard on every
   frame-push path raises a clean, catchable `再帰が深すぎます`
   (`RuntimeError::StackOverflow`) instead of unbounded growth.
-- **未使用変数・到達不能コードの警告 (still open):** beginner-friendly lints.
+- **未使用変数・到達不能コードの警告 ✅ done:** a lint pass (`src/lints.rs`) warns
+  on unused local variables and code after a `返す`／`抜ける`／`続ける`. Non-fatal;
+  rendered with `diagnostic::render_warning` after type checking passes.
 - **REPL のトランザクション性 ✅ done:** the driver snapshots the persistent
   `TypeChecker` and `Compiler` before each line and restores them if the line fails
   at any stage, and the VM resets its transient state on an uncaught error, so a
@@ -289,12 +299,12 @@ arguments are exposed through `引数（）` (see **11c**).
 ## Suggested ordering
 
 Shipped so far: **7–9, 10a (closures), 11a, 11b (multi-value print), 11c/13e
-(program args & env), 11d, most of 12 (recursion limit, dynamic locals,
-`Rc<[Instruction]>` cheap frames, boundary hardening, REPL transactionality),
-13 (CLI).** Remaining, in recommended order:
+(program args & env), 11d, almost all of 12 (recursion limit, dynamic locals,
+`Rc<[Instruction]>` cheap frames, boundary hardening, REPL transactionality,
+beginner lints), 13 (CLI).** Remaining, in recommended order:
 
 ```
-Phase 12  (beginner lints → unused vars / unreachable code; lexer/parser fuzz)
+Phase 12  (lexer/parser fuzz testing — the last hardening item)
 Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff
 ```
 
