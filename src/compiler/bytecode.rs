@@ -27,7 +27,7 @@ pub enum Instruction {
     Jump(u16),                  // unconditional jump to absolute offset
     Call(u16, u8),              // Call(fn_idx, arg_count)
     CallBuiltin(BuiltinFn, u8), // CallBuiltin(builtin, arg_count)
-    Print,                      // pop and print top of stack
+    PrintLine(u16),             // pop n values, print them space-separated + newline
     Return,
     MakeMap(u16),       // pop 2*n values (key,val pairs), push a new Value::Map
     MakeArray(u16),     // pop n values (in order), push a new Value::Array

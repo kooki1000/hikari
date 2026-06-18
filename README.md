@@ -77,9 +77,16 @@ Hikari's syntax uses Japanese reserved words and full-width characters for all o
 
 ### Print
 
+`印刷` takes zero or more `、`-separated values and prints them space-separated, followed by a newline. Values may be of any (non-`無`) type:
+
 ```
-印刷（結果）；
+印刷（結果）；              ＃ one value
+印刷（「合計：」、結果）；    ＃ → 合計： 42
+印刷（ｘ、ｙ、ｚ）；          ＃ multiple values, space-separated
+印刷（）；                  ＃ just a blank line
 ```
+
+For output without a trailing newline, use `印字` from the `入出力` module. To build a single formatted string, concatenate with `＋` and `文字列化`: `印刷（「名前：」 ＋ 名前 ＋ 「、年齢：」 ＋ 文字列化（年齢））`.
 
 ### If / Else
 

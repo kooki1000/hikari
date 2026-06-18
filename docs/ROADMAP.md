@@ -19,7 +19,7 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(388 tests passing):
+(395 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -29,17 +29,23 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １０a | First-class functions + lambdas + map/filter/fold HOFs + **closures** | ✅ **Done** |
 | １０b | Generics | ❌ Not started |
 | １１a | File I/O (`ファイル読む`/`ファイル書く`, `入出力` module) | ✅ **Done** |
-| １１b | Formatted print — `印字` (no-newline) done; multi-value/interpolation | 🟡 **Partial** |
+| １１b | Formatted print — `印字` (no-newline) ✅; multi-value `印刷` ✅ | ✅ **Done** |
 | １１c / １３e | Program args & env access (`引数`/`環境変数`, `環境` module) | ✅ **Done** |
 | １１d | Runtime error source spans | ✅ **Done** |
 | １２ | Robustness — recursion limit ✅; `Rc<[Instruction]>`, boundary checks, lints | 🟡 **Partial** |
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
 
 The remaining sections below describe the open work. Completed work is marked ✅
-inline. Current focus: **multi-value/interpolated print (11b), remaining robustness
-(12), and generics (10b).**
+inline. Current focus: **remaining robustness (12) and generics (10b).**
 
 ### Shipped since this status was added
+
+- **11b — Multi-value `印刷`.** `印刷` takes zero or more `、`-separated values,
+  printed space-separated with a trailing newline (`印刷（）` prints a blank line).
+  `Stmt::Print` now holds a `Vec<Expr>`; the `Print` instruction became
+  `PrintLine(u16)` (pops n, joins with a space). String interpolation was left out
+  deliberately: `＋` with `文字列化` already covers it without new syntax, and `印字`
+  (11a) handles no-newline output.
 
 - **11c / 13e — Program args & environment.** `取り込む 「環境」` unlocks
   `引数（）→文字列列` (the CLI args after the script path / `-c` code / `-`, empty in
@@ -169,8 +175,11 @@ types by hand in the type checker.
 ## フェーズ１１ — 入出力と実行環境（I/O & Runtime）
 
 **11a. ファイル入出力** — `ファイル読む（パス）`, `ファイル書く（パス、内容）`.
-**11b. 書式付き出力** — `印刷` of multiple values / interpolation, and a no-newline
-variant.
+**11b. 書式付き出力** — ✅ *done.* `印刷` now accepts zero or more `、`-separated
+values, printed space-separated with a trailing newline (`PrintLine(u16)`); the
+no-newline variant `印字` shipped in 11a. Dedicated interpolation syntax was skipped
+on purpose — `＋` with `文字列化` already builds formatted strings without new lexer
+work.
 **11c. プログラム引数と環境** — ✅ *done.* The `環境` module's `引数（）→文字列列`
 returns the CLI args passed after the script path (or after `-c`/`-`), and
 `環境変数（名前）→文字列` reads an environment variable (missing → empty string).
@@ -245,11 +254,11 @@ arguments are exposed through `引数（）` (see **11c**).
 
 ## Suggested ordering
 
-Shipped so far: **7–9, 10a (closures), 11a, 11c/13e (program args & env), 11d,
-recursion limit (12), 13 (CLI).** Remaining, in recommended order:
+Shipped so far: **7–9, 10a (closures), 11a, 11b (multi-value print), 11c/13e
+(program args & env), 11d, recursion limit (12), 13 (CLI).** Remaining, in
+recommended order:
 
 ```
-Phase 11b (multi-value/interp print) ← finish formatted output beyond 印字
 Phase 12  (Rc<[Instruction]> + boundary hardening + lints) ← mechanical perf/safety
 Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff
 ```
