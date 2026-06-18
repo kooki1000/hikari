@@ -548,10 +548,17 @@ impl Parser {
         let span = self.peek_span();
         self.advance(); // consume 印刷
         self.expect(&TokenKind::LParen)?;
-        let expr = self.parse_expr()?;
+        // Zero or more 、-separated values: 印刷（）, 印刷（ａ）, 印刷（ａ、ｂ）.
+        let mut exprs = Vec::new();
+        while self.peek() != &TokenKind::RParen {
+            exprs.push(self.parse_expr()?);
+            if self.peek() != &TokenKind::RParen {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
         self.expect(&TokenKind::RParen)?;
         self.expect(&TokenKind::Semi)?;
-        Ok(Stmt::Print(expr, span))
+        Ok(Stmt::Print(exprs, span))
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {

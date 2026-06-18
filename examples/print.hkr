@@ -1,2 +1,12 @@
 整数 結果 ＝ ２ ＋ ３ ＊ ４；
 印刷（結果）；
+
+＃ 印刷 takes zero or more values, printed space-separated + a newline.
+印刷（「２ ＋ ３ ＊ ４ ＝」、結果）；   ＃ → ２ ＋ ３ ＊ ４ ＝ 14
+印刷（「ｘ」、「ｙ」、「ｚ」）；          ＃ → x y z
+印刷（）；                          ＃ a blank line
+
+＃ Mixed types are fine; each value is stringified.
+整数 年齢 ＝ ２０；
+真偽 学生 ＝ 真；
+印刷（「年齢：」、年齢、「学生：」、学生）；

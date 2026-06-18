@@ -92,7 +92,9 @@ pub enum Stmt {
         span: Span,
     },
     Return(Option<Expr>, Span),
-    Print(Expr, Span),
+    // 印刷（…）: zero or more values, printed space-separated with a trailing
+    // newline. An empty list prints just a newline.
+    Print(Vec<Expr>, Span),
     If {
         condition: Expr,
         then_body: Vec<Stmt>,

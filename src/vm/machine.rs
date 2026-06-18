@@ -357,9 +357,19 @@ impl Vm {
             Instruction::Jump(offset) => {
                 self.frames.last_mut().unwrap().ip = offset as usize;
             }
-            Instruction::Print => {
-                let val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-                println!("{}", display_value(&val));
+            Instruction::PrintLine(n) => {
+                let stack_len = self.stack.len();
+                if stack_len < n as usize {
+                    return Err(RuntimeError::StackUnderflow);
+                }
+                let values = self.stack.split_off(stack_len - n as usize);
+                // Values print space-separated, with a trailing newline.
+                let line = values
+                    .iter()
+                    .map(display_value)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                println!("{}", line);
             }
             Instruction::Return => {
                 let return_val = self.stack.pop();

@@ -346,3 +346,16 @@ fn test_typecheck_index_assign_type_mismatch() {
         }
     ));
 }
+
+// ── 11b: multi-value 印刷 ─────────────────────────────────────────────
+
+#[test]
+fn test_typecheck_print_accepts_multiple_mixed_typed_values() {
+    let src = "整数 ｎ ＝ ５；真偽 ｂ ＝ 真；印刷（ｎ、「と」、ｂ）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_print_accepts_zero_values() {
+    assert!(TypeChecker::new().check(&parse("印刷（）；")).is_ok());
+}

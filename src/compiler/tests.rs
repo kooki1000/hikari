@@ -400,3 +400,27 @@ fn test_compile_for_range_continue_targets_increment_not_loop_start() {
     let target = continue_jump_target.unwrap() as usize;
     assert!(matches!(instrs[target], Instruction::LoadLocal(_)));
 }
+
+// ── 11b: multi-value 印刷 ─────────────────────────────────────────────
+
+#[test]
+fn test_compile_print_single_value() {
+    let (instrs, _) = compile("印刷（４２）；");
+    assert_eq!(instrs[0], Instruction::LoadConst(0));
+    assert_eq!(instrs[1], Instruction::PrintLine(1));
+}
+
+#[test]
+fn test_compile_print_multiple_values() {
+    let (instrs, _) = compile("印刷（１、２、３）；");
+    assert_eq!(instrs[0], Instruction::LoadConst(0));
+    assert_eq!(instrs[1], Instruction::LoadConst(1));
+    assert_eq!(instrs[2], Instruction::LoadConst(2));
+    assert_eq!(instrs[3], Instruction::PrintLine(3));
+}
+
+#[test]
+fn test_compile_print_no_values() {
+    let (instrs, _) = compile("印刷（）；");
+    assert_eq!(instrs[0], Instruction::PrintLine(0));
+}

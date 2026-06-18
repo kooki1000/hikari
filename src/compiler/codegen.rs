@@ -206,9 +206,11 @@ impl Compiler {
                 // Nested fn decls are not yet supported; top-level ones are
                 // handled in compile() directly.
             }
-            Stmt::Print(expr, _) => {
-                self.emit_expr(expr, instrs, scopes);
-                instrs.push(Instruction::Print);
+            Stmt::Print(exprs, _) => {
+                for expr in exprs {
+                    self.emit_expr(expr, instrs, scopes);
+                }
+                instrs.push(Instruction::PrintLine(exprs.len() as u16));
             }
             Stmt::If {
                 condition,
@@ -806,8 +808,11 @@ fn collect_stmt(
         Stmt::FnDecl { name, .. } => {
             bound.insert(name.clone());
         }
-        Stmt::Return(Some(e), _) | Stmt::Print(e, _) | Stmt::Expr(e, _) => {
-            collect_expr(e, referenced, seen, bound)
+        Stmt::Return(Some(e), _) | Stmt::Expr(e, _) => collect_expr(e, referenced, seen, bound),
+        Stmt::Print(exprs, _) => {
+            for e in exprs {
+                collect_expr(e, referenced, seen, bound);
+            }
         }
         Stmt::Return(None, _) | Stmt::Import { .. } | Stmt::Break(_) | Stmt::Continue(_) => {}
         Stmt::TypeDecl { .. } | Stmt::EnumDecl { .. } => {}

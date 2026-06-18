@@ -221,8 +221,12 @@ impl TypeChecker {
                 Ok(())
             }
 
-            Stmt::Print(expr, span) => {
-                self.infer_expr(expr, *span)?;
+            Stmt::Print(exprs, span) => {
+                // Each value may be of any (non-無) type; infer_expr already
+                // rejects 無-typed values used in value position.
+                for expr in exprs {
+                    self.infer_expr(expr, *span)?;
+                }
                 Ok(())
             }
 

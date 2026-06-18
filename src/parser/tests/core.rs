@@ -204,7 +204,7 @@ fn test_parse_print_stmt() {
     assert_eq!(ast.len(), 1);
     assert!(matches!(
         &ast[0],
-        Stmt::Print(Expr::Ident(n), _) if n == "年齢"
+        Stmt::Print(exprs, _) if matches!(exprs.as_slice(), [Expr::Ident(n)] if n == "年齢")
     ));
 }
 
@@ -400,4 +400,21 @@ fn test_parse_index_expr() {
         if matches!(array.as_ref(), Expr::Ident(n) if n == "数字")
             && matches!(index.as_ref(), Expr::LitInt(1))
     ));
+}
+
+#[test]
+fn test_parse_print_multiple_values() {
+    let tokens = Lexer::new("印刷（年齢、「歳」）；").tokenize();
+    let ast = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &ast[0],
+        Stmt::Print(exprs, _) if exprs.len() == 2
+    ));
+}
+
+#[test]
+fn test_parse_print_no_values() {
+    let tokens = Lexer::new("印刷（）；").tokenize();
+    let ast = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(&ast[0], Stmt::Print(exprs, _) if exprs.is_empty()));
 }
