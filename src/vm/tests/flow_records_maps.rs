@@ -232,3 +232,47 @@ fn test_vm_fold_array() {
     let src = "取り込む 「関数」；整数列 nums ＝ 【１、２、３、４、５】；整数 total ＝ 畳み込み（nums、０、｜acc：整数、ｎ：整数｜ ー＞ 整数 ｛ 返す acc ＋ ｎ； ｝）；返す total；";
     assert_eq!(run(src), Some(Value::Int(15)));
 }
+
+// ── 10a: closures (capture by value) ─────────────────────────────────
+
+#[test]
+fn test_vm_lambda_captures_enclosing_local() {
+    let src = "整数 ｂ ＝ １０；関数＜（整数） ー＞ 整数＞ ｆ ＝ ｜ｎ：整数｜ ー＞ 整数 ｛ 返す ｎ ＋ ｂ； ｝；返す ｆ（５）；";
+    assert_eq!(run(src), Some(Value::Int(15)));
+}
+
+#[test]
+fn test_vm_closure_captures_by_value_snapshot() {
+    // Reassigning the captured variable after the closure is created does not
+    // change what the closure sees (capture-by-value).
+    let src = "整数 ｃ ＝ １；関数＜（） ー＞ 整数＞ ｇ ＝ ｜｜ ー＞ 整数 ｛ 返す ｃ； ｝；ｃ ＝ ９９；返す ｇ（）；";
+    assert_eq!(run(src), Some(Value::Int(1)));
+}
+
+#[test]
+fn test_vm_closure_used_in_higher_order_function() {
+    // A lambda passed to マップ captures an enclosing local.
+    let src = "取り込む 「関数」；整数 base ＝ １００；整数列 xs ＝ 【１、２、３】；整数列 ys ＝ マップ（xs、｜ｎ：整数｜ ー＞ 整数 ｛ 返す ｎ ＋ base； ｝）；返す ys【２】；";
+    assert_eq!(run(src), Some(Value::Int(103)));
+}
+
+#[test]
+fn test_vm_nested_lambda_captures_outer_outer_variable() {
+    let src = "整数 ａ ＝ ７；関数＜（） ー＞ 整数＞ ｏｕｔｅｒ ＝ ｜｜ ー＞ 整数 ｛ 関数＜（） ー＞ 整数＞ ｉｎｎｅｒ ＝ ｜｜ ー＞ 整数 ｛ 返す ａ； ｝；返す ｉｎｎｅｒ（）； ｝；返す ｏｕｔｅｒ（）；";
+    assert_eq!(run(src), Some(Value::Int(7)));
+}
+
+#[test]
+fn test_vm_closure_captures_array_by_reference() {
+    // Arrays have reference semantics, so mutating the captured array through
+    // the outer variable is visible inside the closure.
+    let src = "取り込む 「配列」；整数列  xs ＝ 【１】；関数＜（） ー＞ 整数＞ ｆ ＝ ｜｜ ー＞ 整数 ｛ 返す 要素数（xs）； ｝；追加（xs、２）；返す ｆ（）；";
+    assert_eq!(run(src), Some(Value::Int(2)));
+}
+
+#[test]
+fn test_vm_multiple_closures_capture_independent_snapshots() {
+    let src = "整数 ｘ ＝ ５；関数＜（） ー＞ 整数＞ ａ ＝ ｜｜ ー＞ 整数 ｛ 返す ｘ； ｝；ｘ ＝ ２０；関数＜（） ー＞ 整数＞ ｂ ＝ ｜｜ ー＞ 整数 ｛ 返す ｘ； ｝；返す ａ（） ＋ ｂ（）；";
+    // a captured x=5, b captured x=20 → 25
+    assert_eq!(run(src), Some(Value::Int(25)));
+}

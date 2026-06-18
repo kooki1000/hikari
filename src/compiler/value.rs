@@ -24,9 +24,14 @@ pub enum Value {
         variant: String,
         payload: Vec<Value>,
     },
-    // A first-class function pointer.
+    // A first-class function value. `captured` holds the values closed over at
+    // creation time (capture-by-value); it is empty for named functions and
+    // non-capturing lambdas. Captured values are seeded into the callee's
+    // locals at slots [arity, arity + captured.len()) when the function runs,
+    // so the body reads them as ordinary locals (no upvalue instruction).
     Function {
         chunk_index: usize,
         arity: u8,
+        captured: Vec<Value>,
     },
 }

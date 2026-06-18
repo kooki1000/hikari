@@ -260,9 +260,35 @@ Parameters and call arguments are comma-separated with `、`:
 返す 加算（２、３）；
 ```
 
-Function bodies are isolated: they only see their own parameters, not variables from the enclosing scope (matching the call-frame model of the VM — see Scoping below).
+Named-function bodies are isolated: they only see their own parameters, not variables from the enclosing scope (matching the call-frame model of the VM — see Scoping below). Lambdas, by contrast, capture enclosing variables — see First-Class Functions below.
 
 A `無`-returning function may use a bare `返す；` (no expression) to return early; non-`無` functions must always return a value, and every control-flow path through a non-`無` function's body must end in `返す` or it's a compile-time error.
+
+### First-Class Functions, Lambdas & Closures
+
+Functions are values. A function type is written `関数＜（引数型…） ー＞ 戻り型＞`, and an anonymous function (lambda) is written `｜引数：型、…｜ ー＞ 戻り型 ｛ … ｝`. A named function can be used as a value too:
+
+```
+関数 二倍（整数 ｎ）ー＞ 整数 ｛ 返す ｎ ＊ ２； ｝
+
+関数＜（整数） ー＞ 整数＞ ｆ ＝ 二倍；          ＃ named function as a value
+関数＜（整数） ー＞ 整数＞ ｇ ＝ ｜ｎ：整数｜ ー＞ 整数 ｛ 返す ｎ ＋ １； ｝；  ＃ lambda
+印刷（ｆ（１０））；  ＃ 20
+印刷（ｇ（１０））；  ＃ 11
+```
+
+These power the `関数`-module higher-order builtins `マップ`/`絞り込み`/`畳み込み` (map/filter/fold).
+
+**Closures.** Unlike a named `関数` (whose body is isolated), a **lambda is lexically scoped**: it may reference variables from the enclosing scope, which are **captured by value** at the moment the lambda is created:
+
+```
+整数 基準 ＝ １００；
+関数＜（整数） ー＞ 整数＞ 加算 ＝ ｜ｎ：整数｜ ー＞ 整数 ｛ 返す ｎ ＋ 基準； ｝；
+基準 ＝ ０；             ＃ does NOT affect the closure — it snapshotted 基準＝100
+印刷（加算（５））；      ＃ 105
+```
+
+Because arrays, records, and maps have reference semantics, capturing one captures the shared reference — so mutations made through the original variable *are* visible inside the closure (only primitive captures are snapshots). Closures may be nested, and an inner lambda can capture variables from any enclosing lambda.
 
 ### Boolean Literals
 

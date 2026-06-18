@@ -48,7 +48,18 @@ pub enum Instruction {
     TagEquals(String),
     GetPayload(u8), // pop a Value::Enum, push payload[index] (clone)
     // Push a function value onto the stack.
-    LoadFn { chunk_index: usize, arity: u8 },
+    LoadFn {
+        chunk_index: usize,
+        arity: u8,
+    },
+    // Pop `capture_count` values (pushed in capture order) and push a closure
+    // capturing them. The captured values are seeded into the callee's locals
+    // at slots [arity, arity + capture_count) when the closure is called.
+    MakeClosure {
+        chunk_index: usize,
+        arity: u8,
+        capture_count: u8,
+    },
     // Pop function value and arg_count args off the stack, call the function.
     CallValue(u8),
 }
@@ -66,6 +77,6 @@ pub struct Chunk {
     // `(start, span)` says "instructions at index >= start belong to the
     // statement at `span`, until the next checkpoint". Recorded per statement
     // (expressions have no spans), so a runtime error maps to its statement's
-    // source line. See `Chunk::span_at`.
+    // source line. See `Frame::span_at`, which performs the lookup at runtime.
     pub spans: Vec<(usize, Span)>,
 }

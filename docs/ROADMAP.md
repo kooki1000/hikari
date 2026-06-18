@@ -19,14 +19,14 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(371 tests passing):
+(381 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
 | ７ | Core ops & array/math stdlib (modulo, 要素数/追加/整列/部分列, 累乗/四捨五入…) | ✅ **Done** |
 | ８ | Sound control flow (`MissingReturn`, break/continue, bare `返す`) | ✅ **Done** |
 | ９ | User-defined types (records, enums + `照合`, maps `辞書`) | ✅ **Done** |
-| １０a | First-class functions + lambdas + map/filter/fold HOFs | 🟡 **Partial** — lambdas are **non-capturing** (no closures) |
+| １０a | First-class functions + lambdas + map/filter/fold HOFs + **closures** | ✅ **Done** |
 | １０b | Generics | ❌ Not started |
 | １１a | File I/O (`ファイル読む`/`ファイル書く`, `入出力` module) | ✅ **Done** |
 | １１b | Formatted print — `印字` (no-newline) done; multi-value/interpolation | 🟡 **Partial** |
@@ -36,11 +36,19 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang ✅; arg passthrough ❌ | 🟡 **Partial** |
 
 The remaining sections below describe the open work. Completed work is marked ✅
-inline. Current focus: **closures (10a), remaining robustness (12), and arg
+inline. Current focus: **generics (10b), remaining robustness (12), and arg
 passthrough (11c/13e).**
 
 ### Shipped since this status was added
 
+- **10a — Closures.** `Value::Function` gained a `captured: Vec<Value>` and a new
+  `MakeClosure` instruction. A lambda is now lexically scoped: the compiler runs a
+  free-variable analysis (`free_vars` in `codegen.rs`), captures enclosing locals
+  **by value**, and seeds them into the callee's locals right after the params — so
+  the body reads/writes them as ordinary locals (no upvalue instruction). Capture is
+  by value (reference types still alias via their `Rc`), nested lambdas compose, and
+  HOFs (`マップ`/`絞り込み`/`畳み込み`) accept closures. Named `関数` bodies stay
+  isolated.
 - **11a — File I/O.** `取り込む 「入出力」` unlocks `ファイル読む（パス）→文字列`,
   `ファイル書く（パス、内容）→無`, and `印字（値）→無` (print without a trailing
   newline). New `RuntimeError::IoError`. New stdlib module `入出力` (`MOD_IO`).
@@ -135,15 +143,16 @@ a `Value::Map`. Hugely useful for real programs (counting, grouping, caching).
 
 ## フェーズ１０ — 第一級関数（First-Class Functions）
 
-**10a. 関数値とラムダ** — 🟡 *partially done.*
-Functions as values, a `関数型` type, and anonymous functions are **implemented**,
-and `マップ`/`絞り込み`/`畳み込み` (map/filter/fold) ship as library functions. What
-remains is **closures**: today's lambdas are *non-capturing* — a lambda body cannot
-reference variables from the enclosing scope (function bodies are deliberately
-isolated, matching the call-frame model). True closures need captured-environment
-support in the VM (an upvalue/environment mechanism on `Value::Function`). Until
-then, HOFs can only use self-contained lambdas, which sharply limits their utility.
-This is the single most surprising gap for users who reach for functional patterns.
+**10a. 関数値とラムダ + クロージャ** — ✅ *done.*
+Functions as values, a `関数型` type, anonymous functions, the
+`マップ`/`絞り込み`/`畳み込み` HOFs, and now **closures** all ship. Lambdas are
+lexically scoped and capture enclosing locals **by value**: the compiler's
+free-variable analysis (`free_vars` in `codegen.rs`) finds the captured names,
+pushes their current values, and a `MakeClosure` instruction bundles them into the
+`Value::Function`'s `captured` vec. At call time captures are seeded into the
+callee's locals right after the params, so the body reads them as ordinary locals —
+no upvalue instruction needed. Reference types (arrays/records/maps) still alias via
+their `Rc`; nested lambdas compose; named `関数` bodies remain isolated.
 
 **10b. ジェネリクス（Generics）**
 Even minimal parametric types (`配列＜Ｔ＞`, generic `要素数`, generic
@@ -228,18 +237,17 @@ script's own CLI arguments to the running program (overlaps **11c**).
 
 ## Suggested ordering
 
-Shipped so far: **11a, 11d, recursion limit (12), 13 (most), 7–9.** Remaining,
-in recommended order:
+Shipped so far: **7–9, 10a (closures), 11a, 11d, recursion limit (12), 13 (most).**
+Remaining, in recommended order:
 
 ```
-Phase 10a (closures)              ← unlocks the HOFs already shipped; largest design effort
 Phase 11c/13e (program args)      ← let scripts read their own CLI args; small, self-contained
 Phase 11b (multi-value/interp print) ← finish formatted output beyond 印字
 Phase 12  (Rc<[Instruction]> + boundary hardening + lints) ← mechanical perf/safety
 Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff
 ```
 
-The biggest remaining *capability* leap is **closures (10a)** — true captured
-environments on `Value::Function` so lambdas can reference enclosing-scope variables,
-which is what makes the already-shipped `マップ`/`絞り込み`/`畳み込み` HOFs broadly
-useful.
+With closures done, the remaining work is mostly polish and hardening. The largest
+remaining *design* effort is **generics (10b)** — minimal parametric types so the
+stdlib stops hand-special-casing every builtin's types — but it has the lowest
+functional-completeness payoff, so it's last.

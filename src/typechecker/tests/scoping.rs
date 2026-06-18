@@ -131,3 +131,44 @@ fn test_typecheck_try_body_type_error_still_rejected() {
     let err = TypeChecker::new().check(&ast).unwrap_err();
     assert!(matches!(err, TypeError::VarDeclMismatch { .. }));
 }
+
+// ── 10a: lambdas are lexically scoped (closures) ─────────────────────
+
+#[test]
+fn test_typecheck_lambda_may_reference_enclosing_variable() {
+    // A lambda capturing an enclosing local is well-typed (unlike a named 関数,
+    // whose body is isolated).
+    let src = "整数 ｂ ＝ １０；関数＜（整数） ー＞ 整数＞ ｆ ＝ ｜ｎ：整数｜ ー＞ 整数 ｛ 返す ｎ ＋ ｂ； ｝；返す ｆ（５）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+#[test]
+fn test_typecheck_named_function_body_still_isolated() {
+    // A named 関数 must NOT see enclosing locals — closures are a lambda-only
+    // feature; this guards against the lambda change leaking into 関数.
+    let src =
+        "整数 ｂ ＝ １０；関数 足す（整数 ｎ）ー＞ 整数 ｛ 返す ｎ ＋ ｂ； ｝返す 足す（５）；";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "ｂ"));
+}
+
+#[test]
+fn test_typecheck_lambda_capture_must_be_declared() {
+    // Referencing a name that exists nowhere is still an error inside a lambda.
+    let src = "関数＜（整数） ー＞ 整数＞ ｆ ＝ ｜ｎ：整数｜ ー＞ 整数 ｛ 返す ｎ ＋ 未定義； ｝；返す ｆ（５）；";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "未定義"));
+}
+
+#[test]
+fn test_typecheck_lambda_local_does_not_leak_to_enclosing_scope() {
+    // A variable declared inside a lambda body is not visible after the lambda.
+    let src =
+        "関数＜（） ー＞ 整数＞ ｆ ＝ ｜｜ ー＞ 整数 ｛ 整数 内 ＝ １； 返す 内； ｝；返す 内；";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::UndeclaredVariable(n, _) if n == "内"));
+}

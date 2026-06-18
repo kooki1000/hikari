@@ -64,7 +64,9 @@ pub fn display_value(val: &Value) -> String {
                 )
             }
         }
-        Value::Function { chunk_index, arity } => {
+        Value::Function {
+            chunk_index, arity, ..
+        } => {
             format!("関数＜チャンク{}、引数{}＞", chunk_index, arity)
         }
     }

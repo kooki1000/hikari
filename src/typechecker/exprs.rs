@@ -959,8 +959,14 @@ impl super::TypeChecker {
                 return_ty,
                 body,
             } => {
-                // Type-check the lambda body in an isolated function scope.
-                let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+                // Unlike a named 関数 (whose body is isolated), a lambda is
+                // lexically scoped: it may reference variables from enclosing
+                // scopes, which the compiler captures by value. So push a fresh
+                // frame for the lambda's params/locals but keep the outer
+                // frames visible for lookup. 返す/loop context is still reset:
+                // a 返す returns from the lambda and 抜ける can't escape it.
+                self.scopes.push(HashMap::new());
+                let lambda_depth = self.scopes.len();
                 let outer_return_ty = self.current_return_ty.take();
                 let outer_loop_depth = std::mem::take(&mut self.loop_depth);
 
@@ -983,8 +989,9 @@ impl super::TypeChecker {
                     });
                 }
 
-                // Restore outer context.
-                self.scopes = outer_scopes;
+                // Restore outer context. check() balances its own enter/exit,
+                // so the lambda's frame is still on top; truncate back to it.
+                self.scopes.truncate(lambda_depth - 1);
                 self.current_return_ty = outer_return_ty;
                 self.loop_depth = outer_loop_depth;
 

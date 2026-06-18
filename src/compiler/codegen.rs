@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::lexer::Span;
 use crate::parser::{BinOpKind, Expr, Stmt};
@@ -700,9 +700,21 @@ impl Compiler {
                 self.emit_expr(record, instrs, scopes);
                 instrs.push(Instruction::GetField(field.clone()));
             }
-            // compile a lambda into a new chunk, emit LoadFn.
+            // Compile a lambda into a new chunk. Variables it references from
+            // enclosing scopes are captured by value: their current values are
+            // pushed here and a MakeClosure bundles them into the function
+            // value. Inside the body, captured names are ordinary locals seeded
+            // right after the params, so they read/write via LoadLocal.
             Expr::Lambda { params, body, .. } => {
-                // Reserve a chunk slot.
+                // Free variables that resolve to an enclosing local become
+                // captures (preserving first-reference order). Names that
+                // resolve to a global function or builtin are not captured —
+                // the body re-resolves them via LoadFn / CallBuiltin / Call.
+                let captures: Vec<(String, u16)> = free_vars(params, body)
+                    .into_iter()
+                    .filter_map(|name| scopes.lookup(&name).map(|slot| (name, slot)))
+                    .collect();
+
                 let chunk_index = self.chunks.len();
                 let arity = params.len() as u8;
                 self.chunks.push(Chunk {
@@ -710,10 +722,14 @@ impl Compiler {
                     param_count: arity,
                     spans: Vec::new(),
                 });
-                // Compile body into a fresh scope.
+                // Params take slots 0..arity; captures take arity..arity+C, so
+                // body references resolve as ordinary locals.
                 let mut fn_scopes = Scopes::new();
                 for (pname, _) in params {
                     fn_scopes.declare(pname);
+                }
+                for (name, _) in &captures {
+                    fn_scopes.declare(name);
                 }
                 let mut fn_instrs = Vec::new();
                 let mut fn_spans = Vec::new();
@@ -722,7 +738,222 @@ impl Compiler {
                 }
                 self.chunks[chunk_index].instructions = fn_instrs;
                 self.chunks[chunk_index].spans = fn_spans;
-                instrs.push(Instruction::LoadFn { chunk_index, arity });
+
+                if captures.is_empty() {
+                    instrs.push(Instruction::LoadFn { chunk_index, arity });
+                } else {
+                    // Push captured values (left-to-right = capture order) then
+                    // bundle them into the closure.
+                    for (_, slot) in &captures {
+                        instrs.push(Instruction::LoadLocal(*slot));
+                    }
+                    instrs.push(Instruction::MakeClosure {
+                        chunk_index,
+                        arity,
+                        capture_count: captures.len() as u8,
+                    });
+                }
+            }
+        }
+    }
+}
+
+// ── Free-variable analysis (for closure capture) ───────────────────────────────
+
+/// Names referenced inside a lambda but not bound within it (params or any
+/// local declared in the body). The caller intersects these with the enclosing
+/// scope to decide which to capture. References inside a nested lambda that the
+/// nested lambda itself doesn't bind bubble up here, so multi-level capture
+/// composes. First-reference order is preserved (it fixes capture-slot order).
+fn free_vars(params: &[(String, crate::parser::HikariType)], body: &[Stmt]) -> Vec<String> {
+    let mut referenced: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut bound: HashSet<String> = HashSet::new();
+    for (p, _) in params {
+        bound.insert(p.clone());
+    }
+    for s in body {
+        collect_stmt(s, &mut referenced, &mut seen, &mut bound);
+    }
+    // `bound` is fully populated by the single pass, so filtering here excludes
+    // any name declared anywhere in the body (conservative: a name both used
+    // and locally declared is treated as the local, never captured).
+    referenced
+        .into_iter()
+        .filter(|n| !bound.contains(n))
+        .collect()
+}
+
+fn add_ref(name: &str, referenced: &mut Vec<String>, seen: &mut HashSet<String>) {
+    if seen.insert(name.to_string()) {
+        referenced.push(name.to_string());
+    }
+}
+
+fn collect_stmt(
+    stmt: &Stmt,
+    referenced: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    bound: &mut HashSet<String>,
+) {
+    match stmt {
+        Stmt::VarDecl { name, value, .. } => {
+            collect_expr(value, referenced, seen, bound);
+            bound.insert(name.clone());
+        }
+        // Named functions inside a lambda body are not compiled (nested fn
+        // decls are unsupported); just treat the name as bound.
+        Stmt::FnDecl { name, .. } => {
+            bound.insert(name.clone());
+        }
+        Stmt::Return(Some(e), _) | Stmt::Print(e, _) | Stmt::Expr(e, _) => {
+            collect_expr(e, referenced, seen, bound)
+        }
+        Stmt::Return(None, _) | Stmt::Import { .. } | Stmt::Break(_) | Stmt::Continue(_) => {}
+        Stmt::TypeDecl { .. } | Stmt::EnumDecl { .. } => {}
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_expr(condition, referenced, seen, bound);
+            for s in then_body {
+                collect_stmt(s, referenced, seen, bound);
+            }
+            if let Some(else_body) = else_body {
+                for s in else_body {
+                    collect_stmt(s, referenced, seen, bound);
+                }
+            }
+        }
+        Stmt::While {
+            condition, body, ..
+        } => {
+            collect_expr(condition, referenced, seen, bound);
+            for s in body {
+                collect_stmt(s, referenced, seen, bound);
+            }
+        }
+        Stmt::Assign { name, value, .. } => {
+            add_ref(name, referenced, seen);
+            collect_expr(value, referenced, seen, bound);
+        }
+        Stmt::IndexAssign {
+            name, index, value, ..
+        } => {
+            add_ref(name, referenced, seen);
+            collect_expr(index, referenced, seen, bound);
+            collect_expr(value, referenced, seen, bound);
+        }
+        Stmt::ForRange {
+            var,
+            from,
+            to,
+            body,
+            ..
+        } => {
+            collect_expr(from, referenced, seen, bound);
+            collect_expr(to, referenced, seen, bound);
+            bound.insert(var.clone());
+            for s in body {
+                collect_stmt(s, referenced, seen, bound);
+            }
+        }
+        Stmt::ForEach {
+            var, array, body, ..
+        } => {
+            collect_expr(array, referenced, seen, bound);
+            bound.insert(var.clone());
+            for s in body {
+                collect_stmt(s, referenced, seen, bound);
+            }
+        }
+        Stmt::TryCatch {
+            try_body,
+            error_var,
+            catch_body,
+            ..
+        } => {
+            for s in try_body {
+                collect_stmt(s, referenced, seen, bound);
+            }
+            bound.insert(error_var.clone());
+            for s in catch_body {
+                collect_stmt(s, referenced, seen, bound);
+            }
+        }
+        Stmt::FieldAssign { record, value, .. } => {
+            collect_expr(record, referenced, seen, bound);
+            collect_expr(value, referenced, seen, bound);
+        }
+        Stmt::Match { subject, arms, .. } => {
+            collect_expr(subject, referenced, seen, bound);
+            for arm in arms {
+                for binder in &arm.binders {
+                    bound.insert(binder.clone());
+                }
+                for s in &arm.body {
+                    collect_stmt(s, referenced, seen, bound);
+                }
+            }
+        }
+    }
+}
+
+fn collect_expr(
+    expr: &Expr,
+    referenced: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    bound: &mut HashSet<String>,
+) {
+    match expr {
+        Expr::LitInt(_)
+        | Expr::LitFloat(_)
+        | Expr::LitString(_)
+        | Expr::LitBool(_)
+        | Expr::NewArray(_) => {}
+        Expr::Ident(name) => add_ref(name, referenced, seen),
+        Expr::Call { name, args } => {
+            // The callee name may be a captured fn-typed local; record it.
+            add_ref(name, referenced, seen);
+            for a in args {
+                collect_expr(a, referenced, seen, bound);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            collect_expr(lhs, referenced, seen, bound);
+            collect_expr(rhs, referenced, seen, bound);
+        }
+        Expr::UnaryMinus(e) | Expr::UnaryNot(e) | Expr::FieldAccess { record: e, .. } => {
+            collect_expr(e, referenced, seen, bound)
+        }
+        Expr::Array(elems) => {
+            for e in elems {
+                collect_expr(e, referenced, seen, bound);
+            }
+        }
+        Expr::Index { array, index } => {
+            collect_expr(array, referenced, seen, bound);
+            collect_expr(index, referenced, seen, bound);
+        }
+        Expr::MapLit(pairs) => {
+            for (k, v) in pairs {
+                collect_expr(k, referenced, seen, bound);
+                collect_expr(v, referenced, seen, bound);
+            }
+        }
+        Expr::RecordLit { fields, .. } => {
+            for (_, v) in fields {
+                collect_expr(v, referenced, seen, bound);
+            }
+        }
+        // A nested lambda's own free variables become references of the
+        // enclosing lambda (minus what the nested one binds), enabling
+        // multi-level capture. We do NOT add the nested lambda's bound names.
+        Expr::Lambda { params, body, .. } => {
+            for name in free_vars(params, body) {
+                add_ref(&name, referenced, seen);
             }
         }
     }

@@ -182,8 +182,12 @@ impl Vm {
                         // Stack: [..., array, fn_val]
                         let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                         let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-                        let (chunk_index, _arity) = match fn_val {
-                            Value::Function { chunk_index, arity } => (chunk_index, arity),
+                        let (chunk_index, captured) = match fn_val {
+                            Value::Function {
+                                chunk_index,
+                                captured,
+                                ..
+                            } => (chunk_index, captured),
                             _ => return Err(RuntimeError::TypeMismatch),
                         };
                         let elements = match arr_val {
@@ -192,7 +196,8 @@ impl Vm {
                         };
                         let mut results = Vec::new();
                         for elem in elements {
-                            let result = self.call_function(chunk_index, vec![elem])?;
+                            let result =
+                                self.call_function(chunk_index, vec![elem], captured.clone())?;
                             results.push(result);
                         }
                         self.stack
@@ -204,8 +209,12 @@ impl Vm {
                         // Stack: [..., array, fn_val]
                         let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                         let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-                        let (chunk_index, _arity) = match fn_val {
-                            Value::Function { chunk_index, arity } => (chunk_index, arity),
+                        let (chunk_index, captured) = match fn_val {
+                            Value::Function {
+                                chunk_index,
+                                captured,
+                                ..
+                            } => (chunk_index, captured),
                             _ => return Err(RuntimeError::TypeMismatch),
                         };
                         let elements = match arr_val {
@@ -214,7 +223,11 @@ impl Vm {
                         };
                         let mut results = Vec::new();
                         for elem in elements {
-                            let result = self.call_function(chunk_index, vec![elem.clone()])?;
+                            let result = self.call_function(
+                                chunk_index,
+                                vec![elem.clone()],
+                                captured.clone(),
+                            )?;
                             match result {
                                 Value::Bool(true) => results.push(elem),
                                 Value::Bool(false) => {}
@@ -231,8 +244,12 @@ impl Vm {
                         let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                         let init = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                         let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-                        let (chunk_index, _arity) = match fn_val {
-                            Value::Function { chunk_index, arity } => (chunk_index, arity),
+                        let (chunk_index, captured) = match fn_val {
+                            Value::Function {
+                                chunk_index,
+                                captured,
+                                ..
+                            } => (chunk_index, captured),
                             _ => return Err(RuntimeError::TypeMismatch),
                         };
                         let elements = match arr_val {
@@ -241,7 +258,8 @@ impl Vm {
                         };
                         let mut acc = init;
                         for elem in elements {
-                            acc = self.call_function(chunk_index, vec![acc, elem])?;
+                            acc =
+                                self.call_function(chunk_index, vec![acc, elem], captured.clone())?;
                         }
                         self.stack.push(acc);
                     }
@@ -491,22 +509,46 @@ impl Vm {
                 // matches the matched variant's payload arity).
                 self.stack.push(payload[index as usize].clone());
             }
-            // Push a function value onto the stack.
+            // Push a (non-capturing) function value onto the stack.
             Instruction::LoadFn { chunk_index, arity } => {
-                self.stack.push(Value::Function { chunk_index, arity });
+                self.stack.push(Value::Function {
+                    chunk_index,
+                    arity,
+                    captured: Vec::new(),
+                });
+            }
+            // Pop `capture_count` captured values and push a closure over them.
+            Instruction::MakeClosure {
+                chunk_index,
+                arity,
+                capture_count,
+            } => {
+                let stack_len = self.stack.len();
+                let captured = self.stack.split_off(stack_len - capture_count as usize);
+                self.stack.push(Value::Function {
+                    chunk_index,
+                    arity,
+                    captured,
+                });
             }
             // Pop the function value and its args, then push a new frame.
             Instruction::CallValue(arg_count) => {
                 let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
                 match fn_val {
-                    Value::Function { chunk_index, arity } => {
+                    Value::Function {
+                        chunk_index,
+                        arity,
+                        captured,
+                    } => {
                         if arg_count != arity {
                             return Err(RuntimeError::TypeMismatch);
                         }
                         let chunk = &self.chunks[chunk_index];
                         let stack_len = self.stack.len();
-                        let args = self.stack.split_off(stack_len - arg_count as usize);
-                        let new_frame = Frame::new(chunk, args);
+                        let mut seed = self.stack.split_off(stack_len - arg_count as usize);
+                        // Captured values occupy locals right after the params.
+                        seed.extend(captured);
+                        let new_frame = Frame::new(chunk, seed);
                         self.push_frame(new_frame)?;
                     }
                     _ => return Err(RuntimeError::TypeMismatch),
@@ -631,12 +673,16 @@ impl Vm {
 
     /// call a chunk by index with the given arguments and run it to
     /// completion, returning the produced value. Used by HOF builtins.
+    /// `captured` holds any closure-captured values, seeded into the callee's
+    /// locals right after the params (matching `CallValue`).
     fn call_function(
         &mut self,
         chunk_index: usize,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
+        captured: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
         let chunk = &self.chunks[chunk_index];
+        args.extend(captured);
         let frame = Frame::new(chunk, args);
         let target_depth = self.frames.len(); // depth BEFORE pushing the new frame
         self.push_frame(frame)?;
