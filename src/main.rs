@@ -105,12 +105,21 @@ fn run_source(source: &str, entry_dir: &Path) {
 
     let mut compiler = Compiler::new();
     let instructions = compiler.compile(&ast);
-    let result = Vm::with_chunks(compiler.constants, compiler.chunks, instructions)
-        .run()
-        .unwrap_or_else(|e| {
-            eprintln!("実行時エラー: {}", e);
-            process::exit(1);
-        });
+    let script_spans = compiler.script_spans.clone();
+    let mut vm = Vm::with_chunks(compiler.constants, compiler.chunks, instructions);
+    vm.set_script_spans(script_spans);
+    let result = vm.run().unwrap_or_else(|e| {
+        // A runtime error now carries a source span (when known): render it
+        // with the same snippet style as compile-time diagnostics.
+        match vm.error_span() {
+            Some(span) => eprintln!(
+                "{}",
+                diagnostic::render(source, span, &format!("実行時エラー: {}", e))
+            ),
+            None => eprintln!("実行時エラー: {}", e),
+        }
+        process::exit(1);
+    });
 
     if let Some(value) = result {
         println!("{}", display_value(&value));
@@ -166,12 +175,19 @@ fn run_repl() {
         }
 
         let instrs = compiler.compile(&ast);
+        let line_spans = compiler.script_spans.clone();
         vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
 
-        match vm.run_repl_line(instrs) {
+        match vm.run_repl_line(instrs, line_spans) {
             Ok(Some(v)) => println!("{}", display_value(&v)),
             Ok(None) => {}
-            Err(e) => eprintln!("実行時エラー: {}", e),
+            Err(e) => match vm.error_span() {
+                Some(span) => eprintln!(
+                    "{}",
+                    diagnostic::render(line, span, &format!("実行時エラー: {}", e))
+                ),
+                None => eprintln!("実行時エラー: {}", e),
+            },
         }
     }
 }

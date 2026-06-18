@@ -19,7 +19,7 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(369 tests passing):
+(371 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -31,19 +31,27 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １１a | File I/O (`ファイル読む`/`ファイル書く`, `入出力` module) | ✅ **Done** |
 | １１b | Formatted print — `印字` (no-newline) done; multi-value/interpolation | 🟡 **Partial** |
 | １１c | Program args / env access | ❌ Not started |
-| １１d | Runtime error source spans | ❌ Not started |
+| １１d | Runtime error source spans | ✅ **Done** |
 | １２ | Robustness — recursion limit ✅; `Rc<[Instruction]>`, boundary checks, lints | 🟡 **Partial** |
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang ✅; arg passthrough ❌ | 🟡 **Partial** |
 
 The remaining sections below describe the open work. Completed work is marked ✅
-inline. Current focus: **closures (10a), runtime spans (11d), remaining robustness
-(12), and arg passthrough (11c/13e).**
+inline. Current focus: **closures (10a), remaining robustness (12), and arg
+passthrough (11c/13e).**
 
 ### Shipped since this status was added
 
 - **11a — File I/O.** `取り込む 「入出力」` unlocks `ファイル読む（パス）→文字列`,
   `ファイル書く（パス、内容）→無`, and `印字（値）→無` (print without a trailing
   newline). New `RuntimeError::IoError`. New stdlib module `入出力` (`MOD_IO`).
+- **11d — Runtime error source spans.** Each `Chunk` (and call `Frame`) now carries
+  statement-level span checkpoints `(instruction_index, span)`, emitted by the
+  compiler. On an uncaught runtime error the VM records the span of the failing
+  instruction (`Vm::error_span`), so `main` renders division-by-zero, out-of-bounds,
+  missing-key, overflow, etc. with the same source-snippet diagnostic as
+  compile-time errors — including errors raised deep inside function bodies, which
+  point at the failing statement rather than the call site. Granularity is
+  statement-level (Hikari `Expr` nodes carry no spans).
 - **12 — Recursion depth limit.** A `MAX_FRAME_DEPTH` (1024) guard in every
   frame-push path raises a clean `RuntimeError::StackOverflow`
   (`再帰が深すぎます`) — catchable by try/catch — instead of unbounded growth.
@@ -150,11 +158,15 @@ types by hand in the type checker.
 **11b. 書式付き出力** — `印刷` of multiple values / interpolation, and a no-newline
 variant.
 **11c. プログラム引数と環境** — access to CLI args / env vars from a running program.
-**11d. 実行時エラーの位置情報** — *highest-leverage item.* Runtime errors currently
-carry no source span: `RuntimeError` (`src/vm/error.rs`) has no line/col, so a
-division-by-zero or out-of-bounds index can't point at a line — a jarring drop in
-quality from the excellent compile-time diagnostics. Thread spans into the bytecode
-(parallel to the instruction vector) so runtime diagnostics match compile-time ones.
+**11d. 実行時エラーの位置情報** — ✅ *done.* Previously runtime errors carried no
+source span, so a division-by-zero or out-of-bounds index couldn't point at a line —
+a jarring drop in quality from the compile-time diagnostics. Now each `Chunk` and
+call `Frame` carries statement-level span checkpoints `(instruction_index, span)`
+emitted by the compiler; on an uncaught error the VM records the failing
+instruction's span (`Vm::error_span`) and `main` renders it with the standard
+source-snippet diagnostic. Errors inside function bodies point at the failing
+statement, not the call site. (Granularity is statement-level: Hikari `Expr` nodes
+carry no spans, so sub-expression precision would require adding spans to the AST.)
 
 ---
 
@@ -216,19 +228,18 @@ script's own CLI arguments to the running program (overlaps **11c**).
 
 ## Suggested ordering
 
+Shipped so far: **11a, 11d, recursion limit (12), 13 (most), 7–9.** Remaining,
+in recommended order:
+
 ```
-Phase 11d (runtime error spans)   ← highest leverage; infra partly exists; closes the
-                                     biggest compile-time/runtime quality gap
-Phase 12  (recursion limit first) ← turn an OOM crash into a clean error; trivial & safe
-Phase 11a/b (file I/O + print)    ← the difference between "toy" and "writes real programs"
-Phase 13  (CLI & distribution)    ← makes `hikari` feel like python; mostly small, independent
-Phase 10a (closures)              ← unlocks the HOFs already shipped; largest design effort here
-Phase 12  (Rc<[Instruction]> + boundary hardening) ← mechanical perf/safety; do alongside
+Phase 10a (closures)              ← unlocks the HOFs already shipped; largest design effort
+Phase 11c/13e (program args)      ← let scripts read their own CLI args; small, self-contained
+Phase 11b (multi-value/interp print) ← finish formatted output beyond 印字
+Phase 12  (Rc<[Instruction]> + boundary hardening + lints) ← mechanical perf/safety
 Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff
 ```
 
-Phases ７–９ are complete. If only one thing ships next, make it **11d (runtime error
-spans)** — the infrastructure to thread spans is partly in place, and it removes the
-most jarring inconsistency users hit. For the *Python-like CLI* goal specifically,
-**Phase 13** is largely independent of the language work and can be done at any time;
-13a alone (a `cargo install`-able binary) already gets you a real `hikari` command.
+The biggest remaining *capability* leap is **closures (10a)** — true captured
+environments on `Value::Function` so lambdas can reference enclosing-scope variables,
+which is what makes the already-shipped `マップ`/`絞り込み`/`畳み込み` HOFs broadly
+useful.

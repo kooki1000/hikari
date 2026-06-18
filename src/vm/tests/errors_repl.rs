@@ -25,6 +25,23 @@ fn test_vm_try_catch_binds_error_message() {
     }
 }
 
+// ── 11d: runtime error source spans ─────────────────────────────────
+
+#[test]
+fn test_vm_runtime_error_reports_statement_line() {
+    // The division-by-zero is on line 3; the recorded span must point there.
+    let src = "整数 ａ ＝ １０；\n整数 ｂ ＝ ０；\n整数 ｃ ＝ ａ ／ ｂ；\n返す ｃ；";
+    assert_eq!(run_error_line(src), Some(3));
+}
+
+#[test]
+fn test_vm_runtime_error_inside_function_points_into_function_body() {
+    // The error happens inside 取得's body (line 2), reached via a call on
+    // line 5. The span should point at the failing statement, not the call.
+    let src = "関数 取得（整数列 ｘｓ）ー＞ 整数 ｛\n返す ｘｓ【９】；\n｝\n整数列 ａ ＝ 【１】；\n返す 取得（ａ）；";
+    assert_eq!(run_error_line(src), Some(2));
+}
+
 #[test]
 fn test_vm_unbounded_recursion_raises_stack_overflow() {
     // Infinite recursion must surface a clean StackOverflow rather than
@@ -159,13 +176,17 @@ fn test_vm_repl_persists_locals_across_lines() {
         .unwrap();
     let instrs1 = compiler.compile(&ast1);
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
-    let result1 = vm.run_repl_line(instrs1).unwrap();
+    let result1 = vm
+        .run_repl_line(instrs1, compiler.script_spans.clone())
+        .unwrap();
     assert_eq!(result1, None);
 
     let ast2 = Parser::new(Lexer::new("値；").tokenize()).parse().unwrap();
     let instrs2 = compiler.compile(&ast2);
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
-    let result2 = vm.run_repl_line(instrs2).unwrap();
+    let result2 = vm
+        .run_repl_line(instrs2, compiler.script_spans.clone())
+        .unwrap();
     assert_eq!(result2, Some(Value::Int(10)));
 }
 
@@ -179,7 +200,9 @@ fn test_vm_repl_line_with_explicit_return_resets_frame_without_panicking() {
         .unwrap();
     let instrs1 = compiler.compile(&ast1);
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
-    let result1 = vm.run_repl_line(instrs1).unwrap();
+    let result1 = vm
+        .run_repl_line(instrs1, compiler.script_spans.clone())
+        .unwrap();
     assert_eq!(result1, Some(Value::Int(1)));
 
     let ast2 = Parser::new(Lexer::new("印刷（２）；").tokenize())
@@ -187,7 +210,7 @@ fn test_vm_repl_line_with_explicit_return_resets_frame_without_panicking() {
         .unwrap();
     let instrs2 = compiler.compile(&ast2);
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
-    let result2 = vm.run_repl_line(instrs2);
+    let result2 = vm.run_repl_line(instrs2, compiler.script_spans.clone());
     assert!(result2.is_ok());
 }
 
@@ -201,7 +224,9 @@ fn test_vm_repl_line_bare_expression_surfaces_value() {
         .unwrap();
     let instrs = compiler.compile(&ast);
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
-    let result = vm.run_repl_line(instrs).unwrap();
+    let result = vm
+        .run_repl_line(instrs, compiler.script_spans.clone())
+        .unwrap();
     assert_eq!(result, Some(Value::Int(2)));
 }
 

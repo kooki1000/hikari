@@ -1,4 +1,5 @@
 use crate::compiler::{Chunk, Instruction, Value};
+use crate::lexer::Span;
 
 // ── Call frame ────────────────────────────────────────────────────────────────
 
@@ -6,6 +7,9 @@ pub(super) struct Frame {
     pub(super) instructions: Vec<Instruction>,
     pub(super) ip: usize,
     pub(super) locals: Vec<Option<Value>>,
+    // Span checkpoints for `instructions` (see Chunk::spans). Used to attach a
+    // source location to a runtime error raised in this frame.
+    pub(super) spans: Vec<(usize, Span)>,
 }
 
 // Initial local-slot capacity for a fresh frame. Slots beyond this are
@@ -24,7 +28,17 @@ impl Frame {
             instructions: chunk.instructions.clone(),
             ip: 0,
             locals,
+            spans: chunk.spans.clone(),
         }
+    }
+
+    /// The source span of the instruction at `ip` in this frame, if known.
+    pub(super) fn span_at(&self, ip: usize) -> Option<Span> {
+        self.spans
+            .iter()
+            .rev()
+            .find(|(start, _)| *start <= ip)
+            .map(|(_, span)| *span)
     }
 
     // Store into a local slot, growing the slot vector if the compiler

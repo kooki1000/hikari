@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::compiler::{BuiltinFn, Chunk, Instruction, Value};
+use crate::lexer::Span;
 
 use super::builtins::call_builtin;
 use super::error::RuntimeError;
@@ -17,6 +18,8 @@ pub struct Vm {
     stack: Vec<Value>,
     frames: Vec<Frame>,
     try_stack: Vec<TryHandler>,
+    // Source span of the most recent uncaught runtime error, for diagnostics.
+    error_span: Option<Span>,
 }
 
 enum StepResult {
@@ -36,6 +39,7 @@ impl Vm {
         let script_chunk = Chunk {
             instructions,
             param_count: 0,
+            spans: Vec::new(),
         };
         let frame = Frame::new(&script_chunk, vec![]);
         Self {
@@ -44,6 +48,7 @@ impl Vm {
             stack: Vec::new(),
             frames: vec![frame],
             try_stack: Vec::new(),
+            error_span: None,
         }
     }
 
@@ -56,6 +61,7 @@ impl Vm {
         let script_chunk = Chunk {
             instructions: script,
             param_count: 0,
+            spans: Vec::new(),
         };
         let frame = Frame::new(&script_chunk, vec![]);
         Self {
@@ -64,7 +70,22 @@ impl Vm {
             stack: Vec::new(),
             frames: vec![frame],
             try_stack: Vec::new(),
+            error_span: None,
         }
+    }
+
+    /// Install the top-level script's span checkpoints (from
+    /// `Compiler::script_spans`) onto frame 0, so runtime errors in top-level
+    /// code can report a source location.
+    pub fn set_script_spans(&mut self, spans: Vec<(usize, Span)>) {
+        if let Some(frame) = self.frames.first_mut() {
+            frame.spans = spans;
+        }
+    }
+
+    /// The source span of the most recent uncaught runtime error, if known.
+    pub fn error_span(&self) -> Option<Span> {
+        self.error_span
     }
 
     fn step(&mut self) -> Result<StepResult, RuntimeError> {
@@ -516,6 +537,7 @@ impl Vm {
                         frame.set_local(handler.error_slot, Value::Str(e.to_string()));
                         frame.ip = handler.catch_target;
                     } else {
+                        self.error_span = self.current_error_span();
                         return Err(e);
                     }
                 }
@@ -526,9 +548,15 @@ impl Vm {
     pub fn run_repl_line(
         &mut self,
         new_instrs: Vec<Instruction>,
+        new_spans: Vec<(usize, Span)>,
     ) -> Result<Option<Value>, RuntimeError> {
         let start_ip = self.frames[0].instructions.len();
         self.frames[0].instructions.extend(new_instrs);
+        // Span checkpoints are emitted relative to this line's start; shift
+        // them to frame 0's absolute instruction indices before appending.
+        self.frames[0]
+            .spans
+            .extend(new_spans.into_iter().map(|(i, s)| (i + start_ip, s)));
         self.frames[0].ip = start_ip;
 
         loop {
@@ -547,6 +575,7 @@ impl Vm {
                             instructions: Vec::new(),
                             ip: 0,
                             locals: vec![None; INITIAL_LOCALS],
+                            spans: Vec::new(),
                         });
                     }
                     return Ok(v);
@@ -562,11 +591,20 @@ impl Vm {
                         frame.set_local(handler.error_slot, Value::Str(e.to_string()));
                         frame.ip = handler.catch_target;
                     } else {
+                        self.error_span = self.current_error_span();
                         return Err(e);
                     }
                 }
             }
         }
+    }
+
+    /// The source span of the instruction currently being executed in the
+    /// top frame. `step` increments `ip` before dispatching, so the erroring
+    /// instruction is at `ip - 1`.
+    fn current_error_span(&self) -> Option<Span> {
+        let frame = self.frames.last()?;
+        frame.span_at(frame.ip.saturating_sub(1))
     }
 
     pub fn sync_program(&mut self, constants: Vec<Value>, chunks: Vec<Chunk>) {
