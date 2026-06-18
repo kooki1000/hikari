@@ -16,7 +16,29 @@ ordered by impact. Each phase is independently shippable.
 
 ---
 
-## フェーズ７ — 基本演算と配列操作の完成（Core Operations & Array Stdlib）
+## Status (updated 2026-06-18)
+
+Since v2 was first written, most of the early phases have shipped. Current state
+(361 tests passing):
+
+| Phase | Theme | Status |
+|-------|-------|--------|
+| ７ | Core ops & array/math stdlib (modulo, 要素数/追加/整列/部分列, 累乗/四捨五入…) | ✅ **Done** |
+| ８ | Sound control flow (`MissingReturn`, break/continue, bare `返す`) | ✅ **Done** |
+| ９ | User-defined types (records, enums + `照合`, maps `辞書`) | ✅ **Done** |
+| １０a | First-class functions + lambdas + map/filter/fold HOFs | 🟡 **Partial** — lambdas are **non-capturing** (no closures) |
+| １０b | Generics | ❌ Not started |
+| １１ | I/O & runtime (file I/O, formatted print, program args, runtime spans) | ❌ Not started |
+| １２ | Robustness & tooling (recursion limit, `Rc<[Instruction]>`, boundary checks, lints) | ❌ Not started |
+| １３ | CLI & distribution (Python-like `hikari` command) | ❌ Not started *(new)* |
+
+The remaining sections below describe the open work. Completed phases (７–９) are
+kept for historical reference but marked ✅; focus is now on **closures (10a),
+I/O (11), robustness (12), and CLI distribution (13).**
+
+---
+
+## フェーズ７ — 基本演算と配列操作の完成（Core Operations & Array Stdlib） ✅ DONE
 
 **The most impactful gap: common programs are currently inexpressible.**
 
@@ -47,7 +69,7 @@ User code cannot even ask an array its length. Add gated/ungated builtins:
 
 ---
 
-## フェーズ８ — 制御フローと関数の健全性（Sound Control Flow）
+## フェーズ８ — 制御フローと関数の健全性（Sound Control Flow） ✅ DONE
 
 **8a. 全経路リターン解析（Exhaustive-Return Analysis）** — *type-soundness gap.*
 A non-`無` function that doesn't return on every path currently compiles and then
@@ -66,7 +88,7 @@ which the type checker correctly rejects — document this as intended).
 
 ---
 
-## フェーズ９ — ユーザー定義型（User-Defined Types）
+## フェーズ９ — ユーザー定義型（User-Defined Types） ✅ DONE
 
 This is the largest single leap toward "general purpose."
 
@@ -89,11 +111,15 @@ a `Value::Map`. Hugely useful for real programs (counting, grouping, caching).
 
 ## フェーズ１０ — 第一級関数（First-Class Functions）
 
-**10a. 関数値とラムダ**
-Functions as values, a `関数型` type, and anonymous functions, enabling
-`マップ`/`絞り込み`/`畳み込み` (map/filter/reduce) over arrays as ordinary library
-functions instead of language built-ins. Requires closures or at minimum
-function-pointer values; closures need captured-environment support in the VM.
+**10a. 関数値とラムダ** — 🟡 *partially done.*
+Functions as values, a `関数型` type, and anonymous functions are **implemented**,
+and `マップ`/`絞り込み`/`畳み込み` (map/filter/fold) ship as library functions. What
+remains is **closures**: today's lambdas are *non-capturing* — a lambda body cannot
+reference variables from the enclosing scope (function bodies are deliberately
+isolated, matching the call-frame model). True closures need captured-environment
+support in the VM (an upvalue/environment mechanism on `Value::Function`). Until
+then, HOFs can only use self-contained lambdas, which sharply limits their utility.
+This is the single most surprising gap for users who reach for functional patterns.
 
 **10b. ジェネリクス（Generics）**
 Even minimal parametric types (`配列＜Ｔ＞`, generic `要素数`, generic
@@ -108,9 +134,11 @@ types by hand in the type checker.
 **11b. 書式付き出力** — `印刷` of multiple values / interpolation, and a no-newline
 variant.
 **11c. プログラム引数と環境** — access to CLI args / env vars from a running program.
-**11d. 実行時エラーの位置情報** — runtime errors currently carry no source span (e.g.
-division-by-zero doesn't point at a line). Thread spans into the bytecode so runtime
-diagnostics match the quality of compile-time ones.
+**11d. 実行時エラーの位置情報** — *highest-leverage item.* Runtime errors currently
+carry no source span: `RuntimeError` (`src/vm/error.rs`) has no line/col, so a
+division-by-zero or out-of-bounds index can't point at a line — a jarring drop in
+quality from the excellent compile-time diagnostics. Thread spans into the bytecode
+(parallel to the instruction vector) so runtime diagnostics match compile-time ones.
 
 ---
 
@@ -122,30 +150,69 @@ These harden the implementation itself rather than adding language features.
   `u8`, and each frame has a fixed 256 locals — all silently wrap/corrupt at the
   boundary. Replace with checked widening or dynamic sizing.
 - **再帰の性能:** `Frame::new` clones the whole chunk's instruction vector on every
-  call (`chunk.instructions.clone()`), making recursion O(chunk size) per call.
-  Share instructions via `Rc<[Instruction]>` so frames are cheap.
+  call (`chunk.instructions.clone()` in `src/vm/frame.rs`), making recursion
+  O(chunk size) per call. Share instructions via `Rc<[Instruction]>` so frames are cheap.
+- **スタック深度の上限 (still open):** the call path in `src/vm/machine.rs` has **no
+  recursion/frame-depth guard** — `frame_depth` exists only for try/catch unwinding,
+  so infinite recursion grows memory unbounded instead of raising a clean
+  `再帰が深すぎます` error. Small fix, high safety payoff.
 - **未使用変数・到達不能コードの警告:** beginner-friendly lints.
 - **REPL のトランザクション性:** a line that type-checks partway then fails currently
   leaves the persistent checker with half-declared state; make per-line evaluation
   all-or-nothing.
-- **スタック深度の上限:** a configurable recursion/frame-depth limit with a clean
-  `再帰が深すぎます` error instead of unbounded memory growth.
 - **テスト:** property-based / fuzz testing of the lexer and parser to catch the next
   class of panics-on-malformed-input before users do.
+
+---
+
+## フェーズ１３ — CLI と配布（CLI & Distribution）
+
+**Goal: make Hikari runnable like Python — a `hikari` command on `PATH` with the
+ergonomics users expect of an interpreter.** The language mechanics already exist:
+`hikari ファイル.hkr` runs a file and bare `hikari` starts the REPL (`src/main.rs`).
+What's missing is the distribution and CLI surface:
+
+**13a. インストール可能なバイナリ** — document/support `cargo install --path .` (or a
+release build + symlink) so users get a global `hikari` command instead of
+`cargo run -- …`. Add a `[[bin]]` name if needed and a short install section to the
+README.
+
+**13b. 引数パーサの整備** — the current arg handling is hand-rolled `args.len()`
+checks that reject anything but a single path. Add `--version`/`-v`,
+`--help`/`-h`, and graceful unknown-flag handling.
+
+**13c. 標準入力からの実行** — Python-style `hikari -` (read program from stdin) and
+optionally `hikari -c "コード"` (inline). Enables piping and one-liners.
+
+**13d. シェバン対応 (`#!/usr/bin/env hikari`)** — let `.hkr` files be directly
+executable. The lexer must skip a leading ASCII `#!` line (Hikari's own comment
+marker is full-width `＃`, so an ASCII shebang currently fails to lex). Then a
+chmod-+x script with a shebang runs as a normal executable.
+
+**13e. 終了コードと引数の引き渡し** — propagate meaningful process exit codes
+(0 success, non-zero on error — partly there via `process::exit`) and expose the
+script's own CLI arguments to the running program (overlaps **11c**).
+
+**Milestone:** `chmod +x hello.hkr && ./hello.hkr`, and
+`echo "印刷（「やあ」）；" | hikari -`, both work after `cargo install`.
 
 ---
 
 ## Suggested ordering
 
 ```
-Phase 7  (modulo + array/math stdlib)   ← highest value, smallest effort, unblocks real programs
-Phase 8  (sound control flow)           ← closes the last soundness gaps; small
-Phase 9  (user-defined types)           ← the big capability leap; do records first
-Phase 11 (I/O)                          ← can be done any time after Phase 7
-Phase 10 (first-class functions)        ← depends on closures; pairs well with 9b/9c
-Phase 12 (robustness)                   ← ongoing; pull items forward as needed
+Phase 11d (runtime error spans)   ← highest leverage; infra partly exists; closes the
+                                     biggest compile-time/runtime quality gap
+Phase 12  (recursion limit first) ← turn an OOM crash into a clean error; trivial & safe
+Phase 11a/b (file I/O + print)    ← the difference between "toy" and "writes real programs"
+Phase 13  (CLI & distribution)    ← makes `hikari` feel like python; mostly small, independent
+Phase 10a (closures)              ← unlocks the HOFs already shipped; largest design effort here
+Phase 12  (Rc<[Instruction]> + boundary hardening) ← mechanical perf/safety; do alongside
+Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff
 ```
 
-If only one phase ships next, it should be **Phase 7** — modulo and basic array
-operations are the difference between "a demo language" and "a language you can
-actually solve beginner exercises in."
+Phases ７–９ are complete. If only one thing ships next, make it **11d (runtime error
+spans)** — the infrastructure to thread spans is partly in place, and it removes the
+most jarring inconsistency users hit. For the *Python-like CLI* goal specifically,
+**Phase 13** is largely independent of the language work and can be done at any time;
+13a alone (a `cargo install`-able binary) already gets you a real `hikari` command.
