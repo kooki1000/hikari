@@ -19,7 +19,7 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(423 tests passing):
+(428 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -32,7 +32,7 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １１b | Formatted print — `印字` (no-newline) ✅; multi-value `印刷` ✅ | ✅ **Done** |
 | １１c / １３e | Program args & env access (`引数`/`環境変数`, `環境` module) | ✅ **Done** |
 | １１d | Runtime error source spans | ✅ **Done** |
-| １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅, boundary checks ✅, REPL txn ✅, lints ✅; fuzz still open | 🟡 **Partial** |
+| １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅, boundary checks ✅, REPL txn ✅, lints ✅, fuzz + parser depth limit ✅ | ✅ **Done** |
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
 
 The remaining sections below describe the open work. Completed work is marked ✅
@@ -40,6 +40,14 @@ inline. Current focus: **remaining robustness (12) and generics (10b).**
 
 ### Shipped since this status was added
 
+- **12 — Fuzz testing + parser depth limit.** A dependency-free, seeded
+  property/fuzz harness (`src/fuzz_tests.rs`) drives ~25k pseudo-random and
+  hand-picked malformed inputs through lexer → parser → type checker → compiler,
+  asserting none panic. It surfaced a real bug: deeply nested input (e.g. tens of
+  thousands of `（`) overflowed the recursive-descent parser's stack. Fixed with a
+  `MAX_DEPTH` guard in the parser that rejects over-nested input with a clean
+  `ParseError::TooDeeplyNested` ("式または文の入れ子が深すぎます。") instead of
+  aborting. With this, **Phase 12 is complete**.
 - **12 — Beginner lints.** A non-fatal lint pass (`src/lints.rs`) runs after type
   checking succeeds and surfaces two warnings via `diagnostic::render_warning`:
   *unused local variable* (a `型 名前 ＝ …；` never read — parameters, loop vars,
@@ -258,8 +266,10 @@ These harden the implementation itself rather than adding language features.
   `TypeChecker` and `Compiler` before each line and restores them if the line fails
   at any stage, and the VM resets its transient state on an uncaught error, so a
   partially-evaluated line leaves no half-applied declarations.
-- **テスト:** property-based / fuzz testing of the lexer and parser to catch the next
-  class of panics-on-malformed-input before users do.
+- **テスト ✅ done:** a seeded, dependency-free property/fuzz harness
+  (`src/fuzz_tests.rs`) drives random and malformed input through the whole front
+  end asserting no panics. It found a parser stack-overflow on deeply nested input,
+  now guarded by a `MAX_DEPTH` limit (`ParseError::TooDeeplyNested`).
 
 ---
 
@@ -298,17 +308,18 @@ arguments are exposed through `引数（）` (see **11c**).
 
 ## Suggested ordering
 
-Shipped so far: **7–9, 10a (closures), 11a, 11b (multi-value print), 11c/13e
-(program args & env), 11d, almost all of 12 (recursion limit, dynamic locals,
-`Rc<[Instruction]>` cheap frames, boundary hardening, REPL transactionality,
-beginner lints), 13 (CLI).** Remaining, in recommended order:
+Shipped so far: **7–9, 10a (closures), all of 11, all of 12 (recursion limit,
+dynamic locals, `Rc<[Instruction]>` cheap frames, boundary hardening, REPL
+transactionality, beginner lints, fuzz testing + parser depth limit), 13 (CLI).**
+
+The **only** remaining phase is:
 
 ```
-Phase 12  (lexer/parser fuzz testing — the last hardening item)
-Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff
+Phase 10b (generics)  ← the last unbuilt feature; biggest design cost, lowest
+                         functional-completeness payoff
 ```
 
-With closures done, the remaining work is mostly polish and hardening. The largest
-remaining *design* effort is **generics (10b)** — minimal parametric types so the
-stdlib stops hand-special-casing every builtin's types — but it has the lowest
-functional-completeness payoff, so it's last.
+Every robustness and polish item is now done. The sole remaining *design* effort
+is **generics (10b)** — minimal parametric types (`配列＜Ｔ＞`, generic `要素数`,
+generic `マップ＜Ｔ、Ｕ＞`) so the stdlib stops hand-special-casing every builtin's
+types. It has the lowest functional-completeness payoff, so it was deferred to last.

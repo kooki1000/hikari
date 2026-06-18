@@ -7,6 +7,9 @@ mod parser;
 mod typechecker;
 mod vm;
 
+#[cfg(test)]
+mod fuzz_tests;
+
 use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
