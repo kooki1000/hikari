@@ -17,37 +17,89 @@ use parser::Parser;
 use typechecker::TypeChecker;
 use vm::{Vm, display_value};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() == 1 {
-        run_repl();
-        return;
-    }
-    if args.len() != 2 {
-        eprintln!("使い方: hikari <ファイル.hkr>");
-        process::exit(1);
-    }
+    let args: Vec<String> = env::args().skip(1).collect();
 
-    let path = &args[1];
-    let source = fs::read_to_string(path).unwrap_or_else(|e| {
-        eprintln!("エラー: ファイルを読み込めません '{}': {}", path, e);
-        process::exit(1);
-    });
+    match args.first().map(String::as_str) {
+        None => run_repl(),
+        Some("--version" | "-v" | "バージョン") => {
+            println!("Hikari {}", VERSION);
+        }
+        Some("--help" | "-h" | "助け") => print_usage(),
+        Some("-c") => {
+            // Inline program: `hikari -c "印刷（１）；"`
+            let Some(code) = args.get(1) else {
+                eprintln!("エラー: -c の後にコードがありません。");
+                process::exit(1);
+            };
+            // Inline code resolves relative imports against the current dir.
+            let entry_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            run_source(code, &entry_dir);
+        }
+        Some("-") => {
+            // Program piped on stdin: `echo "..." | hikari -`
+            let source = io::read_to_string(io::stdin()).unwrap_or_else(|e| {
+                eprintln!("エラー: 標準入力を読み込めません: {}", e);
+                process::exit(1);
+            });
+            let entry_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            run_source(&source, &entry_dir);
+        }
+        Some(flag) if flag.starts_with('-') => {
+            eprintln!("エラー: 不明なオプション '{}'", flag);
+            print_usage();
+            process::exit(1);
+        }
+        Some(path) => {
+            let source = fs::read_to_string(path).unwrap_or_else(|e| {
+                eprintln!("エラー: ファイルを読み込めません '{}': {}", path, e);
+                process::exit(1);
+            });
+            let entry_dir = Path::new(path)
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf();
+            run_source(&source, &entry_dir);
+        }
+    }
+}
 
-    let tokens = Lexer::new(&source).tokenize();
+fn print_usage() {
+    println!(
+        "Hikari {ver} — 光プログラミング言語
+
+使い方:
+  hikari <ファイル.hkr>    ファイルを実行する
+  hikari                   対話モード（REPL）を開始する
+  hikari -                 標準入力からプログラムを読んで実行する
+  hikari -c \"<コード>\"      コードを直接実行する
+
+オプション:
+  -h, --help, 助け         この使い方を表示する
+  -v, --version, バージョン  バージョンを表示する",
+        ver = VERSION
+    );
+}
+
+/// Compile and run a complete Hikari program. Imports resolve relative to
+/// `entry_dir`. On any error, prints a diagnostic and exits non-zero.
+fn run_source(source: &str, entry_dir: &Path) {
+    let tokens = Lexer::new(source).tokenize();
     let ast = Parser::new(tokens).parse().unwrap_or_else(|e| {
-        eprintln!("{}", diagnostic::render(&source, e.span(), &e.to_string()));
+        eprintln!("{}", diagnostic::render(source, e.span(), &e.to_string()));
         process::exit(1);
     });
 
-    let entry_dir = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
     let ast = modules::resolve_imports(ast, entry_dir, &mut HashSet::new()).unwrap_or_else(|e| {
         eprintln!("{}", e);
         process::exit(1);
     });
 
     if let Err(e) = TypeChecker::new().check(&ast) {
-        eprintln!("{}", diagnostic::render(&source, e.span(), &e.to_string()));
+        eprintln!("{}", diagnostic::render(source, e.span(), &e.to_string()));
         process::exit(1);
     }
 

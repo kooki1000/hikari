@@ -350,6 +350,18 @@ If the try-body completes without error, the catch-body is skipped entirely. Err
 | `配列` | `逆順（配列）` | `配列 → 同じ配列` | Reverse in place |
 | `配列` | `整列（配列）` | `配列 → 同じ配列` | Sort in place (numbers or strings only) |
 | `配列` | `部分列（配列、開始、終了）` | `配列、整数、整数 → 新しい配列` | Slice `[開始, 終了)` — returns a copy, does not mutate the original |
+| `入出力` | `ファイル読む（パス）` | `文字列 → 文字列` | Read a whole file as a string (I/O failure is a runtime error) |
+| `入出力` | `ファイル書く（パス、内容）` | `文字列、文字列 → 無` | Write a string to a file, overwriting it |
+| `入出力` | `印字（値）` | `任意 → 無` | Print a value **without** a trailing newline (like `印刷` but newline-less) |
+
+```
+取り込む 「入出力」；
+
+ファイル書く（「メモ.txt」、「こんにちは」）；
+文字列 内容 ＝ ファイル読む（「メモ.txt」）；
+印字（内容）；   ＃ no newline
+印字（「！」）；   ＃ → こんにちは！
+```
 
 ### REPL
 
@@ -405,6 +417,41 @@ cargo build
 cargo run -- examples/if.hkr
 cargo run -- examples/print.hkr
 cargo run            # no file argument — starts the REPL
+```
+
+### Installing as a command (`hikari`)
+
+To get a `hikari` command on your `PATH` (so you can run it like `python`),
+install the binary with Cargo:
+
+```sh
+cargo install --path .
+```
+
+Then Hikari behaves like a normal interpreter:
+
+```sh
+hikari script.hkr            # run a file
+hikari                       # start the REPL
+hikari -                     # read a program from stdin
+echo "印刷（１ ＋ ２）；" | hikari -
+hikari -c "印刷（「やあ」）；"   # run inline code
+hikari --version             # print the version  (also: -v, バージョン)
+hikari --help                # show usage          (also: -h, 助け)
+```
+
+Scripts can also be made directly executable with a shebang line. Hikari's own
+comment marker is the full-width `＃`, so an ASCII `#!` line at the top of a file
+is recognized as a shebang and skipped by the lexer:
+
+```sh
+#!/usr/bin/env hikari
+印刷（「ファイルから直接実行！」）；
+```
+
+```sh
+chmod +x hello.hkr
+./hello.hkr
 ```
 
 ## Testing

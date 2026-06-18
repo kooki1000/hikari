@@ -12,8 +12,9 @@ pub const MOD_STRING: &str = "文字列";
 pub const MOD_ARRAY: &str = "配列";
 pub const MOD_MAP: &str = "辞書";
 pub const MOD_FUNC: &str = "関数";
+pub const MOD_IO: &str = "入出力";
 
-pub const STDLIB_MODULES: [&str; 5] = [MOD_MATH, MOD_STRING, MOD_ARRAY, MOD_MAP, MOD_FUNC];
+pub const STDLIB_MODULES: [&str; 6] = [MOD_MATH, MOD_STRING, MOD_ARRAY, MOD_MAP, MOD_FUNC, MOD_IO];
 
 // Imports are only resolved at the top level of a file: the roadmap's
 // examples only ever show 取り込む as a top-level statement, so nested

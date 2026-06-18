@@ -24,6 +24,11 @@ enum StepResult {
     Halt(Option<Value>),
 }
 
+// Maximum number of simultaneously active call frames. Exceeding this raises a
+// clean `再帰が深すぎます` error instead of letting unbounded recursion grow the
+// frame vector until the process is killed by the OS.
+const MAX_FRAME_DEPTH: usize = 1024;
+
 impl Vm {
     /// Construct from a script chunk (no named functions).
     #[allow(dead_code)] // used in low-level unit tests that bypass the compiler
@@ -145,7 +150,7 @@ impl Vm {
                 let stack_len = self.stack.len();
                 let args = self.stack.split_off(stack_len - arg_count as usize);
                 let new_frame = Frame::new(chunk, args);
-                self.frames.push(new_frame);
+                self.push_frame(new_frame)?;
                 // Execution continues inside the new frame on the next iteration.
             }
             Instruction::CallBuiltin(builtin, argc) => {
@@ -481,7 +486,7 @@ impl Vm {
                         let stack_len = self.stack.len();
                         let args = self.stack.split_off(stack_len - arg_count as usize);
                         let new_frame = Frame::new(chunk, args);
-                        self.frames.push(new_frame);
+                        self.push_frame(new_frame)?;
                     }
                     _ => return Err(RuntimeError::TypeMismatch),
                 }
@@ -569,6 +574,17 @@ impl Vm {
         self.chunks = chunks;
     }
 
+    /// Push a new call frame, enforcing the recursion-depth limit. Centralizes
+    /// the guard so every call path (`Call`, `CallValue`, HOF `call_function`)
+    /// gets the same clean overflow error.
+    fn push_frame(&mut self, frame: Frame) -> Result<(), RuntimeError> {
+        if self.frames.len() >= MAX_FRAME_DEPTH {
+            return Err(RuntimeError::StackOverflow);
+        }
+        self.frames.push(frame);
+        Ok(())
+    }
+
     fn pop2(&mut self) -> Result<(Value, Value), RuntimeError> {
         let rhs = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
         let lhs = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
@@ -585,7 +601,7 @@ impl Vm {
         let chunk = &self.chunks[chunk_index];
         let frame = Frame::new(chunk, args);
         let target_depth = self.frames.len(); // depth BEFORE pushing the new frame
-        self.frames.push(frame);
+        self.push_frame(frame)?;
         // Run until we pop back to target_depth.
         loop {
             if self.frames.len() == target_depth {

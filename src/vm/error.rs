@@ -14,6 +14,10 @@ pub enum RuntimeError {
     EmptyArray,
     // Map key lookup failed.
     KeyNotFound(String),
+    // Call-frame depth exceeded the configured limit (runaway recursion).
+    StackOverflow,
+    // A file I/O operation failed (open/read/write).
+    IoError(String),
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -44,6 +48,13 @@ impl std::fmt::Display for RuntimeError {
             }
             RuntimeError::KeyNotFound(key) => {
                 write!(f, "辞書にキー「{}」が見つかりません。", key)
+            }
+            RuntimeError::StackOverflow => write!(
+                f,
+                "再帰が深すぎます。（ヒント: 無限再帰になっていないか、終了条件を確認してください）"
+            ),
+            RuntimeError::IoError(msg) => {
+                write!(f, "ファイル操作に失敗しました: {}", msg)
             }
         }
     }

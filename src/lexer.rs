@@ -241,6 +241,18 @@ impl Lexer {
 
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens = Vec::new();
+        // Skip a leading ASCII shebang line (`#!/usr/bin/env hikari`) so `.hkr`
+        // files can be made directly executable. Hikari's own comment marker is
+        // the full-width `＃`, so an ASCII `#!` only ever appears here; consume
+        // through the end of the line, keeping the line counter accurate.
+        if self.peek() == Some('#') && self.source.get(self.pos + 1).copied() == Some('!') {
+            while let Some(c) = self.peek() {
+                if c == '\n' {
+                    break;
+                }
+                self.advance();
+            }
+        }
         loop {
             self.skip_whitespace();
             let start_line = self.line;
