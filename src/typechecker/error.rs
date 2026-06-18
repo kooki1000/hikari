@@ -144,6 +144,13 @@ pub enum TypeError {
     // TypeError's overall size from growing past clippy's result_large_err
     // threshold.
     NonExhaustiveMatch(Box<NonExhaustiveMatchInfo>),
+    // A 無 (void)-typed value (e.g. the result of a 無-returning function
+    // call) is used where a value is required (印刷 argument, 追加 element,
+    // binary operand, 返す value, etc.). Calling such a function as a bare
+    // statement remains legal.
+    VoidValueUsed {
+        span: Span,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -182,6 +189,7 @@ impl TypeError {
             TypeError::DuplicateMatchArm { span, .. } => *span,
             TypeError::UndeclaredEnumVariant { span, .. } => *span,
             TypeError::NonExhaustiveMatch(info) => info.span,
+            TypeError::VoidValueUsed { span } => *span,
         }
     }
 }
@@ -350,6 +358,10 @@ impl std::fmt::Display for TypeError {
                 "構造「{}」のすべての場合を網羅していません（未対応: {}）。",
                 info.enum_name,
                 info.missing.join("、")
+            ),
+            TypeError::VoidValueUsed { .. } => write!(
+                f,
+                "「無」型の値は使用できません。（ヒント: 「無」を返す関数の結果を値として使うことはできません）"
             ),
         }
     }

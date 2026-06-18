@@ -311,16 +311,11 @@ fn test_typecheck_io_builtins_without_import_fails() {
 
 #[test]
 fn test_typecheck_file_write_result_is_void() {
-    // ファイル書く returns 無, so its result cannot be bound to a typed var.
+    // ファイル書く returns 無, so its result cannot be used as a value (here,
+    // bound to a typed var): a 無 value in value position is a TypeError.
     let ast = parse("取り込む 「入出力」；整数 x ＝ ファイル書く（「a.txt」、「データ」）；");
     let err = TypeChecker::new().check(&ast).unwrap_err();
-    assert!(matches!(
-        err,
-        TypeError::VarDeclMismatch {
-            got: HikariType::Void,
-            ..
-        }
-    ));
+    assert!(matches!(err, TypeError::VoidValueUsed { .. }));
 }
 
 // ── 11c: environment module (環境) ───────────────────────────────────

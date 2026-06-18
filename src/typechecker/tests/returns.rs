@@ -133,3 +133,69 @@ fn test_typecheck_bare_return_in_non_void_function_is_error() {
 fn test_typecheck_bare_return_at_top_level_is_ok() {
     assert!(TypeChecker::new().check(&parse("返す；")).is_ok());
 }
+
+// ── void value used in value position ─────────────────────────────────
+// A 無-returning function call produces no value, so using its result where a
+// value is expected must be a compile-time TypeError, not a runtime crash.
+
+const VOID_FN: &str = "関数 何もしない（）ー＞ 無 ｛ 返す； ｝";
+
+#[test]
+fn test_typecheck_void_call_as_bare_statement_is_ok() {
+    // Calling a 無 function purely for its side effects must stay legal.
+    let src = format!("{VOID_FN}何もしない（）；");
+    assert!(TypeChecker::new().check(&parse(&src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_void_call_as_print_argument_is_error() {
+    let src = format!("{VOID_FN}印刷（何もしない（））；");
+    let err = TypeChecker::new().check(&parse(&src)).unwrap_err();
+    assert!(matches!(err, TypeError::VoidValueUsed { .. }));
+}
+
+#[test]
+fn test_typecheck_void_call_as_var_initialiser_is_error() {
+    let src = format!("{VOID_FN}整数 Ｘ ＝ 何もしない（）；");
+    let err = TypeChecker::new().check(&parse(&src)).unwrap_err();
+    assert!(matches!(err, TypeError::VoidValueUsed { .. }));
+}
+
+#[test]
+fn test_typecheck_void_call_in_binary_op_is_error() {
+    let src = format!("{VOID_FN}印刷（何もしない（） ＋ １）；");
+    let err = TypeChecker::new().check(&parse(&src)).unwrap_err();
+    assert!(matches!(err, TypeError::VoidValueUsed { .. }));
+}
+
+#[test]
+fn test_typecheck_void_call_as_function_argument_is_error() {
+    let src = format!(
+        "{VOID_FN}関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝二倍（何もしない（））；"
+    );
+    let err = TypeChecker::new().check(&parse(&src)).unwrap_err();
+    assert!(matches!(err, TypeError::VoidValueUsed { .. }));
+}
+
+#[test]
+fn test_typecheck_void_call_as_array_element_is_error() {
+    let src = format!(
+        "取り込む 「配列」；{VOID_FN}整数列 数字 ＝ 【１】；追加（数字、何もしない（））；"
+    );
+    let err = TypeChecker::new().check(&parse(&src)).unwrap_err();
+    assert!(matches!(err, TypeError::VoidValueUsed { .. }));
+}
+
+#[test]
+fn test_typecheck_void_call_as_return_value_is_error() {
+    let src = format!("{VOID_FN}関数 包む（）ー＞ 整数 ｛ 返す 何もしない（）； ｝");
+    let err = TypeChecker::new().check(&parse(&src)).unwrap_err();
+    assert!(matches!(err, TypeError::VoidValueUsed { .. }));
+}
+
+#[test]
+fn test_typecheck_void_call_as_condition_is_error() {
+    let src = format!("{VOID_FN}もし 何もしない（） ならば ｛ 印刷（１）； ｝");
+    let err = TypeChecker::new().check(&parse(&src)).unwrap_err();
+    assert!(matches!(err, TypeError::VoidValueUsed { .. }));
+}
