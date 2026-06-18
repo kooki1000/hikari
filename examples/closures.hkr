@@ -1,0 +1,15 @@
+取り込む 「関数」；
+
+＃ A lambda captures the enclosing variable 基準 by value.
+整数 基準 ＝ １００；
+関数＜（整数） ー＞ 整数＞ 加算 ＝ ｜ｎ：整数｜ ー＞ 整数 ｛ 返す ｎ ＋ 基準； ｝；
+
+＃ Reassigning 基準 afterward does not change what the closure captured.
+基準 ＝ ０；
+印刷（加算（５））；   ＃ 105
+
+＃ Closures shine with higher-order functions: マップ each element + 基準.
+整数列 数 ＝ 【１、２、３】；
+整数列 結果 ＝ マップ（数、加算）；
+印刷（結果【０】）；   ＃ 101
+印刷（結果【２】）；   ＃ 103
