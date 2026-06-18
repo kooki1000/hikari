@@ -28,8 +28,8 @@ impl super::TypeChecker {
             }
 
             Expr::BinOp { op, lhs, rhs } => {
-                let lty = self.infer_expr(lhs, span)?;
-                let rty = self.infer_expr(rhs, span)?;
+                let lty = self.infer_value_expr(lhs, span)?;
+                let rty = self.infer_value_expr(rhs, span)?;
                 if matches!(op, BinOpKind::And | BinOpKind::Or) {
                     if lty != HikariType::Bool {
                         return Err(TypeError::BinOpMismatch {
@@ -92,7 +92,7 @@ impl super::TypeChecker {
             }
 
             Expr::UnaryMinus(inner) => {
-                let ity = self.infer_expr(inner, span)?;
+                let ity = self.infer_value_expr(inner, span)?;
                 match ity {
                     HikariType::Int | HikariType::Float => Ok(ity),
                     other => Err(TypeError::UnaryOpMismatch { got: other, span }),
@@ -100,7 +100,7 @@ impl super::TypeChecker {
             }
 
             Expr::UnaryNot(inner) => {
-                let ity = self.infer_expr(inner, span)?;
+                let ity = self.infer_value_expr(inner, span)?;
                 match ity {
                     HikariType::Bool => Ok(HikariType::Bool),
                     other => Err(TypeError::UnaryOpMismatch { got: other, span }),
@@ -124,7 +124,7 @@ impl super::TypeChecker {
                         });
                     }
                     for (arg, param_ty) in args.iter().zip(payload_types.iter()) {
-                        let arg_ty = self.infer_expr(arg, span)?;
+                        let arg_ty = self.infer_value_expr(arg, span)?;
                         if arg_ty != *param_ty {
                             return Err(TypeError::ArgTypeMismatch {
                                 name: name.clone(),
@@ -158,7 +158,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    let arg_ty = self.infer_value_expr(&args[0], span)?;
                     if !matches!(arg_ty, HikariType::Int | HikariType::Float) {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -183,8 +183,8 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let a_ty = self.infer_expr(&args[0], span)?;
-                    let b_ty = self.infer_expr(&args[1], span)?;
+                    let a_ty = self.infer_value_expr(&args[0], span)?;
+                    let b_ty = self.infer_value_expr(&args[1], span)?;
                     if !matches!(a_ty, HikariType::Int | HikariType::Float) {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -213,7 +213,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    let arg_ty = self.infer_value_expr(&args[0], span)?;
                     if arg_ty != HikariType::Float {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -234,7 +234,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    let arg_ty = self.infer_value_expr(&args[0], span)?;
                     if !matches!(arg_ty, HikariType::Array(_)) {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -255,7 +255,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
                     let elem_ty = match arr_ty {
                         HikariType::Array(inner) => *inner,
                         other => {
@@ -267,7 +267,7 @@ impl super::TypeChecker {
                             });
                         }
                     };
-                    let val_ty = self.infer_expr(&args[1], span)?;
+                    let val_ty = self.infer_value_expr(&args[1], span)?;
                     if val_ty != elem_ty {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -288,7 +288,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
                     let elem_ty = match arr_ty {
                         HikariType::Array(inner) => *inner,
                         other => {
@@ -312,7 +312,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
                     let elem_ty = match arr_ty {
                         HikariType::Array(inner) => *inner,
                         other => {
@@ -324,7 +324,7 @@ impl super::TypeChecker {
                             });
                         }
                     };
-                    let val_ty = self.infer_expr(&args[1], span)?;
+                    let val_ty = self.infer_value_expr(&args[1], span)?;
                     if val_ty != elem_ty {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -349,7 +349,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
                     match arr_ty {
                         HikariType::Array(inner) => return Ok(HikariType::Array(inner)),
                         other => {
@@ -372,7 +372,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
                     match &arr_ty {
                         HikariType::Array(inner)
                             if matches!(
@@ -402,7 +402,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
                     if !matches!(arr_ty, HikariType::Array(_)) {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -411,7 +411,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let start_ty = self.infer_expr(&args[1], span)?;
+                    let start_ty = self.infer_value_expr(&args[1], span)?;
                     if start_ty != HikariType::Int {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -420,7 +420,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let end_ty = self.infer_expr(&args[2], span)?;
+                    let end_ty = self.infer_value_expr(&args[2], span)?;
                     if end_ty != HikariType::Int {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -442,7 +442,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    let arg_ty = self.infer_value_expr(&args[0], span)?;
                     match arg_ty {
                         HikariType::Map(k, _) => {
                             return Ok(HikariType::Array(k));
@@ -470,7 +470,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arg_ty = self.infer_expr(&args[0], span)?;
+                    let arg_ty = self.infer_value_expr(&args[0], span)?;
                     match arg_ty {
                         HikariType::Map(_, v) => {
                             return Ok(HikariType::Array(v));
@@ -498,7 +498,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let map_ty = self.infer_expr(&args[0], span)?;
+                    let map_ty = self.infer_value_expr(&args[0], span)?;
                     let key_ty = match map_ty {
                         HikariType::Map(k, _) => *k,
                         other => {
@@ -513,7 +513,7 @@ impl super::TypeChecker {
                             });
                         }
                     };
-                    let arg_key_ty = self.infer_expr(&args[1], span)?;
+                    let arg_key_ty = self.infer_value_expr(&args[1], span)?;
                     if arg_key_ty != key_ty {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -528,7 +528,7 @@ impl super::TypeChecker {
                 // 含む is polymorphic: String × String → Bool (文字列 module)
                 // or Map × Key → Bool (辞書 module).
                 if name == "含む" && args.len() == 2 {
-                    let first_ty = self.infer_expr(&args[0], span)?;
+                    let first_ty = self.infer_value_expr(&args[0], span)?;
                     if let HikariType::Map(k, _) = &first_ty {
                         // Map membership check — requires 辞書 import.
                         if !self.imported_modules.contains("辞書") {
@@ -538,7 +538,7 @@ impl super::TypeChecker {
                                 span,
                             });
                         }
-                        let key_arg = self.infer_expr(&args[1], span)?;
+                        let key_arg = self.infer_value_expr(&args[1], span)?;
                         if key_arg != **k {
                             return Err(TypeError::ArgTypeMismatch {
                                 name: name.clone(),
@@ -557,7 +557,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let second_ty = self.infer_expr(&args[1], span)?;
+                    let second_ty = self.infer_value_expr(&args[1], span)?;
                     if first_ty != HikariType::String || second_ty != HikariType::String {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -583,7 +583,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
                     let elem_ty = match arr_ty {
                         HikariType::Array(inner) => *inner,
                         other => {
@@ -595,7 +595,7 @@ impl super::TypeChecker {
                             });
                         }
                     };
-                    let fn_ty = self.infer_expr(&args[1], span)?;
+                    let fn_ty = self.infer_value_expr(&args[1], span)?;
                     let ret_ty = match fn_ty {
                         HikariType::Fn(params, ret)
                             if params.len() == 1 && params[0] == elem_ty =>
@@ -623,7 +623,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
                     let elem_ty = match arr_ty.clone() {
                         HikariType::Array(inner) => *inner,
                         other => {
@@ -635,7 +635,7 @@ impl super::TypeChecker {
                             });
                         }
                     };
-                    let fn_ty = self.infer_expr(&args[1], span)?;
+                    let fn_ty = self.infer_value_expr(&args[1], span)?;
                     match fn_ty {
                         HikariType::Fn(params, ret)
                             if params.len() == 1
@@ -665,7 +665,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    let arr_ty = self.infer_expr(&args[0], span)?;
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
                     let elem_ty = match arr_ty {
                         HikariType::Array(inner) => *inner,
                         other => {
@@ -677,8 +677,8 @@ impl super::TypeChecker {
                             });
                         }
                     };
-                    let acc_ty = self.infer_expr(&args[1], span)?;
-                    let fn_ty = self.infer_expr(&args[2], span)?;
+                    let acc_ty = self.infer_value_expr(&args[1], span)?;
+                    let fn_ty = self.infer_value_expr(&args[2], span)?;
                     match &fn_ty {
                         HikariType::Fn(params, ret)
                             if params.len() == 2
@@ -711,7 +711,7 @@ impl super::TypeChecker {
                             span,
                         });
                     }
-                    self.infer_expr(&args[0], span)?;
+                    self.infer_value_expr(&args[0], span)?;
                     return Ok(HikariType::Void);
                 }
 
@@ -725,7 +725,7 @@ impl super::TypeChecker {
                         });
                     }
                     if name == "文字列化" {
-                        let arg_ty = self.infer_expr(&args[0], span)?;
+                        let arg_ty = self.infer_value_expr(&args[0], span)?;
                         if !matches!(
                             arg_ty,
                             HikariType::Int | HikariType::Float | HikariType::Bool
@@ -739,7 +739,7 @@ impl super::TypeChecker {
                         }
                     } else {
                         for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
-                            let arg_ty = self.infer_expr(arg, span)?;
+                            let arg_ty = self.infer_value_expr(arg, span)?;
                             if arg_ty != *param_ty {
                                 return Err(TypeError::ArgTypeMismatch {
                                     name: name.clone(),
@@ -766,7 +766,7 @@ impl super::TypeChecker {
                                 });
                             }
                             for (arg, param_ty) in args.iter().zip(params.iter()) {
-                                let arg_ty = self.infer_expr(arg, span)?;
+                                let arg_ty = self.infer_value_expr(arg, span)?;
                                 if arg_ty != *param_ty {
                                     return Err(TypeError::ArgTypeMismatch {
                                         name: name.clone(),
@@ -798,7 +798,7 @@ impl super::TypeChecker {
                     });
                 }
                 for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
-                    let arg_ty = self.infer_expr(arg, span)?;
+                    let arg_ty = self.infer_value_expr(arg, span)?;
                     if arg_ty != *param_ty {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
@@ -815,9 +815,9 @@ impl super::TypeChecker {
                 let Some(first) = elems.first() else {
                     return Err(TypeError::EmptyArrayLiteral(span));
                 };
-                let expected = self.infer_expr(first, span)?;
+                let expected = self.infer_value_expr(first, span)?;
                 for elem in &elems[1..] {
-                    let got = self.infer_expr(elem, span)?;
+                    let got = self.infer_value_expr(elem, span)?;
                     if got != expected {
                         return Err(TypeError::ArrayElementTypeMismatch {
                             expected,
@@ -830,10 +830,10 @@ impl super::TypeChecker {
             }
 
             Expr::Index { array, index } => {
-                let array_ty = self.infer_expr(array, span)?;
+                let array_ty = self.infer_value_expr(array, span)?;
                 match array_ty {
                     HikariType::Array(inner) => {
-                        let index_ty = self.infer_expr(index, span)?;
+                        let index_ty = self.infer_value_expr(index, span)?;
                         if index_ty != HikariType::Int {
                             return Err(TypeError::IndexNotInt {
                                 got: index_ty,
@@ -843,7 +843,7 @@ impl super::TypeChecker {
                         Ok(*inner)
                     }
                     HikariType::Map(key_ty, val_ty) => {
-                        let index_ty = self.infer_expr(index, span)?;
+                        let index_ty = self.infer_value_expr(index, span)?;
                         if index_ty != *key_ty {
                             return Err(TypeError::IndexNotInt {
                                 got: index_ty,
@@ -862,17 +862,17 @@ impl super::TypeChecker {
                 let Some((first_k, first_v)) = pairs.first() else {
                     return Err(TypeError::EmptyArrayLiteral(span));
                 };
-                let key_ty = self.infer_expr(first_k, span)?;
+                let key_ty = self.infer_value_expr(first_k, span)?;
                 if key_ty != HikariType::String {
                     return Err(TypeError::IndexNotInt { got: key_ty, span });
                 }
-                let val_ty = self.infer_expr(first_v, span)?;
+                let val_ty = self.infer_value_expr(first_v, span)?;
                 for (k, v) in &pairs[1..] {
-                    let kt = self.infer_expr(k, span)?;
+                    let kt = self.infer_value_expr(k, span)?;
                     if kt != HikariType::String {
                         return Err(TypeError::IndexNotInt { got: kt, span });
                     }
-                    let vt = self.infer_expr(v, span)?;
+                    let vt = self.infer_value_expr(v, span)?;
                     if vt != val_ty {
                         return Err(TypeError::ArrayElementTypeMismatch {
                             expected: val_ty.clone(),
@@ -922,7 +922,7 @@ impl super::TypeChecker {
                         .find(|(n, _)| n == fname)
                         .map(|(_, t)| t.clone())
                         .expect("field presence already validated above");
-                    let got = self.infer_expr(fexpr, span)?;
+                    let got = self.infer_value_expr(fexpr, span)?;
                     if got != expected {
                         return Err(TypeError::FieldTypeMismatch {
                             type_name: type_name.clone(),
@@ -938,7 +938,7 @@ impl super::TypeChecker {
             }
 
             Expr::FieldAccess { record, field } => {
-                let record_ty = self.infer_expr(record, span)?;
+                let record_ty = self.infer_value_expr(record, span)?;
                 let type_name = match record_ty {
                     HikariType::Record(name) => name,
                     other => return Err(TypeError::NotARecord { got: other, span }),

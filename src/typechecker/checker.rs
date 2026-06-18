@@ -79,6 +79,23 @@ impl TypeChecker {
         }
     }
 
+    // Infer the type of an expression used in value position, rejecting 無.
+    // A 無-returning call (or other 無-typed expression) produces no value, so
+    // using it as an 印刷 argument, 追加 element, binary operand, 返す value,
+    // condition, etc. is a TypeError rather than a runtime StackUnderflow.
+    // Statement-position calls (Stmt::Expr) bypass this and stay legal.
+    pub(super) fn infer_value_expr(
+        &mut self,
+        expr: &Expr,
+        span: Span,
+    ) -> Result<HikariType, TypeError> {
+        let ty = self.infer_expr(expr, span)?;
+        if ty == HikariType::Void {
+            return Err(TypeError::VoidValueUsed { span });
+        }
+        Ok(ty)
+    }
+
     pub fn check(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         for stmt in stmts {
             self.check_stmt(stmt)?;
@@ -113,7 +130,7 @@ impl TypeChecker {
                     self.declare_var(name, ty.clone());
                     return Ok(());
                 }
-                let inferred = self.infer_expr(value, *span)?;
+                let inferred = self.infer_value_expr(value, *span)?;
                 if inferred != *ty {
                     return Err(TypeError::VarDeclMismatch {
                         name: name.clone(),
@@ -175,7 +192,7 @@ impl TypeChecker {
             Stmt::Return(expr, span) => {
                 match expr {
                     Some(expr) => {
-                        let got = self.infer_expr(expr, *span)?;
+                        let got = self.infer_value_expr(expr, *span)?;
                         if let Some(expected) = &self.current_return_ty
                             && got != *expected
                         {
@@ -222,10 +239,10 @@ impl TypeChecker {
             }
 
             Stmt::Print(exprs, span) => {
-                // Each value may be of any (non-無) type; infer_expr already
+                // Each value may be of any (non-無) type; infer_value_expr
                 // rejects 無-typed values used in value position.
                 for expr in exprs {
-                    self.infer_expr(expr, *span)?;
+                    self.infer_value_expr(expr, *span)?;
                 }
                 Ok(())
             }
@@ -236,7 +253,7 @@ impl TypeChecker {
                 else_body,
                 span,
             } => {
-                let cond_ty = self.infer_expr(condition, *span)?;
+                let cond_ty = self.infer_value_expr(condition, *span)?;
                 if cond_ty != HikariType::Bool {
                     return Err(TypeError::ConditionNotBool(cond_ty, *span));
                 }
@@ -256,7 +273,7 @@ impl TypeChecker {
                 body,
                 span,
             } => {
-                let cond_ty = self.infer_expr(condition, *span)?;
+                let cond_ty = self.infer_value_expr(condition, *span)?;
                 if cond_ty != HikariType::Bool {
                     return Err(TypeError::ConditionNotBool(cond_ty, *span));
                 }
@@ -269,6 +286,10 @@ impl TypeChecker {
             }
 
             Stmt::Expr(expr, span) => {
+                // Statement-position expressions may be 無-typed: calling a
+                // 無-returning function purely for its side effects (印刷,
+                // 追加, etc.) is legal, so this site uses infer_expr directly
+                // rather than infer_value_expr.
                 self.infer_expr(expr, *span)?;
                 Ok(())
             }
@@ -277,7 +298,7 @@ impl TypeChecker {
                 let declared = self
                     .lookup_var(name)
                     .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), *span))?;
-                let got = self.infer_expr(value, *span)?;
+                let got = self.infer_value_expr(value, *span)?;
                 if got != declared {
                     return Err(TypeError::VarDeclMismatch {
                         name: name.clone(),
@@ -300,14 +321,14 @@ impl TypeChecker {
                     .ok_or_else(|| TypeError::UndeclaredVariable(name.clone(), *span))?;
                 match var_ty {
                     HikariType::Array(elem_ty) => {
-                        let index_ty = self.infer_expr(index, *span)?;
+                        let index_ty = self.infer_value_expr(index, *span)?;
                         if index_ty != HikariType::Int {
                             return Err(TypeError::IndexNotInt {
                                 got: index_ty,
                                 span: *span,
                             });
                         }
-                        let value_ty = self.infer_expr(value, *span)?;
+                        let value_ty = self.infer_value_expr(value, *span)?;
                         if value_ty != *elem_ty {
                             return Err(TypeError::ArrayElementTypeMismatch {
                                 expected: *elem_ty,
@@ -317,14 +338,14 @@ impl TypeChecker {
                         }
                     }
                     HikariType::Map(key_ty, val_ty) => {
-                        let index_ty = self.infer_expr(index, *span)?;
+                        let index_ty = self.infer_value_expr(index, *span)?;
                         if index_ty != *key_ty {
                             return Err(TypeError::IndexNotInt {
                                 got: index_ty,
                                 span: *span,
                             });
                         }
-                        let value_ty = self.infer_expr(value, *span)?;
+                        let value_ty = self.infer_value_expr(value, *span)?;
                         if value_ty != *val_ty {
                             return Err(TypeError::ArrayElementTypeMismatch {
                                 expected: *val_ty,
@@ -350,8 +371,8 @@ impl TypeChecker {
                 body,
                 span,
             } => {
-                let from_ty = self.infer_expr(from, *span)?;
-                let to_ty = self.infer_expr(to, *span)?;
+                let from_ty = self.infer_value_expr(from, *span)?;
+                let to_ty = self.infer_value_expr(to, *span)?;
                 if from_ty != HikariType::Int {
                     return Err(TypeError::ArgTypeMismatch {
                         name: var.clone(),
@@ -383,7 +404,7 @@ impl TypeChecker {
                 body,
                 span,
             } => {
-                let array_ty = self.infer_expr(array, *span)?;
+                let array_ty = self.infer_value_expr(array, *span)?;
                 let elem_ty = match array_ty {
                     HikariType::Array(inner) => *inner,
                     other => {
@@ -438,7 +459,7 @@ impl TypeChecker {
                 value,
                 span,
             } => {
-                let record_ty = self.infer_expr(record, *span)?;
+                let record_ty = self.infer_value_expr(record, *span)?;
                 let type_name = match record_ty {
                     HikariType::Record(name) => name,
                     other => {
@@ -457,7 +478,7 @@ impl TypeChecker {
                         field: field.clone(),
                         span: *span,
                     })?;
-                let value_ty = self.infer_expr(value, *span)?;
+                let value_ty = self.infer_value_expr(value, *span)?;
                 if value_ty != field_ty {
                     return Err(TypeError::FieldTypeMismatch {
                         type_name,
@@ -494,7 +515,7 @@ impl TypeChecker {
                 arms,
                 span,
             } => {
-                let subject_ty = self.infer_expr(subject, *span)?;
+                let subject_ty = self.infer_value_expr(subject, *span)?;
                 // Enum-typed variables are stored as Record(enum_name) in the
                 // type system (parse_type maps any bare Ident to Record), so
                 // we accept Record(name) when name is a registered enum, as

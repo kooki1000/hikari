@@ -243,11 +243,5 @@ fn test_typecheck_match_binder_not_visible_after_match() {
 fn test_typecheck_void_call_result_cannot_be_used_as_value() {
     let src = "関数 表示（整数 Ａ）ー＞ 無 ｛ 印刷（Ａ）； ｝整数 結果 ＝ 表示（５）；";
     let err = TypeChecker::new().check(&parse(src)).unwrap_err();
-    assert!(matches!(
-        err,
-        TypeError::VarDeclMismatch {
-            got: HikariType::Void,
-            ..
-        }
-    ));
+    assert!(matches!(err, TypeError::VoidValueUsed { .. }));
 }
