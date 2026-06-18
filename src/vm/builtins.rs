@@ -329,10 +329,20 @@ pub(super) fn call_builtin(
             }
             None => Err(RuntimeError::StackUnderflow),
         },
-        // HOF builtins are handled directly in step() since they
-        // need access to the frame machinery; they never reach call_builtin.
-        BuiltinFn::MapArray | BuiltinFn::FilterArray | BuiltinFn::FoldArray => {
-            unreachable!("HOF builtins are handled in step()")
+        BuiltinFn::EnvVar => match args.pop() {
+            // A missing (or non-UTF-8) variable reads as the empty string,
+            // sparing user code an option type for the common lookup case.
+            Some(Value::Str(name)) => Ok(Value::Str(std::env::var(&name).unwrap_or_default())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        // These builtins are handled directly in step(): the HOFs need the
+        // frame machinery, and 引数 needs the VM's stored program arguments.
+        // They never reach call_builtin.
+        BuiltinFn::MapArray
+        | BuiltinFn::FilterArray
+        | BuiltinFn::FoldArray
+        | BuiltinFn::ProgramArgs => {
+            unreachable!("handled in step()")
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::modules::{MOD_ARRAY, MOD_FUNC, MOD_IO, MOD_MAP, MOD_MATH, MOD_STRING};
+use crate::modules::{MOD_ARRAY, MOD_ENV, MOD_FUNC, MOD_IO, MOD_MAP, MOD_MATH, MOD_STRING};
 use crate::parser::{HikariType, Stmt};
 
 // ── Symbol tables ─────────────────────────────────────────────────────────────
@@ -64,6 +64,14 @@ pub(super) fn builtin_sig(name: &str) -> Option<FnSig> {
             params: vec![HikariType::String, HikariType::String],
             return_ty: HikariType::Void,
         }),
+        "引数" => Some(FnSig {
+            params: vec![],
+            return_ty: HikariType::Array(Box::new(HikariType::String)),
+        }),
+        "環境変数" => Some(FnSig {
+            params: vec![HikariType::String],
+            return_ty: HikariType::String,
+        }),
         _ => None,
     }
 }
@@ -81,6 +89,7 @@ pub(super) fn builtin_module(name: &str) -> Option<&'static str> {
         "鍵一覧" | "値一覧" | "削除" => Some(MOD_MAP),
         "マップ" | "絞り込み" | "畳み込み" => Some(MOD_FUNC),
         "ファイル読む" | "ファイル書く" | "印字" => Some(MOD_IO),
+        "引数" | "環境変数" => Some(MOD_ENV),
         _ => None,
     }
 }

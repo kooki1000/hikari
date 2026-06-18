@@ -27,6 +27,16 @@ fn run_result(src: &str) -> Result<Option<Value>, RuntimeError> {
     Vm::with_chunks(compiler.constants, compiler.chunks, script).run()
 }
 
+// Run a program with the given CLI arguments installed (for the 引数 builtin).
+fn run_with_args(src: &str, args: &[&str]) -> Option<Value> {
+    let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+    let mut compiler = Compiler::new();
+    let script = compiler.compile(&ast);
+    let mut vm = Vm::with_chunks(compiler.constants, compiler.chunks, script);
+    vm.set_program_args(args.iter().map(|s| s.to_string()).collect());
+    vm.run().unwrap()
+}
+
 // Run a program and return the line number reported for an uncaught runtime
 // error (via the VM's recorded error span), or None on success / no span.
 fn run_error_line(src: &str) -> Option<usize> {

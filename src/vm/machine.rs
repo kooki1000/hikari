@@ -20,6 +20,8 @@ pub struct Vm {
     try_stack: Vec<TryHandler>,
     // Source span of the most recent uncaught runtime error, for diagnostics.
     error_span: Option<Span>,
+    // CLI arguments passed to the running program, returned by the 引数 builtin.
+    program_args: Vec<String>,
 }
 
 enum StepResult {
@@ -49,6 +51,7 @@ impl Vm {
             frames: vec![frame],
             try_stack: Vec::new(),
             error_span: None,
+            program_args: Vec::new(),
         }
     }
 
@@ -71,6 +74,7 @@ impl Vm {
             frames: vec![frame],
             try_stack: Vec::new(),
             error_span: None,
+            program_args: Vec::new(),
         }
     }
 
@@ -86,6 +90,11 @@ impl Vm {
     /// The source span of the most recent uncaught runtime error, if known.
     pub fn error_span(&self) -> Option<Span> {
         self.error_span
+    }
+
+    /// Set the CLI arguments the program sees via the 引数 builtin.
+    pub fn set_program_args(&mut self, args: Vec<String>) {
+        self.program_args = args;
     }
 
     fn step(&mut self) -> Result<StepResult, RuntimeError> {
@@ -262,6 +271,16 @@ impl Vm {
                                 self.call_function(chunk_index, vec![acc, elem], captured.clone())?;
                         }
                         self.stack.push(acc);
+                    }
+                    BuiltinFn::ProgramArgs => {
+                        // Handled here (not call_builtin) because it reads the
+                        // VM's stored program arguments.
+                        let args: Vec<Value> = self
+                            .program_args
+                            .iter()
+                            .map(|a| Value::Str(a.clone()))
+                            .collect();
+                        self.stack.push(Value::Array(Rc::new(RefCell::new(args))));
                     }
                     _ => {
                         let stack_len = self.stack.len();

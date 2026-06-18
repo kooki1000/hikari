@@ -1,0 +1,13 @@
+取り込む 「環境」；
+取り込む 「配列」；
+
+＃ Run as:  hikari examples/args.hkr これ は 引数 です
+文字列列 引数一覧 ＝ 引数（）；
+印刷（「引数の数：」 ＋ 文字列化（要素数（引数一覧）））；
+
+各 値 ： 引数一覧 ならば ｛
+    印刷（値）；
+｝
+
+＃ Environment variables; a missing one reads as the empty string.
+印刷（「HOME＝」 ＋ 環境変数（「HOME」））；

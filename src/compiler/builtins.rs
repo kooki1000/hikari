@@ -35,6 +35,8 @@ pub enum BuiltinFn {
     ReadFile,       // ファイル読む
     WriteFile,      // ファイル書く
     PrintNoNewline, // 印字 (print without trailing newline)
+    ProgramArgs,    // 引数 (CLI args passed to the program)
+    EnvVar,         // 環境変数 (read an environment variable)
     // Higher-order functions (special: they take a fn value)
     MapArray,    // マップ
     FilterArray, // 絞り込み
@@ -76,6 +78,8 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "ファイル読む" => Some(BuiltinFn::ReadFile),
         "ファイル書く" => Some(BuiltinFn::WriteFile),
         "印字" => Some(BuiltinFn::PrintNoNewline),
+        "引数" => Some(BuiltinFn::ProgramArgs),
+        "環境変数" => Some(BuiltinFn::EnvVar),
         "マップ" => Some(BuiltinFn::MapArray),
         "絞り込み" => Some(BuiltinFn::FilterArray),
         "畳み込み" => Some(BuiltinFn::FoldArray),
