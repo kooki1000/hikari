@@ -265,3 +265,76 @@ fn test_vm_integer_multiplication_overflow_is_runtime_error() {
     let src = "整数 Ｘ ＝ ９２２３３７２０３６８５４７７５８０７ ＊ ２；返す Ｘ；";
     assert_eq!(run_result(src), Err(RuntimeError::IntegerOverflow));
 }
+
+// ── 12: REPL continuation after an uncaught runtime error ────────────
+
+// Compile a line with the given (persistent) compiler and run it as a REPL
+// line, syncing the program first — mirrors the real REPL driver.
+fn repl_step(
+    compiler: &mut Compiler,
+    vm: &mut Vm,
+    src: &str,
+) -> Result<Option<Value>, RuntimeError> {
+    let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+    let instrs = compiler.compile(&ast).unwrap();
+    let spans = compiler.script_spans.clone();
+    vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
+    vm.run_repl_line(instrs, spans)
+}
+
+#[test]
+fn test_vm_repl_continues_after_uncaught_runtime_error() {
+    let mut compiler = Compiler::new();
+    let mut vm = Vm::with_chunks(Vec::new(), Vec::new(), Vec::new());
+
+    // A line that errors at runtime must leave the VM in a clean state...
+    assert_eq!(
+        repl_step(&mut compiler, &mut vm, "整数 ｘ ＝ １ ／ ０；"),
+        Err(RuntimeError::DivisionByZero)
+    );
+    // ...so the next line still evaluates correctly.
+    assert_eq!(
+        repl_step(&mut compiler, &mut vm, "９９；"),
+        Ok(Some(Value::Int(99)))
+    );
+}
+
+#[test]
+fn test_vm_repl_continues_after_error_inside_function_call() {
+    // The error is raised in a called frame (frames deeper than 1). The VM
+    // must unwind those frames so the session can continue, rather than
+    // resuming into the dead frame on the next line.
+    let mut compiler = Compiler::new();
+    let mut vm = Vm::with_chunks(Vec::new(), Vec::new(), Vec::new());
+
+    assert!(
+        repl_step(
+            &mut compiler,
+            &mut vm,
+            "関数 だめ（）ー＞ 整数 ｛ 返す １ ／ ０； ｝印刷（だめ（））；"
+        )
+        .is_err()
+    );
+    assert_eq!(
+        repl_step(&mut compiler, &mut vm, "４２；"),
+        Ok(Some(Value::Int(42)))
+    );
+}
+
+#[test]
+fn test_vm_repl_locals_survive_a_later_failed_line() {
+    // A binding from an earlier successful line is still readable after a
+    // subsequent line errors at runtime.
+    let mut compiler = Compiler::new();
+    let mut vm = Vm::with_chunks(Vec::new(), Vec::new(), Vec::new());
+
+    assert_eq!(
+        repl_step(&mut compiler, &mut vm, "整数 値 ＝ ７；"),
+        Ok(None)
+    );
+    assert!(repl_step(&mut compiler, &mut vm, "整数 だめ ＝ ５ ／ ０；").is_err());
+    assert_eq!(
+        repl_step(&mut compiler, &mut vm, "値；"),
+        Ok(Some(Value::Int(7)))
+    );
+}

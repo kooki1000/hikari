@@ -7,6 +7,9 @@ use crate::parser::{Expr, HikariType, Stmt};
 use super::error::{NonExhaustiveMatchInfo, TypeError};
 use super::symbols::{FnSig, always_returns};
 
+// Clone lets the REPL snapshot the checker before a line and roll back to it
+// if the line fails, so a partially-checked line leaves no half-declared state.
+#[derive(Clone)]
 pub struct TypeChecker {
     pub(super) scopes: Vec<HashMap<String, HikariType>>,
     pub(super) fns: HashMap<String, FnSig>,
