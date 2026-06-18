@@ -379,6 +379,8 @@ If the try-body completes without error, the catch-body is skipped entirely. Err
 | `入出力` | `ファイル読む（パス）` | `文字列 → 文字列` | Read a whole file as a string (I/O failure is a runtime error) |
 | `入出力` | `ファイル書く（パス、内容）` | `文字列、文字列 → 無` | Write a string to a file, overwriting it |
 | `入出力` | `印字（値）` | `任意 → 無` | Print a value **without** a trailing newline (like `印刷` but newline-less) |
+| `環境` | `引数（）` | `→ 文字列列` | The CLI arguments passed to the program (excludes the interpreter and script path; empty in the REPL) |
+| `環境` | `環境変数（名前）` | `文字列 → 文字列` | Read an environment variable; a missing variable reads as `「」` (the empty string) |
 
 ```
 取り込む 「入出力」；
@@ -387,6 +389,15 @@ If the try-body completes without error, the catch-body is skipped entirely. Err
 文字列 内容 ＝ ファイル読む（「メモ.txt」）；
 印字（内容）；   ＃ no newline
 印字（「！」）；   ＃ → こんにちは！
+```
+
+```
+取り込む 「環境」；
+取り込む 「配列」；
+
+文字列列 引数一覧 ＝ 引数（）；
+印刷（要素数（引数一覧））；          ＃ how many args were passed
+文字列 ホーム ＝ 環境変数（「HOME」）；  ＃ "" if unset
 ```
 
 ### REPL
@@ -458,6 +469,7 @@ Then Hikari behaves like a normal interpreter:
 
 ```sh
 hikari script.hkr            # run a file
+hikari script.hkr a b c      # run a file, passing a/b/c to 引数（）
 hikari                       # start the REPL
 hikari -                     # read a program from stdin
 echo "印刷（１ ＋ ２）；" | hikari -
@@ -465,6 +477,8 @@ hikari -c "印刷（「やあ」）；"   # run inline code
 hikari --version             # print the version  (also: -v, バージョン)
 hikari --help                # show usage          (also: -h, 助け)
 ```
+
+Arguments after the script path (or after `-`/the `-c` code) are passed to the program and read with `引数（）` from the `環境` module.
 
 Scripts can also be made directly executable with a shebang line. Hikari's own
 comment marker is the full-width `＃`, so an ASCII `#!` line at the top of a file

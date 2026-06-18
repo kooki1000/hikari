@@ -177,3 +177,38 @@ fn test_vm_read_missing_file_is_io_error() {
     let src = "取り込む 「入出力」；返す ファイル読む（「/no/such/hikari/file.txt」）；";
     assert!(matches!(run_result(src), Err(RuntimeError::IoError(_))));
 }
+
+// ── 11c: program args & environment ──────────────────────────────────
+
+#[test]
+fn test_vm_program_args_returns_supplied_args() {
+    let src = "取り込む 「環境」；取り込む 「配列」；文字列列 ａ ＝ 引数（）；返す 要素数（ａ）；";
+    assert_eq!(run_with_args(src, &["x", "y", "z"]), Some(Value::Int(3)));
+}
+
+#[test]
+fn test_vm_program_args_indexing() {
+    let src = "取り込む 「環境」；文字列列 ａ ＝ 引数（）；返す ａ【１】；";
+    assert_eq!(
+        run_with_args(src, &["first", "second"]),
+        Some(Value::Str("second".to_string()))
+    );
+}
+
+#[test]
+fn test_vm_program_args_empty_when_none_supplied() {
+    let src = "取り込む 「環境」；取り込む 「配列」；返す 要素数（引数（））；";
+    assert_eq!(run_with_args(src, &[]), Some(Value::Int(0)));
+}
+
+#[test]
+fn test_vm_env_var_present_and_missing() {
+    // SAFETY: single-threaded test process; set then read our own variable.
+    unsafe { std::env::set_var("HIKARI_TEST_VAR", "ありがとう") };
+    let src = "取り込む 「環境」；返す 環境変数（「HIKARI_TEST_VAR」）；";
+    assert_eq!(run(src), Some(Value::Str("ありがとう".to_string())));
+
+    // A missing variable reads as the empty string.
+    let src = "取り込む 「環境」；返す 環境変数（「HIKARI_DEFINITELY_MISSING_VAR」）；";
+    assert_eq!(run(src), Some(Value::Str(String::new())));
+}

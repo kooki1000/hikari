@@ -29,23 +29,26 @@ fn main() {
         }
         Some("--help" | "-h" | "助け") => print_usage(),
         Some("-c") => {
-            // Inline program: `hikari -c "印刷（１）；"`
+            // Inline program: `hikari -c "印刷（１）；" 引数1 引数2`
             let Some(code) = args.get(1) else {
                 eprintln!("エラー: -c の後にコードがありません。");
                 process::exit(1);
             };
             // Inline code resolves relative imports against the current dir.
             let entry_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            run_source(code, &entry_dir);
+            // Args after the code string become the program's 引数.
+            let program_args = args.get(2..).map(<[_]>::to_vec).unwrap_or_default();
+            run_source(code, &entry_dir, program_args);
         }
         Some("-") => {
-            // Program piped on stdin: `echo "..." | hikari -`
+            // Program piped on stdin: `echo "..." | hikari - 引数1 引数2`
             let source = io::read_to_string(io::stdin()).unwrap_or_else(|e| {
                 eprintln!("エラー: 標準入力を読み込めません: {}", e);
                 process::exit(1);
             });
             let entry_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            run_source(&source, &entry_dir);
+            let program_args = args.get(1..).map(<[_]>::to_vec).unwrap_or_default();
+            run_source(&source, &entry_dir, program_args);
         }
         Some(flag) if flag.starts_with('-') => {
             eprintln!("エラー: 不明なオプション '{}'", flag);
@@ -62,7 +65,9 @@ fn main() {
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or_else(|| Path::new("."))
                 .to_path_buf();
-            run_source(&source, &entry_dir);
+            // Args after the script path become the program's 引数.
+            let program_args = args.get(1..).map(<[_]>::to_vec).unwrap_or_default();
+            run_source(&source, &entry_dir, program_args);
         }
     }
 }
@@ -72,10 +77,12 @@ fn print_usage() {
         "Hikari {ver} — 光プログラミング言語
 
 使い方:
-  hikari <ファイル.hkr>    ファイルを実行する
-  hikari                   対話モード（REPL）を開始する
-  hikari -                 標準入力からプログラムを読んで実行する
-  hikari -c \"<コード>\"      コードを直接実行する
+  hikari <ファイル.hkr> [引数...]   ファイルを実行する
+  hikari                          対話モード（REPL）を開始する
+  hikari - [引数...]               標準入力からプログラムを読んで実行する
+  hikari -c \"<コード>\" [引数...]    コードを直接実行する
+
+（[引数...] は「環境」モジュールの 引数（） で取得できます）
 
 オプション:
   -h, --help, 助け         この使い方を表示する
@@ -85,8 +92,9 @@ fn print_usage() {
 }
 
 /// Compile and run a complete Hikari program. Imports resolve relative to
-/// `entry_dir`. On any error, prints a diagnostic and exits non-zero.
-fn run_source(source: &str, entry_dir: &Path) {
+/// `entry_dir`; `program_args` are exposed to the program via the 引数 builtin.
+/// On any error, prints a diagnostic and exits non-zero.
+fn run_source(source: &str, entry_dir: &Path, program_args: Vec<String>) {
     let tokens = Lexer::new(source).tokenize();
     let ast = Parser::new(tokens).parse().unwrap_or_else(|e| {
         eprintln!("{}", diagnostic::render(source, e.span(), &e.to_string()));
@@ -108,6 +116,7 @@ fn run_source(source: &str, entry_dir: &Path) {
     let script_spans = compiler.script_spans.clone();
     let mut vm = Vm::with_chunks(compiler.constants, compiler.chunks, instructions);
     vm.set_script_spans(script_spans);
+    vm.set_program_args(program_args);
     let result = vm.run().unwrap_or_else(|e| {
         // A runtime error now carries a source span (when known): render it
         // with the same snippet style as compile-time diagnostics.

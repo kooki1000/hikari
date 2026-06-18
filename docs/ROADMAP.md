@@ -19,7 +19,7 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(381 tests passing):
+(388 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -30,17 +30,22 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １０b | Generics | ❌ Not started |
 | １１a | File I/O (`ファイル読む`/`ファイル書く`, `入出力` module) | ✅ **Done** |
 | １１b | Formatted print — `印字` (no-newline) done; multi-value/interpolation | 🟡 **Partial** |
-| １１c | Program args / env access | ❌ Not started |
+| １１c / １３e | Program args & env access (`引数`/`環境変数`, `環境` module) | ✅ **Done** |
 | １１d | Runtime error source spans | ✅ **Done** |
 | １２ | Robustness — recursion limit ✅; `Rc<[Instruction]>`, boundary checks, lints | 🟡 **Partial** |
-| １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang ✅; arg passthrough ❌ | 🟡 **Partial** |
+| １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
 
 The remaining sections below describe the open work. Completed work is marked ✅
-inline. Current focus: **generics (10b), remaining robustness (12), and arg
-passthrough (11c/13e).**
+inline. Current focus: **multi-value/interpolated print (11b), remaining robustness
+(12), and generics (10b).**
 
 ### Shipped since this status was added
 
+- **11c / 13e — Program args & environment.** `取り込む 「環境」` unlocks
+  `引数（）→文字列列` (the CLI args after the script path / `-c` code / `-`, empty in
+  the REPL) and `環境変数（名前）→文字列` (missing reads as `「」`). The VM stores the
+  args (`Vm::set_program_args`); `引数` is handled in `step()` like the HOFs, while
+  `環境変数` is a pure `call_builtin` arm. New stdlib module `環境` (`MOD_ENV`).
 - **10a — Closures.** `Value::Function` gained a `captured: Vec<Value>` and a new
   `MakeClosure` instruction. A lambda is now lexically scoped: the compiler runs a
   free-variable analysis (`free_vars` in `codegen.rs`), captures enclosing locals
@@ -166,7 +171,10 @@ types by hand in the type checker.
 **11a. ファイル入出力** — `ファイル読む（パス）`, `ファイル書く（パス、内容）`.
 **11b. 書式付き出力** — `印刷` of multiple values / interpolation, and a no-newline
 variant.
-**11c. プログラム引数と環境** — access to CLI args / env vars from a running program.
+**11c. プログラム引数と環境** — ✅ *done.* The `環境` module's `引数（）→文字列列`
+returns the CLI args passed after the script path (or after `-c`/`-`), and
+`環境変数（名前）→文字列` reads an environment variable (missing → empty string).
+This also covers **13e**'s arg-passthrough.
 **11d. 実行時エラーの位置情報** — ✅ *done.* Previously runtime errors carried no
 source span, so a division-by-zero or out-of-bounds index couldn't point at a line —
 a jarring drop in quality from the compile-time diagnostics. Now each `Chunk` and
@@ -226,9 +234,9 @@ executable. The lexer must skip a leading ASCII `#!` line (Hikari's own comment
 marker is full-width `＃`, so an ASCII shebang currently fails to lex). Then a
 chmod-+x script with a shebang runs as a normal executable.
 
-**13e. 終了コードと引数の引き渡し** — propagate meaningful process exit codes
-(0 success, non-zero on error — partly there via `process::exit`) and expose the
-script's own CLI arguments to the running program (overlaps **11c**).
+**13e. 終了コードと引数の引き渡し** — ✅ *done.* Process exit codes are meaningful
+(0 on success, non-zero on error via `process::exit`), and the script's own CLI
+arguments are exposed through `引数（）` (see **11c**).
 
 **Milestone:** `chmod +x hello.hkr && ./hello.hkr`, and
 `echo "印刷（「やあ」）；" | hikari -`, both work after `cargo install`.
@@ -237,11 +245,10 @@ script's own CLI arguments to the running program (overlaps **11c**).
 
 ## Suggested ordering
 
-Shipped so far: **7–9, 10a (closures), 11a, 11d, recursion limit (12), 13 (most).**
-Remaining, in recommended order:
+Shipped so far: **7–9, 10a (closures), 11a, 11c/13e (program args & env), 11d,
+recursion limit (12), 13 (CLI).** Remaining, in recommended order:
 
 ```
-Phase 11c/13e (program args)      ← let scripts read their own CLI args; small, self-contained
 Phase 11b (multi-value/interp print) ← finish formatted output beyond 印字
 Phase 12  (Rc<[Instruction]> + boundary hardening + lints) ← mechanical perf/safety
 Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff

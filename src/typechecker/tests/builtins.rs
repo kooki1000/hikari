@@ -322,3 +322,36 @@ fn test_typecheck_file_write_result_is_void() {
         }
     ));
 }
+
+// ── 11c: environment module (環境) ───────────────────────────────────
+
+#[test]
+fn test_typecheck_env_builtins_after_import() {
+    let src = "取り込む 「環境」；文字列列 ａ ＝ 引数（）；文字列 ｐ ＝ 環境変数（「PATH」）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+#[test]
+fn test_typecheck_program_args_without_import_fails() {
+    let ast = parse("文字列列 ａ ＝ 引数（）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::ModuleNotImported { module, .. } if module == "環境"
+    ));
+}
+
+#[test]
+fn test_typecheck_env_var_returns_string() {
+    // 環境変数 returns 文字列; binding it to an 整数 must fail.
+    let ast = parse("取り込む 「環境」；整数 x ＝ 環境変数（「PATH」）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::VarDeclMismatch {
+            got: HikariType::String,
+            ..
+        }
+    ));
+}
