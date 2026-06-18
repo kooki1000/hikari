@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::lexer::Span;
 use crate::parser::{BinOpKind, Expr, Stmt};
 
 use super::builtins::builtin_name;
@@ -10,11 +11,15 @@ use super::value::Value;
 
 pub struct Compiler {
     pub constants: Vec<Value>,
-    pub chunks: Vec<Chunk>,                // chunks[0] is the top-level script
-    fn_index: HashMap<String, u16>,        // function name → chunk index
-    synthetic_counter: u32,                // disambiguates ForEach's hidden locals
-    script_scopes: Scopes,                 // persists slots across repeated compile() calls (REPL)
-    loop_targets: Vec<LoopTarget>,         // enclosing-loop patch points for 抜ける／続ける
+    pub chunks: Vec<Chunk>, // chunks[0] is the top-level script
+    // Span checkpoints for the most recent compile()'s script instructions,
+    // parallel to its returned Vec<Instruction>. The VM uses these to map a
+    // runtime error in top-level code to its source line.
+    pub script_spans: Vec<(usize, Span)>,
+    fn_index: HashMap<String, u16>, // function name → chunk index
+    synthetic_counter: u32,         // disambiguates ForEach's hidden locals
+    script_scopes: Scopes,          // persists slots across repeated compile() calls (REPL)
+    loop_targets: Vec<LoopTarget>,  // enclosing-loop patch points for 抜ける／続ける
     variant_enum: HashMap<String, String>, // variant name → owning enum name
 }
 
@@ -83,6 +88,7 @@ impl Compiler {
         Self {
             constants: Vec::new(),
             chunks: Vec::new(),
+            script_spans: Vec::new(),
             fn_index: HashMap::new(),
             synthetic_counter: 0,
             script_scopes: Scopes::new(),
@@ -101,12 +107,14 @@ impl Compiler {
                 self.chunks.push(Chunk {
                     instructions: Vec::new(),
                     param_count: params.len() as u8,
+                    spans: Vec::new(),
                 });
             }
         }
 
         // Second pass: compile function bodies and the top-level script.
         let mut script_instrs: Vec<Instruction> = Vec::new();
+        let mut script_spans: Vec<(usize, Span)> = Vec::new();
         let mut script_scopes = std::mem::replace(&mut self.script_scopes, Scopes::new());
 
         for stmt in stmts {
@@ -121,19 +129,52 @@ impl Compiler {
                         fn_scopes.declare(pname);
                     }
                     let mut fn_instrs = Vec::new();
+                    let mut fn_spans = Vec::new();
                     for s in body {
-                        self.emit_stmt(s, &mut fn_instrs, &mut fn_scopes);
+                        self.emit_stmt(s, &mut fn_instrs, &mut fn_spans, &mut fn_scopes);
                     }
                     self.chunks[idx].instructions = fn_instrs;
+                    self.chunks[idx].spans = fn_spans;
                 }
                 other => {
-                    self.emit_stmt(other, &mut script_instrs, &mut script_scopes);
+                    self.emit_stmt(
+                        other,
+                        &mut script_instrs,
+                        &mut script_spans,
+                        &mut script_scopes,
+                    );
                 }
             }
         }
 
         self.script_scopes = script_scopes;
+        self.script_spans = script_spans;
         script_instrs
+    }
+
+    /// The source span of a statement (every statement carries one).
+    fn stmt_span(stmt: &Stmt) -> Span {
+        match stmt {
+            Stmt::VarDecl { span, .. }
+            | Stmt::FnDecl { span, .. }
+            | Stmt::Return(_, span)
+            | Stmt::Print(_, span)
+            | Stmt::If { span, .. }
+            | Stmt::While { span, .. }
+            | Stmt::Expr(_, span)
+            | Stmt::Assign { span, .. }
+            | Stmt::IndexAssign { span, .. }
+            | Stmt::ForRange { span, .. }
+            | Stmt::ForEach { span, .. }
+            | Stmt::TryCatch { span, .. }
+            | Stmt::Import { span, .. }
+            | Stmt::Break(span)
+            | Stmt::Continue(span)
+            | Stmt::TypeDecl { span, .. }
+            | Stmt::FieldAssign { span, .. }
+            | Stmt::EnumDecl { span, .. }
+            | Stmt::Match { span, .. } => *span,
+        }
     }
 
     fn add_constant(&mut self, val: Value) -> u16 {
@@ -145,7 +186,16 @@ impl Compiler {
         idx
     }
 
-    fn emit_stmt(&mut self, stmt: &Stmt, instrs: &mut Vec<Instruction>, scopes: &mut Scopes) {
+    fn emit_stmt(
+        &mut self,
+        stmt: &Stmt,
+        instrs: &mut Vec<Instruction>,
+        spans: &mut Vec<(usize, Span)>,
+        scopes: &mut Scopes,
+    ) {
+        // Record a checkpoint so any instruction emitted for this statement
+        // (including its sub-expressions) maps back to this source span.
+        spans.push((instrs.len(), Self::stmt_span(stmt)));
         match stmt {
             Stmt::VarDecl { name, value, .. } => {
                 self.emit_expr(value, instrs, scopes);
@@ -173,7 +223,7 @@ impl Compiler {
 
                 scopes.enter();
                 for s in then_body {
-                    self.emit_stmt(s, instrs, scopes);
+                    self.emit_stmt(s, instrs, spans, scopes);
                 }
                 scopes.exit();
 
@@ -187,7 +237,7 @@ impl Compiler {
 
                     scopes.enter();
                     for s in else_stmts {
-                        self.emit_stmt(s, instrs, scopes);
+                        self.emit_stmt(s, instrs, spans, scopes);
                     }
                     scopes.exit();
                     // Back-patch Jump to land after else_body.
@@ -212,7 +262,7 @@ impl Compiler {
                     break_jump_idxs: Vec::new(),
                 });
                 for s in body {
-                    self.emit_stmt(s, instrs, scopes);
+                    self.emit_stmt(s, instrs, spans, scopes);
                 }
                 scopes.exit();
                 instrs.push(Instruction::Jump(loop_start));
@@ -297,7 +347,7 @@ impl Compiler {
                     break_jump_idxs: Vec::new(),
                 });
                 for s in body {
-                    self.emit_stmt(s, instrs, scopes);
+                    self.emit_stmt(s, instrs, spans, scopes);
                 }
                 // 続ける must land HERE, at the increment, not at loop_start:
                 // loop_start re-checks the condition (fine in principle), but
@@ -354,7 +404,7 @@ impl Compiler {
                     break_jump_idxs: Vec::new(),
                 });
                 for s in body {
-                    self.emit_stmt(s, instrs, scopes);
+                    self.emit_stmt(s, instrs, spans, scopes);
                 }
                 // Same reasoning as ForRange: 続ける must land at the index
                 // increment below, not at loop_start, or the index would
@@ -389,7 +439,7 @@ impl Compiler {
                 instrs.push(Instruction::TryStart(0, 0)); // placeholder, patched below
                 scopes.enter();
                 for s in try_body {
-                    self.emit_stmt(s, instrs, scopes);
+                    self.emit_stmt(s, instrs, spans, scopes);
                 }
                 scopes.exit();
                 instrs.push(Instruction::TryEnd);
@@ -400,7 +450,7 @@ impl Compiler {
                 let error_slot = scopes.declare(error_var);
                 instrs[try_start_idx] = Instruction::TryStart(catch_target, error_slot);
                 for s in catch_body {
-                    self.emit_stmt(s, instrs, scopes);
+                    self.emit_stmt(s, instrs, spans, scopes);
                 }
                 scopes.exit();
                 let after_catch = instrs.len() as u16;
@@ -474,7 +524,7 @@ impl Compiler {
                         instrs.push(Instruction::StoreLocal(binder_slot));
                     }
                     for s in &arm.body {
-                        self.emit_stmt(s, instrs, scopes);
+                        self.emit_stmt(s, instrs, spans, scopes);
                     }
                     scopes.exit();
 
@@ -658,6 +708,7 @@ impl Compiler {
                 self.chunks.push(Chunk {
                     instructions: Vec::new(),
                     param_count: arity,
+                    spans: Vec::new(),
                 });
                 // Compile body into a fresh scope.
                 let mut fn_scopes = Scopes::new();
@@ -665,10 +716,12 @@ impl Compiler {
                     fn_scopes.declare(pname);
                 }
                 let mut fn_instrs = Vec::new();
+                let mut fn_spans = Vec::new();
                 for s in body {
-                    self.emit_stmt(s, &mut fn_instrs, &mut fn_scopes);
+                    self.emit_stmt(s, &mut fn_instrs, &mut fn_spans, &mut fn_scopes);
                 }
                 self.chunks[chunk_index].instructions = fn_instrs;
+                self.chunks[chunk_index].spans = fn_spans;
                 instrs.push(Instruction::LoadFn { chunk_index, arity });
             }
         }

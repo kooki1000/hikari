@@ -1,3 +1,5 @@
+use crate::lexer::Span;
+
 use super::builtins::BuiltinFn;
 
 // ── Instruction set ───────────────────────────────────────────────────────────
@@ -60,4 +62,10 @@ pub struct Chunk {
     pub instructions: Vec<Instruction>,
     #[allow(dead_code)] // reserved for arity checking in the type checker
     pub param_count: u8,
+    // Source-span checkpoints in ascending instruction-index order: each
+    // `(start, span)` says "instructions at index >= start belong to the
+    // statement at `span`, until the next checkpoint". Recorded per statement
+    // (expressions have no spans), so a runtime error maps to its statement's
+    // source line. See `Chunk::span_at`.
+    pub spans: Vec<(usize, Span)>,
 }
