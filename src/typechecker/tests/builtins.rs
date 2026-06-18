@@ -289,3 +289,36 @@ fn test_typecheck_math_builtins_without_import_fails() {
         TypeError::ModuleNotImported { module, .. } if module == "数学"
     ));
 }
+
+// ── 11a: I/O module (入出力) ─────────────────────────────────────────
+
+#[test]
+fn test_typecheck_io_builtins_after_import() {
+    let src = "取り込む 「入出力」；文字列 内容 ＝ ファイル読む（「a.txt」）；ファイル書く（「b.txt」、内容）；印字（内容）；";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+#[test]
+fn test_typecheck_io_builtins_without_import_fails() {
+    let ast = parse("文字列 内容 ＝ ファイル読む（「a.txt」）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::ModuleNotImported { module, .. } if module == "入出力"
+    ));
+}
+
+#[test]
+fn test_typecheck_file_write_result_is_void() {
+    // ファイル書く returns 無, so its result cannot be bound to a typed var.
+    let ast = parse("取り込む 「入出力」；整数 x ＝ ファイル書く（「a.txt」、「データ」）；");
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::VarDeclMismatch {
+            got: HikariType::Void,
+            ..
+        }
+    ));
+}

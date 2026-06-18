@@ -26,6 +26,22 @@ fn test_vm_try_catch_binds_error_message() {
 }
 
 #[test]
+fn test_vm_unbounded_recursion_raises_stack_overflow() {
+    // Infinite recursion must surface a clean StackOverflow rather than
+    // growing the frame vector until the process is killed.
+    let src = "関数 ループ（整数 ｎ）ー＞ 整数 ｛ 返す ループ（ｎ ＋ １）； ｝返す ループ（０）；";
+    assert_eq!(run_result(src), Err(RuntimeError::StackOverflow));
+}
+
+#[test]
+fn test_vm_deep_recursion_can_be_caught() {
+    // A StackOverflow raised deep in recursion is an ordinary runtime error,
+    // so try/catch must be able to recover from it.
+    let src = "関数 ループ（整数 ｎ）ー＞ 整数 ｛ 返す ループ（ｎ ＋ １）； ｝整数 結果 ＝ ０；試す ｛ 結果 ＝ ループ（０）； ｝ 失敗 ｅ ｛ 結果 ＝ ９９； ｝返す 結果；";
+    assert_eq!(run(src), Some(Value::Int(99)));
+}
+
+#[test]
 fn test_vm_try_catch_unwinds_nested_function_call() {
     // Error occurs inside a function call made from within try_body, so
     // unwinding must pop the callee's Frame, not just truncate the stack.

@@ -19,7 +19,7 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(361 tests passing):
+(369 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -28,13 +28,29 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | ９ | User-defined types (records, enums + `照合`, maps `辞書`) | ✅ **Done** |
 | １０a | First-class functions + lambdas + map/filter/fold HOFs | 🟡 **Partial** — lambdas are **non-capturing** (no closures) |
 | １０b | Generics | ❌ Not started |
-| １１ | I/O & runtime (file I/O, formatted print, program args, runtime spans) | ❌ Not started |
-| １２ | Robustness & tooling (recursion limit, `Rc<[Instruction]>`, boundary checks, lints) | ❌ Not started |
-| １３ | CLI & distribution (Python-like `hikari` command) | ❌ Not started *(new)* |
+| １１a | File I/O (`ファイル読む`/`ファイル書く`, `入出力` module) | ✅ **Done** |
+| １１b | Formatted print — `印字` (no-newline) done; multi-value/interpolation | 🟡 **Partial** |
+| １１c | Program args / env access | ❌ Not started |
+| １１d | Runtime error source spans | ❌ Not started |
+| １２ | Robustness — recursion limit ✅; `Rc<[Instruction]>`, boundary checks, lints | 🟡 **Partial** |
+| １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang ✅; arg passthrough ❌ | 🟡 **Partial** |
 
-The remaining sections below describe the open work. Completed phases (７–９) are
-kept for historical reference but marked ✅; focus is now on **closures (10a),
-I/O (11), robustness (12), and CLI distribution (13).**
+The remaining sections below describe the open work. Completed work is marked ✅
+inline. Current focus: **closures (10a), runtime spans (11d), remaining robustness
+(12), and arg passthrough (11c/13e).**
+
+### Shipped since this status was added
+
+- **11a — File I/O.** `取り込む 「入出力」` unlocks `ファイル読む（パス）→文字列`,
+  `ファイル書く（パス、内容）→無`, and `印字（値）→無` (print without a trailing
+  newline). New `RuntimeError::IoError`. New stdlib module `入出力` (`MOD_IO`).
+- **12 — Recursion depth limit.** A `MAX_FRAME_DEPTH` (1024) guard in every
+  frame-push path raises a clean `RuntimeError::StackOverflow`
+  (`再帰が深すぎます`) — catchable by try/catch — instead of unbounded growth.
+- **13 — CLI & distribution.** `cargo install --path .` yields a `hikari` command;
+  `--version`/`-v`, `--help`/`-h`, `hikari -` (stdin), and `hikari -c "<code>"` are
+  supported; the lexer skips a leading ASCII `#!` shebang so `.hkr` files can be
+  made directly executable.
 
 ---
 

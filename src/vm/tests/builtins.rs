@@ -156,3 +156,24 @@ fn test_vm_remainder_by_zero_returns_error() {
     let src = "取り込む 「数学」；返す 余り（１０、０）；";
     assert_eq!(run_result(src), Err(RuntimeError::DivisionByZero));
 }
+
+// ── 11a: file I/O ────────────────────────────────────────────────────
+
+#[test]
+fn test_vm_file_write_then_read_round_trips() {
+    // Use a unique temp path so the test is self-contained and parallel-safe.
+    let path = std::env::temp_dir().join(format!("hikari_io_{}.txt", std::process::id()));
+    let path_str = path.to_string_lossy().replace('\\', "/");
+    let src = format!(
+        "取り込む 「入出力」；ファイル書く（「{p}」、「こんにちは」）；返す ファイル読む（「{p}」）；",
+        p = path_str
+    );
+    assert_eq!(run(&src), Some(Value::Str("こんにちは".to_string())));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn test_vm_read_missing_file_is_io_error() {
+    let src = "取り込む 「入出力」；返す ファイル読む（「/no/such/hikari/file.txt」）；";
+    assert!(matches!(run_result(src), Err(RuntimeError::IoError(_))));
+}

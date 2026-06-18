@@ -700,6 +700,21 @@ impl super::TypeChecker {
                     return Ok(acc_ty);
                 }
 
+                // 印字 prints any single value with no trailing newline, like
+                // 印刷 but newline-less; it accepts any type and returns 無.
+                if name == "印字" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    self.infer_expr(&args[0], span)?;
+                    return Ok(HikariType::Void);
+                }
+
                 if let Some(sig) = builtin_sig(name) {
                     if args.len() != sig.params.len() {
                         return Err(TypeError::ArgCountMismatch {

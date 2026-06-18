@@ -405,3 +405,14 @@ fn test_lex_new_array_keyword() {
         ]
     );
 }
+
+#[test]
+fn test_lex_skips_leading_shebang_line() {
+    // A leading `#!` line is consumed so executable .hkr scripts lex cleanly,
+    // and the following code keeps its real line number (2).
+    let src = "#!/usr/bin/env hikari\n整数";
+    let tokens = Lexer::new(src).tokenize();
+    assert_eq!(tokens[0].kind, TokenKind::TyInt);
+    assert_eq!(tokens[0].span.line, 2);
+    assert_eq!(tokens[1].kind, TokenKind::Eof);
+}

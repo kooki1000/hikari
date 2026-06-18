@@ -2,36 +2,39 @@
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum BuiltinFn {
-    Len,           // 文字数
-    Input,         // 入力
-    ParseInt,      // 整数化
-    ParseFloat,    // 小数化
-    ToStr,         // 文字列化
-    Abs,           // 絶対値
-    Sqrt,          // 平方根
-    Random,        // 乱数
-    Max,           // 最大
-    Min,           // 最小
-    Split,         // 分割
-    Join,          // 結合
-    Contains,      // 含む
-    Replace,       // 置換
-    Pow,           // 累乗
-    Floor,         // 切り捨て
-    Ceil,          // 切り上げ
-    Round,         // 四捨五入
-    Rem,           // 余り
-    ArrayLen,      // 要素数
-    Push,          // 追加
-    Pop,           // 取り出す
-    ArrayContains, // 含む配列
-    IndexOf,       // 位置
-    Reverse,       // 逆順
-    Sort,          // 整列
-    Slice,         // 部分列
-    MapKeys,       // 鍵一覧
-    MapValues,     // 値一覧
-    MapDelete,     // 削除
+    Len,            // 文字数
+    Input,          // 入力
+    ParseInt,       // 整数化
+    ParseFloat,     // 小数化
+    ToStr,          // 文字列化
+    Abs,            // 絶対値
+    Sqrt,           // 平方根
+    Random,         // 乱数
+    Max,            // 最大
+    Min,            // 最小
+    Split,          // 分割
+    Join,           // 結合
+    Contains,       // 含む
+    Replace,        // 置換
+    Pow,            // 累乗
+    Floor,          // 切り捨て
+    Ceil,           // 切り上げ
+    Round,          // 四捨五入
+    Rem,            // 余り
+    ArrayLen,       // 要素数
+    Push,           // 追加
+    Pop,            // 取り出す
+    ArrayContains,  // 含む配列
+    IndexOf,        // 位置
+    Reverse,        // 逆順
+    Sort,           // 整列
+    Slice,          // 部分列
+    MapKeys,        // 鍵一覧
+    MapValues,      // 値一覧
+    MapDelete,      // 削除
+    ReadFile,       // ファイル読む
+    WriteFile,      // ファイル書く
+    PrintNoNewline, // 印字 (print without trailing newline)
     // Higher-order functions (special: they take a fn value)
     MapArray,    // マップ
     FilterArray, // 絞り込み
@@ -70,6 +73,9 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "鍵一覧" => Some(BuiltinFn::MapKeys),
         "値一覧" => Some(BuiltinFn::MapValues),
         "削除" => Some(BuiltinFn::MapDelete),
+        "ファイル読む" => Some(BuiltinFn::ReadFile),
+        "ファイル書く" => Some(BuiltinFn::WriteFile),
+        "印字" => Some(BuiltinFn::PrintNoNewline),
         "マップ" => Some(BuiltinFn::MapArray),
         "絞り込み" => Some(BuiltinFn::FilterArray),
         "畳み込み" => Some(BuiltinFn::FoldArray),

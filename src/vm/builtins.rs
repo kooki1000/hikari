@@ -302,6 +302,33 @@ pub(super) fn call_builtin(
             }
             _ => Err(RuntimeError::TypeMismatch),
         },
+        BuiltinFn::ReadFile => match args.pop() {
+            Some(Value::Str(path)) => std::fs::read_to_string(&path)
+                .map(Value::Str)
+                .map_err(|e| RuntimeError::IoError(format!("「{}」を読み込めません: {}", path, e))),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::WriteFile => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Str(path)), Some(Value::Str(contents))) => {
+                std::fs::write(&path, contents).map_err(|e| {
+                    RuntimeError::IoError(format!("「{}」に書き込めません: {}", path, e))
+                })?;
+                // ファイル書く is 無-typed; return a placeholder like Push does.
+                Ok(Value::Int(0))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::PrintNoNewline => match args.pop() {
+            Some(val) => {
+                use std::io::Write;
+                print!("{}", display_value(&val));
+                // Flush so output ordering is correct when not newline-terminated.
+                let _ = std::io::stdout().flush();
+                // 表示 is 無-typed; return a placeholder like Push does.
+                Ok(Value::Int(0))
+            }
+            None => Err(RuntimeError::StackUnderflow),
+        },
         // HOF builtins are handled directly in step() since they
         // need access to the frame machinery; they never reach call_builtin.
         BuiltinFn::MapArray | BuiltinFn::FilterArray | BuiltinFn::FoldArray => {

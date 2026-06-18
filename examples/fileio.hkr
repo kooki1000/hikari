@@ -1,0 +1,10 @@
+取り込む 「入出力」；
+
+＃ Write a string to a file, then read it back.
+ファイル書く（「光メモ.txt」、「こんにちは、光！」）；
+文字列 内容 ＝ ファイル読む（「光メモ.txt」）；
+
+＃ 印字 prints without a trailing newline; 印刷 adds one.
+印字（内容）；
+印字（「！！」）；
+印刷（「」）；
