@@ -85,7 +85,7 @@ fn test_vm_uncaught_error_still_propagates() {
         .parse()
         .unwrap();
     let mut compiler = Compiler::new();
-    let script = compiler.compile(&ast);
+    let script = compiler.compile(&ast).unwrap();
     let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
     assert_eq!(result, Err(RuntimeError::DivisionByZero));
 }
@@ -122,7 +122,7 @@ fn test_vm_sqrt_of_negative_returns_error() {
     .parse()
     .unwrap();
     let mut compiler = Compiler::new();
-    let script = compiler.compile(&ast);
+    let script = compiler.compile(&ast).unwrap();
     let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
     assert!(matches!(result, Err(RuntimeError::InvalidConversion(_))));
 }
@@ -144,7 +144,7 @@ fn test_vm_random_invalid_range_returns_error() {
         .parse()
         .unwrap();
     let mut compiler = Compiler::new();
-    let script = compiler.compile(&ast);
+    let script = compiler.compile(&ast).unwrap();
     let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
     assert!(matches!(result, Err(RuntimeError::InvalidConversion(_))));
 }
@@ -183,7 +183,7 @@ fn test_vm_repl_persists_locals_across_lines() {
     let ast1 = Parser::new(Lexer::new("整数 値 ＝ １０；").tokenize())
         .parse()
         .unwrap();
-    let instrs1 = compiler.compile(&ast1);
+    let instrs1 = compiler.compile(&ast1).unwrap();
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
     let result1 = vm
         .run_repl_line(instrs1, compiler.script_spans.clone())
@@ -191,7 +191,7 @@ fn test_vm_repl_persists_locals_across_lines() {
     assert_eq!(result1, None);
 
     let ast2 = Parser::new(Lexer::new("値；").tokenize()).parse().unwrap();
-    let instrs2 = compiler.compile(&ast2);
+    let instrs2 = compiler.compile(&ast2).unwrap();
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
     let result2 = vm
         .run_repl_line(instrs2, compiler.script_spans.clone())
@@ -207,7 +207,7 @@ fn test_vm_repl_line_with_explicit_return_resets_frame_without_panicking() {
     let ast1 = Parser::new(Lexer::new("返す １；").tokenize())
         .parse()
         .unwrap();
-    let instrs1 = compiler.compile(&ast1);
+    let instrs1 = compiler.compile(&ast1).unwrap();
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
     let result1 = vm
         .run_repl_line(instrs1, compiler.script_spans.clone())
@@ -217,7 +217,7 @@ fn test_vm_repl_line_with_explicit_return_resets_frame_without_panicking() {
     let ast2 = Parser::new(Lexer::new("印刷（２）；").tokenize())
         .parse()
         .unwrap();
-    let instrs2 = compiler.compile(&ast2);
+    let instrs2 = compiler.compile(&ast2).unwrap();
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
     let result2 = vm.run_repl_line(instrs2, compiler.script_spans.clone());
     assert!(result2.is_ok());
@@ -231,7 +231,7 @@ fn test_vm_repl_line_bare_expression_surfaces_value() {
     let ast = Parser::new(Lexer::new("１ ＋ １；").tokenize())
         .parse()
         .unwrap();
-    let instrs = compiler.compile(&ast);
+    let instrs = compiler.compile(&ast).unwrap();
     vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
     let result = vm
         .run_repl_line(instrs, compiler.script_spans.clone())

@@ -6,6 +6,7 @@ use crate::parser::{BinOpKind, Expr, Stmt};
 
 use super::builtins::builtin_name;
 use super::bytecode::{Chunk, Instruction};
+use super::error::CompileError;
 use super::value::Value;
 
 // ── Compiler ──────────────────────────────────────────────────────────────────
@@ -22,6 +23,10 @@ pub struct Compiler {
     script_scopes: Scopes,          // persists slots across repeated compile() calls (REPL)
     loop_targets: Vec<LoopTarget>,  // enclosing-loop patch points for 抜ける／続ける
     variant_enum: HashMap<String, String>, // variant name → owning enum name
+    // First fixed-width-field overflow hit during this compile(), if any. The
+    // emit_* methods stay infallible and record overflow here (emitting a
+    // placeholder); compile() turns this into an Err before the bytecode runs.
+    limit_error: Option<CompileError>,
 }
 
 // For While, continue_target is known immediately (loop_start, where the
@@ -95,19 +100,33 @@ impl Compiler {
             script_scopes: Scopes::new(),
             loop_targets: Vec::new(),
             variant_enum: HashMap::new(),
+            limit_error: None,
         }
     }
 
-    pub fn compile(&mut self, stmts: &[Stmt]) -> Vec<Instruction> {
+    // Convert a count to u8, recording an overflow (and returning a placeholder)
+    // if it exceeds the field width. compile() surfaces the recorded error.
+    fn count_u8(&mut self, n: usize, err: CompileError) -> u8 {
+        if n > u8::MAX as usize {
+            self.limit_error.get_or_insert(err);
+            u8::MAX
+        } else {
+            n as u8
+        }
+    }
+
+    pub fn compile(&mut self, stmts: &[Stmt]) -> Result<Vec<Instruction>, CompileError> {
         // First pass: register all function names so forward calls resolve.
         for stmt in stmts {
             if let Stmt::FnDecl { name, params, .. } = stmt {
                 // Reserve a chunk slot; the body is compiled below.
                 let idx = self.chunks.len() as u16;
                 self.fn_index.insert(name.clone(), idx);
+                let param_count =
+                    self.count_u8(params.len(), CompileError::TooManyArguments(params.len()));
                 self.chunks.push(Chunk {
                     instructions: Rc::from([]),
-                    param_count: params.len() as u8,
+                    param_count,
                     spans: Rc::from([]),
                 });
             }
@@ -150,7 +169,32 @@ impl Compiler {
 
         self.script_scopes = script_scopes;
         self.script_spans = script_spans;
-        script_instrs
+
+        // Structural limits. A chunk with ≤ u16::MAX instructions keeps every
+        // jump offset and literal-size field (also u16) in range, so a single
+        // per-chunk length check covers all of those at once.
+        const U16_CAP: usize = u16::MAX as usize;
+        if self.limit_error.is_none() {
+            if self.constants.len() > U16_CAP {
+                self.limit_error = Some(CompileError::TooManyConstants(self.constants.len()));
+            } else if self.chunks.len() > U16_CAP {
+                self.limit_error = Some(CompileError::TooManyFunctions(self.chunks.len()));
+            } else if script_instrs.len() > U16_CAP {
+                self.limit_error = Some(CompileError::ChunkTooLarge(script_instrs.len()));
+            } else if let Some(n) = self
+                .chunks
+                .iter()
+                .map(|c| c.instructions.len())
+                .find(|&n| n > U16_CAP)
+            {
+                self.limit_error = Some(CompileError::ChunkTooLarge(n));
+            }
+        }
+
+        match self.limit_error.take() {
+            Some(err) => Err(err),
+            None => Ok(script_instrs),
+        }
     }
 
     /// The source span of a statement (every statement carries one).
@@ -654,20 +698,22 @@ impl Compiler {
                     self.emit_expr(arg, instrs, scopes);
                 }
                 if let Some(owning_enum) = self.variant_enum.get(name).cloned() {
-                    instrs.push(Instruction::MakeEnum(
-                        owning_enum,
-                        name.clone(),
-                        args.len() as u8,
-                    ));
-                } else if let Some(builtin) = builtin_name(name) {
-                    instrs.push(Instruction::CallBuiltin(builtin, args.len() as u8));
-                } else if let Some(slot) = scopes.lookup(name) {
-                    // calling a Fn-typed local variable.
-                    instrs.push(Instruction::LoadLocal(slot));
-                    instrs.push(Instruction::CallValue(args.len() as u8));
+                    let payload =
+                        self.count_u8(args.len(), CompileError::TooManyPayloadValues(args.len()));
+                    instrs.push(Instruction::MakeEnum(owning_enum, name.clone(), payload));
                 } else {
-                    let fn_idx = self.fn_index[name];
-                    instrs.push(Instruction::Call(fn_idx, args.len() as u8));
+                    let argc =
+                        self.count_u8(args.len(), CompileError::TooManyArguments(args.len()));
+                    if let Some(builtin) = builtin_name(name) {
+                        instrs.push(Instruction::CallBuiltin(builtin, argc));
+                    } else if let Some(slot) = scopes.lookup(name) {
+                        // calling a Fn-typed local variable.
+                        instrs.push(Instruction::LoadLocal(slot));
+                        instrs.push(Instruction::CallValue(argc));
+                    } else {
+                        let fn_idx = self.fn_index[name];
+                        instrs.push(Instruction::Call(fn_idx, argc));
+                    }
                 }
             }
             Expr::Array(elems) => {
@@ -719,7 +765,8 @@ impl Compiler {
                     .collect();
 
                 let chunk_index = self.chunks.len();
-                let arity = params.len() as u8;
+                let arity =
+                    self.count_u8(params.len(), CompileError::TooManyArguments(params.len()));
                 self.chunks.push(Chunk {
                     instructions: Rc::from([]),
                     param_count: arity,
@@ -747,13 +794,17 @@ impl Compiler {
                 } else {
                     // Push captured values (left-to-right = capture order) then
                     // bundle them into the closure.
+                    let capture_count = self.count_u8(
+                        captures.len(),
+                        CompileError::TooManyCaptures(captures.len()),
+                    );
                     for (_, slot) in &captures {
                         instrs.push(Instruction::LoadLocal(*slot));
                     }
                     instrs.push(Instruction::MakeClosure {
                         chunk_index,
                         arity,
-                        capture_count: captures.len() as u8,
+                        capture_count,
                     });
                 }
             }

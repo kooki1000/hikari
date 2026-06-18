@@ -11,7 +11,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::{env, fs, process};
 
-use compiler::Compiler;
+use compiler::{CompileError, Compiler};
 use lexer::Lexer;
 use parser::Parser;
 use typechecker::TypeChecker;
@@ -112,7 +112,10 @@ fn run_source(source: &str, entry_dir: &Path, program_args: Vec<String>) {
     }
 
     let mut compiler = Compiler::new();
-    let instructions = compiler.compile(&ast);
+    let instructions = compiler.compile(&ast).unwrap_or_else(|e: CompileError| {
+        eprintln!("コンパイルエラー: {}", e);
+        process::exit(1);
+    });
     let script_spans = compiler.script_spans.clone();
     let mut vm = Vm::with_chunks(compiler.constants, compiler.chunks, instructions);
     vm.set_script_spans(script_spans);
@@ -183,7 +186,13 @@ fn run_repl() {
             continue;
         }
 
-        let instrs = compiler.compile(&ast);
+        let instrs = match compiler.compile(&ast) {
+            Ok(instrs) => instrs,
+            Err(e) => {
+                eprintln!("コンパイルエラー: {}", e);
+                continue;
+            }
+        };
         let line_spans = compiler.script_spans.clone();
         vm.sync_program(compiler.constants.clone(), compiler.chunks.clone());
 

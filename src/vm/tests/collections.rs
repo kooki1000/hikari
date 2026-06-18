@@ -27,7 +27,7 @@ fn test_vm_index_out_of_bounds_returns_error() {
         .parse()
         .unwrap();
     let mut compiler = Compiler::new();
-    let script = compiler.compile(&ast);
+    let script = compiler.compile(&ast).unwrap();
     let result = Vm::with_chunks(compiler.constants, compiler.chunks, script).run();
     assert_eq!(
         result,

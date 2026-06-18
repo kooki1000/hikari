@@ -5,7 +5,7 @@ use crate::parser::Parser;
 fn compile(src: &str) -> (Vec<Instruction>, Vec<Value>) {
     let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
     let mut c = Compiler::new();
-    let instrs = c.compile(&ast);
+    let instrs = c.compile(&ast).unwrap();
     (instrs, c.constants)
 }
 
@@ -55,7 +55,7 @@ fn test_compile_return() {
     let src = "関数 計算（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＋ １； ｝";
     let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
     let mut c = Compiler::new();
-    c.compile(&ast);
+    c.compile(&ast).unwrap();
     // The function chunk (index 0) must end with Return.
     assert_eq!(
         c.chunks[0].instructions.last().unwrap(),
@@ -135,7 +135,7 @@ fn test_compile_call_emits_correct_fn_idx() {
     let src = "関数 二倍（整数 Ａ）ー＞ 整数 ｛ 返す Ａ ＊ ２； ｝返す 二倍（５）；";
     let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
     let mut c = Compiler::new();
-    let script = c.compile(&ast);
+    let script = c.compile(&ast).unwrap();
     // Script: LoadConst(5), Call(0, 1), Return
     assert!(matches!(script[1], Instruction::Call(0, 1)));
 }
@@ -216,13 +216,13 @@ fn test_compile_repl_persists_script_slots_across_calls() {
         .parse()
         .unwrap();
     let mut c = Compiler::new();
-    let instrs1 = c.compile(&ast1);
+    let instrs1 = c.compile(&ast1).unwrap();
     assert_eq!(instrs1[1], Instruction::StoreLocal(0));
 
     let ast2 = Parser::new(Lexer::new("印刷（値）；").tokenize())
         .parse()
         .unwrap();
-    let instrs2 = c.compile(&ast2);
+    let instrs2 = c.compile(&ast2).unwrap();
     assert_eq!(instrs2[0], Instruction::LoadLocal(0));
 }
 
@@ -423,4 +423,46 @@ fn test_compile_print_multiple_values() {
 fn test_compile_print_no_values() {
     let (instrs, _) = compile("印刷（）；");
     assert_eq!(instrs[0], Instruction::PrintLine(0));
+}
+
+// ── 12: fixed-width-field boundary hardening ─────────────────────────
+
+// Convert a non-negative integer to its full-width (ZenKaku) digit form,
+// which is what the Hikari lexer accepts.
+fn fw(n: usize) -> String {
+    n.to_string()
+        .chars()
+        .map(|c| char::from_u32(c as u32 - '0' as u32 + '０' as u32).unwrap())
+        .collect()
+}
+
+fn compile_err(src: &str) -> CompileError {
+    let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+    Compiler::new().compile(&ast).unwrap_err()
+}
+
+#[test]
+fn test_compile_too_many_arguments_is_rejected() {
+    // A builtin call with 256 args overflows the u8 arg-count field.
+    let args = (0..256).map(fw).collect::<Vec<_>>().join("、");
+    let src = format!("要素数（{}）；", args);
+    assert_eq!(compile_err(&src), CompileError::TooManyArguments(256));
+}
+
+#[test]
+fn test_compile_255_arguments_is_accepted() {
+    // The boundary value itself must still compile.
+    let args = (0..255).map(fw).collect::<Vec<_>>().join("、");
+    let src = format!("要素数（{}）；", args);
+    let ast = Parser::new(Lexer::new(&src).tokenize()).parse().unwrap();
+    assert!(Compiler::new().compile(&ast).is_ok());
+}
+
+#[test]
+fn test_compile_oversized_chunk_is_rejected() {
+    // >65,535 instructions in one chunk overflows the u16 jump/offset fields.
+    // 32,768 prints compile to ~65,536 instructions; the repeated literal
+    // dedupes to a single constant, so this stays cheap to build/compile.
+    let src = "印刷（１）；".repeat(32768);
+    assert!(matches!(compile_err(&src), CompileError::ChunkTooLarge(_)));
 }

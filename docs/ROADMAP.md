@@ -19,7 +19,7 @@ ordered by impact. Each phase is independently shippable.
 ## Status (updated 2026-06-18)
 
 Since v2 was first written, most of the early phases have shipped. Current state
-(396 tests passing):
+(407 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -32,7 +32,7 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １１b | Formatted print — `印字` (no-newline) ✅; multi-value `印刷` ✅ | ✅ **Done** |
 | １１c / １３e | Program args & env access (`引数`/`環境変数`, `環境` module) | ✅ **Done** |
 | １１d | Runtime error source spans | ✅ **Done** |
-| １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅; boundary checks, lints, REPL txn, fuzz still open | 🟡 **Partial** |
+| １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅, boundary checks ✅; lints, REPL txn, fuzz still open | 🟡 **Partial** |
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
 
 The remaining sections below describe the open work. Completed work is marked ✅
@@ -40,6 +40,15 @@ inline. Current focus: **remaining robustness (12) and generics (10b).**
 
 ### Shipped since this status was added
 
+- **12 — Bytecode boundary hardening.** The bytecode encodes some counts in
+  fixed-width fields (`u16` constant-pool/jump/chunk indices, `u8` arg/payload/
+  capture counts); exceeding one used to silently wrap and miscompile. `compile`
+  now returns `Result<_, CompileError>`: `u8` sites are checked inline
+  (`count_u8`, recording the first overflow), and `u16` structural limits are a
+  cheap post-pass — one per-chunk instruction-count check covers every jump-offset
+  and literal-size field at once, since those are all bounded by the chunk length.
+  A "プログラムが大きすぎます" diagnostic replaces the silent wrap. (These limits
+  are unreachable in hand-written programs; this guards against corruption.)
 - **12 — Cheap call frames (`Rc<[Instruction]>`).** `Chunk` now holds its
   instructions and span checkpoints as `Rc<[…]>`, and a call `Frame` shares them
   with an O(1) refcount bump instead of cloning the whole body on every call. This
@@ -208,13 +217,13 @@ carry no spans, so sub-expression precision would require adding spans to the AS
 
 These harden the implementation itself rather than adding language features.
 
-- **任意精度・境界の見直し (still open):** the constant pool is `u16`-indexed, arg
-  counts are `u8`, chunk/function indices are `u16`, and jump offsets are `u16` — a
-  program that exceeds any of these silently wraps in the compiler instead of being
-  rejected. (The "fixed 256 locals" part of this concern is already resolved — see
-  below.) The clean fix makes the compiler fallible and emits a "プログラムが
-  大きすぎます" diagnostic at the offending cast; these limits are unreachable in
-  hand-written programs but the silent wrap is a latent correctness bug.
+- **任意精度・境界の見直し ✅ done:** the constant pool is `u16`-indexed, arg counts
+  are `u8`, and chunk/jump indices are `u16`. Exceeding any of these used to silently
+  wrap in the compiler; `compile` now returns `Result<_, CompileError>` and rejects
+  such a program with a "プログラムが大きすぎます" diagnostic. `u8` counts are checked
+  inline; the `u16` structural limits are a per-chunk post-pass (one
+  instruction-count check covers all offset and literal-size fields). These limits
+  are unreachable in hand-written programs; the check guards against corruption.
 - **再帰の性能 ✅ done:** `Chunk` instructions/spans are now `Rc<[…]>` and a call
   `Frame` shares them (refcount bump), so recursion is O(depth), not
   O(depth × body size). Previously `Frame::new` cloned the whole body per call.
@@ -269,11 +278,12 @@ arguments are exposed through `引数（）` (see **11c**).
 ## Suggested ordering
 
 Shipped so far: **7–9, 10a (closures), 11a, 11b (multi-value print), 11c/13e
-(program args & env), 11d, and the bulk of 12 (recursion limit, dynamic locals,
-`Rc<[Instruction]>` cheap frames), 13 (CLI).** Remaining, in recommended order:
+(program args & env), 11d, most of 12 (recursion limit, dynamic locals,
+`Rc<[Instruction]>` cheap frames, boundary hardening), 13 (CLI).** Remaining, in
+recommended order:
 
 ```
-Phase 12  (boundary hardening → fallible compiler; then lints, REPL txn, fuzz)
+Phase 12  (beginner lints → unused vars / unreachable code; REPL txn; lexer/parser fuzz)
 Phase 10b (generics)              ← last; biggest design cost, lowest completeness payoff
 ```
 
