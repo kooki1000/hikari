@@ -39,9 +39,9 @@ impl Vm {
     #[allow(dead_code)] // used in low-level unit tests that bypass the compiler
     pub fn new(constants: Vec<Value>, instructions: Vec<Instruction>) -> Self {
         let script_chunk = Chunk {
-            instructions,
+            instructions: instructions.into(),
             param_count: 0,
-            spans: Vec::new(),
+            spans: Rc::from([]),
         };
         let frame = Frame::new(&script_chunk, vec![]);
         Self {
@@ -62,9 +62,9 @@ impl Vm {
         script: Vec<Instruction>,
     ) -> Self {
         let script_chunk = Chunk {
-            instructions: script,
+            instructions: script.into(),
             param_count: 0,
-            spans: Vec::new(),
+            spans: Rc::from([]),
         };
         let frame = Frame::new(&script_chunk, vec![]);
         Self {
@@ -83,7 +83,7 @@ impl Vm {
     /// code can report a source location.
     pub fn set_script_spans(&mut self, spans: Vec<(usize, Span)>) {
         if let Some(frame) = self.frames.first_mut() {
-            frame.spans = spans;
+            frame.spans = spans.into();
         }
     }
 
@@ -621,13 +621,17 @@ impl Vm {
         new_instrs: Vec<Instruction>,
         new_spans: Vec<(usize, Span)>,
     ) -> Result<Option<Value>, RuntimeError> {
+        // frame 0's instructions/spans are immutable Rc slices, so a REPL
+        // append rebuilds them (once per line — not a hot path).
         let start_ip = self.frames[0].instructions.len();
-        self.frames[0].instructions.extend(new_instrs);
+        let mut instrs = self.frames[0].instructions.to_vec();
+        instrs.extend(new_instrs);
+        self.frames[0].instructions = instrs.into();
         // Span checkpoints are emitted relative to this line's start; shift
         // them to frame 0's absolute instruction indices before appending.
-        self.frames[0]
-            .spans
-            .extend(new_spans.into_iter().map(|(i, s)| (i + start_ip, s)));
+        let mut spans = self.frames[0].spans.to_vec();
+        spans.extend(new_spans.into_iter().map(|(i, s)| (i + start_ip, s)));
+        self.frames[0].spans = spans.into();
         self.frames[0].ip = start_ip;
 
         loop {
@@ -643,10 +647,10 @@ impl Vm {
                     // losing this session's variable bindings.
                     if self.frames.is_empty() {
                         self.frames.push(Frame {
-                            instructions: Vec::new(),
+                            instructions: Rc::from([]),
                             ip: 0,
                             locals: vec![None; INITIAL_LOCALS],
-                            spans: Vec::new(),
+                            spans: Rc::from([]),
                         });
                     }
                     return Ok(v);

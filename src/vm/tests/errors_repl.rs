@@ -51,6 +51,15 @@ fn test_vm_unbounded_recursion_raises_stack_overflow() {
 }
 
 #[test]
+fn test_vm_bounded_recursion_runs_to_completion() {
+    // Deep (but within-limit) recursion must still compute correctly. With
+    // chunk instructions shared via Rc, each of the ~500 nested calls is an
+    // O(1) frame setup rather than a full clone of the function body.
+    let src = "関数 合計（整数 ｎ）ー＞ 整数 ｛ もし ｎ ＝＝ ０ ならば ｛ 返す ０； ｝ 返す ｎ ＋ 合計（ｎ ー １）； ｝返す 合計（５００）；";
+    assert_eq!(run(src), Some(Value::Int(125250)));
+}
+
+#[test]
 fn test_vm_deep_recursion_can_be_caught() {
     // A StackOverflow raised deep in recursion is an ordinary runtime error,
     // so try/catch must be able to recover from it.

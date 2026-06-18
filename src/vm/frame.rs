@@ -1,15 +1,19 @@
+use std::rc::Rc;
+
 use crate::compiler::{Chunk, Instruction, Value};
 use crate::lexer::Span;
 
 // ── Call frame ────────────────────────────────────────────────────────────────
 
 pub(super) struct Frame {
-    pub(super) instructions: Vec<Instruction>,
+    // Shared with the owning Chunk (an O(1) refcount bump, not a deep copy of
+    // the body). Frame 0 in the REPL rebuilds this slice when a line is added.
+    pub(super) instructions: Rc<[Instruction]>,
     pub(super) ip: usize,
     pub(super) locals: Vec<Option<Value>>,
     // Span checkpoints for `instructions` (see Chunk::spans). Used to attach a
     // source location to a runtime error raised in this frame.
-    pub(super) spans: Vec<(usize, Span)>,
+    pub(super) spans: Rc<[(usize, Span)]>,
 }
 
 // Initial local-slot capacity for a fresh frame. Slots beyond this are
