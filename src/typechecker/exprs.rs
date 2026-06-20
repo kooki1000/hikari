@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use crate::lexer::Span;
 use crate::parser::{BinOpKind, Expr, HikariType};
 
+use super::checker::option_none_compatible;
+
 use super::error::TypeError;
 use super::generics::{generic_builtin_sig, instantiate, unify};
 use super::symbols::{always_returns, builtin_module, builtin_sig};
@@ -109,6 +111,32 @@ impl super::TypeChecker {
             }
 
             Expr::Call { name, args } => {
+                // Built-in 省略可 constructors — handled before variant_owner
+                // because they are not registered via EnumDecl.
+                if name == "有る" {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let inner = self.infer_value_expr(&args[0], span)?;
+                    return Ok(HikariType::Option(Box::new(inner)));
+                }
+                if name == "無し" {
+                    if !args.is_empty() {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 0,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    return Ok(HikariType::Option(Box::new(HikariType::Void)));
+                }
+
                 if let Some(owning_enum) = self.variant_owner.get(name).cloned() {
                     let payload_types = self
                         .enums
@@ -282,6 +310,90 @@ impl super::TypeChecker {
                     }
                 }
 
+                // 取得: safe non-raising access returning 省略可.
+                //   取得(辞書＜K,V＞, K) → 省略可＜V＞  (requires 辞書 module)
+                //   取得(T列, 整数) → 省略可＜T＞      (requires 配列 module)
+                if name == "取得" && args.len() == 2 {
+                    let first_ty = self.infer_value_expr(&args[0], span)?;
+                    if let HikariType::Map(k, v) = &first_ty {
+                        if !self.imported_modules.contains("辞書") {
+                            return Err(TypeError::ModuleNotImported {
+                                name: name.clone(),
+                                module: "辞書".to_string(),
+                                span,
+                            });
+                        }
+                        let key_ty = self.infer_value_expr(&args[1], span)?;
+                        if key_ty != **k {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: (**k).clone(),
+                                got: key_ty,
+                                span,
+                            });
+                        }
+                        return Ok(HikariType::Option(v.clone()));
+                    }
+                    if let HikariType::Array(elem_ty) = &first_ty {
+                        if !self.imported_modules.contains("配列") {
+                            return Err(TypeError::ModuleNotImported {
+                                name: name.clone(),
+                                module: "配列".to_string(),
+                                span,
+                            });
+                        }
+                        let idx_ty = self.infer_value_expr(&args[1], span)?;
+                        if idx_ty != HikariType::Int {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Int,
+                                got: idx_ty,
+                                span,
+                            });
+                        }
+                        return Ok(HikariType::Option(elem_ty.clone()));
+                    }
+                    return Err(TypeError::ArgTypeMismatch {
+                        name: name.clone(),
+                        param: HikariType::Map(
+                            Box::new(HikariType::String),
+                            Box::new(HikariType::Void),
+                        ),
+                        got: first_ty,
+                        span,
+                    });
+                }
+
+                // 位置可: safe indexOf returning 省略可＜整数＞ (requires 配列 module).
+                if name == "位置可" && args.len() == 2 {
+                    if !self.imported_modules.contains("配列") {
+                        return Err(TypeError::ModuleNotImported {
+                            name: name.clone(),
+                            module: "配列".to_string(),
+                            span,
+                        });
+                    }
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
+                    if let HikariType::Array(elem_ty) = &arr_ty {
+                        let val_ty = self.infer_value_expr(&args[1], span)?;
+                        if val_ty != **elem_ty {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: (**elem_ty).clone(),
+                                got: val_ty,
+                                span,
+                            });
+                        }
+                        return Ok(HikariType::Option(Box::new(HikariType::Int)));
+                    }
+                    return Err(TypeError::ArgTypeMismatch {
+                        name: name.clone(),
+                        param: HikariType::Array(Box::new(HikariType::Int)),
+                        got: arr_ty,
+                        span,
+                    });
+                }
+
                 // 含む is polymorphic: String × String → Bool (文字列 module)
                 // or Map × Key → Bool (辞書 module).
                 if name == "含む" && args.len() == 2 {
@@ -382,7 +494,9 @@ impl super::TypeChecker {
                             }
                             for (arg, param_ty) in args.iter().zip(params.iter()) {
                                 let arg_ty = self.infer_value_expr(arg, span)?;
-                                if arg_ty != *param_ty {
+                                if arg_ty != *param_ty
+                                    && !option_none_compatible(param_ty, &arg_ty)
+                                {
                                     return Err(TypeError::ArgTypeMismatch {
                                         name: name.clone(),
                                         param: param_ty.clone(),
@@ -414,7 +528,7 @@ impl super::TypeChecker {
                 }
                 for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
                     let arg_ty = self.infer_value_expr(arg, span)?;
-                    if arg_ty != *param_ty {
+                    if arg_ty != *param_ty && !option_none_compatible(param_ty, &arg_ty) {
                         return Err(TypeError::ArgTypeMismatch {
                             name: name.clone(),
                             param: param_ty.clone(),

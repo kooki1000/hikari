@@ -245,3 +245,74 @@ fn test_typecheck_void_call_result_cannot_be_used_as_value() {
     let err = TypeChecker::new().check(&parse(src)).unwrap_err();
     assert!(matches!(err, TypeError::VoidValueUsed { .. }));
 }
+
+// ── 15a: 省略可＜T＞ — option type ────────────────────────────────────
+
+#[test]
+fn test_typecheck_option_var_decl_with_aru() {
+    let src = "省略可＜整数＞ ｖ ＝ 有る（４２）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_option_var_decl_with_nashi() {
+    // 無し() is compatible with any 省略可＜T＞ at the declaration site.
+    let src = "省略可＜整数＞ ｖ ＝ 無し（）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_option_match_exhaustive() {
+    let src = "省略可＜整数＞ ｖ ＝ 有る（１）；\
+               照合 ｖ ｛\
+                 有る（ｎ） ならば ｛ 印刷（ｎ）； ｝\
+                 無し（） ならば ｛ 印刷（０）； ｝\
+               ｝";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_option_match_binder_has_inner_type() {
+    // The binder in 有る(ｎ) must have the inner type (整数).
+    let src = "省略可＜整数＞ ｖ ＝ 有る（１）；\
+               照合 ｖ ｛\
+                 有る（ｎ） ならば ｛ 整数 ｗ ＝ ｎ ＋ １；印刷（ｗ）； ｝\
+                 無し（） ならば ｛ 印刷（０）； ｝\
+               ｝";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_option_match_missing_arm_is_error() {
+    let src = "省略可＜整数＞ ｖ ＝ 有る（１）；\
+               照合 ｖ ｛ 有る（ｎ） ならば ｛ 印刷（ｎ）； ｝ ｝";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(err, TypeError::NonExhaustiveMatch(_)));
+}
+
+#[test]
+fn test_typecheck_option_return_nashi_from_option_function() {
+    let src = "関数 なし取得（）ー＞省略可＜整数＞｛ 返す 無し（）； ｝";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_option_match_exhaustive_counts_as_returning() {
+    // After 14a, an exhaustive 照合 where both arms return counts as
+    // always returning — so no MissingReturn even without a trailing 返す.
+    let src = "関数 開梱（省略可＜整数＞ ｖ）ー＞整数｛\
+                 照合 ｖ ｛\
+                   有る（ｎ） ならば ｛ 返す ｎ； ｝\
+                   無し（） ならば ｛ 返す ０； ｝\
+                 ｝\
+               ｝";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_option_type_mismatch_is_error() {
+    // 有る(「文字列」) cannot be assigned to 省略可＜整数＞.
+    let src = "省略可＜整数＞ ｖ ＝ 有る（「文字列」）；";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(err, TypeError::VarDeclMismatch { .. }));
+}

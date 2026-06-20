@@ -41,6 +41,9 @@ pub enum BuiltinFn {
     MapArray,    // マップ
     FilterArray, // 絞り込み
     FoldArray,   // 畳み込み
+    // Phase 15: safe access returning 省略可
+    SafeGet, // 取得 (safe map/array lookup → 省略可)
+    SafePos, // 位置可 (safe indexOf → 省略可＜整数＞)
 }
 
 pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
@@ -83,6 +86,8 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "マップ" => Some(BuiltinFn::MapArray),
         "絞り込み" => Some(BuiltinFn::FilterArray),
         "畳み込み" => Some(BuiltinFn::FoldArray),
+        "取得" => Some(BuiltinFn::SafeGet),
+        "位置可" => Some(BuiltinFn::SafePos),
         _ => None,
     }
 }

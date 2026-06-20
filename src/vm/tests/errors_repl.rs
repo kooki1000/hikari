@@ -36,9 +36,9 @@ fn test_vm_runtime_error_reports_statement_line() {
 
 #[test]
 fn test_vm_runtime_error_inside_function_points_into_function_body() {
-    // The error happens inside 取得's body (line 2), reached via a call on
+    // The error happens inside 参照's body (line 2), reached via a call on
     // line 5. The span should point at the failing statement, not the call.
-    let src = "関数 取得（整数列 ｘｓ）ー＞ 整数 ｛\n返す ｘｓ【９】；\n｝\n整数列 ａ ＝ 【１】；\n返す 取得（ａ）；";
+    let src = "関数 参照（整数列 ｘｓ）ー＞ 整数 ｛\n返す ｘｓ【９】；\n｝\n整数列 ａ ＝ 【１】；\n返す 参照（ａ）；";
     assert_eq!(run_error_line(src), Some(2));
 }
 

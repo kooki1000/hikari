@@ -14,6 +14,8 @@ pub enum HikariType {
     Record(String), // user-defined record/enum type, identified by its declared name
     // function type — 関数＜(T1、T2) → R＞
     Fn(Vec<HikariType>, Box<HikariType>),
+    // built-in option type — 省略可＜T＞
+    Option(Box<HikariType>),
 }
 
 // ── AST nodes ────────────────────────────────────────────────────────────────

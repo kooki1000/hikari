@@ -350,8 +350,8 @@ described in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 | Phase | Theme | Status |
 |-------|-------|--------|
-| １４ | Correctness fixes from the review | ⬜ Planned |
-| １５ | Optionality & error values (`省略可`, `?`, `結果` sugar) | ⬜ Planned |
+| １４ | Correctness fixes from the review | ✅ **Done** |
+| １５ | Optionality & error values (`省略可`, `?`, `結果` sugar) | ✅ **Done** (15a+15b; 15c deferred) |
 | １６ | User-written generics (`関数＜Ｔ＞ …`) | ⬜ Planned |
 | １７ | Standard-library expansion (string/number/collection/time/JSON) | ⬜ Planned |
 | １８ | A real module & namespace system | ⬜ Planned |

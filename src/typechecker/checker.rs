@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::lexer::Span;
 use crate::modules::STDLIB_MODULES;
@@ -6,6 +6,15 @@ use crate::parser::{Expr, HikariType, Stmt};
 
 use super::error::{NonExhaustiveMatchInfo, TypeError};
 use super::symbols::{FnSig, always_returns};
+
+// 無し() returns Option(Void) as an "unresolved None" sentinel.  It is
+// assignment-compatible wherever any Option<T> is expected.
+pub(super) fn option_none_compatible(declared: &HikariType, got: &HikariType) -> bool {
+    matches!(
+        (declared, got),
+        (HikariType::Option(_), HikariType::Option(inner)) if inner.as_ref() == &HikariType::Void
+    )
+}
 
 // Clone lets the REPL snapshot the checker before a line and roll back to it
 // if the line fails, so a partially-checked line leaves no half-declared state.
@@ -72,6 +81,7 @@ impl TypeChecker {
                 self.check_type_declared(v, span)
             }
             HikariType::Array(inner) => self.check_type_declared(inner, span),
+            HikariType::Option(inner) => self.check_type_declared(inner, span),
             HikariType::Fn(params, ret) => {
                 for p in params {
                     self.check_type_declared(p, span)?;
@@ -134,7 +144,7 @@ impl TypeChecker {
                     return Ok(());
                 }
                 let inferred = self.infer_value_expr(value, *span)?;
-                if inferred != *ty {
+                if inferred != *ty && !option_none_compatible(ty, &inferred) {
                     return Err(TypeError::VarDeclMismatch {
                         name: name.clone(),
                         declared: ty.clone(),
@@ -198,6 +208,7 @@ impl TypeChecker {
                         let got = self.infer_value_expr(expr, *span)?;
                         if let Some(expected) = &self.current_return_ty
                             && got != *expected
+                            && !option_none_compatible(expected, &got)
                         {
                             return Err(TypeError::ReturnTypeMismatch {
                                 expected: expected.clone(),
@@ -519,6 +530,72 @@ impl TypeChecker {
                 span,
             } => {
                 let subject_ty = self.infer_value_expr(subject, *span)?;
+
+                // Built-in 省略可＜T＞ match: 有る(binder) and 無し().
+                if let HikariType::Option(inner_ty) = &subject_ty {
+                    let inner_ty = *inner_ty.clone();
+                    let mut covered: HashSet<String> = HashSet::new();
+                    for arm in arms {
+                        if !covered.insert(arm.variant.clone()) {
+                            return Err(TypeError::DuplicateMatchArm {
+                                variant: arm.variant.clone(),
+                                span: *span,
+                            });
+                        }
+                        match arm.variant.as_str() {
+                            "有る" => {
+                                if arm.binders.len() != 1 {
+                                    return Err(TypeError::ArgCountMismatch {
+                                        name: "有る".to_string(),
+                                        expected: 1,
+                                        got: arm.binders.len(),
+                                        span: *span,
+                                    });
+                                }
+                                self.enter_scope();
+                                self.declare_var(&arm.binders[0], inner_ty.clone());
+                                self.check(&arm.body)?;
+                                self.exit_scope();
+                            }
+                            "無し" => {
+                                if !arm.binders.is_empty() {
+                                    return Err(TypeError::ArgCountMismatch {
+                                        name: "無し".to_string(),
+                                        expected: 0,
+                                        got: arm.binders.len(),
+                                        span: *span,
+                                    });
+                                }
+                                self.enter_scope();
+                                self.check(&arm.body)?;
+                                self.exit_scope();
+                            }
+                            other => {
+                                return Err(TypeError::UndeclaredEnumVariant {
+                                    enum_name: "省略可".to_string(),
+                                    variant: other.to_string(),
+                                    span: *span,
+                                });
+                            }
+                        }
+                    }
+                    let missing: Vec<String> = ["有る", "無し"]
+                        .iter()
+                        .filter(|v| !covered.contains(**v))
+                        .map(|v| v.to_string())
+                        .collect();
+                    if !missing.is_empty() {
+                        return Err(TypeError::NonExhaustiveMatch(Box::new(
+                            NonExhaustiveMatchInfo {
+                                enum_name: "省略可".to_string(),
+                                missing,
+                                span: *span,
+                            },
+                        )));
+                    }
+                    return Ok(());
+                }
+
                 // Enum-typed variables are stored as Record(enum_name) in the
                 // type system (parse_type maps any bare Ident to Record), so
                 // we accept Record(name) when name is a registered enum, as
