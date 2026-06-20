@@ -330,11 +330,231 @@ lints, fuzz testing + parser depth limit), and 13 (the Python-like CLI). Hikari
 went from "a language you can solve beginner exercises in" to a small but genuinely
 general-purpose language.
 
-Possible directions *beyond* this roadmap, if the project continues:
+The original v2 plan is fully shipped. What follows is **Roadmap v3** — the next
+horizon, informed by a fresh code review.
 
-- **User-written generics** — `関数＜Ｔ＞ …` so users (not just the stdlib) can write
-  parametric functions. 10b laid the groundwork (a type-variable representation and
-  unifier).
-- **More stdlib** — date/time, richer string/number formatting, JSON, etc.
-- **A real module/namespace system** beyond the current flat `取り込む`.
-- **Optimization** — constant folding, peephole passes, or a faster dispatch loop.
+---
+
+# Hikari Roadmap v3 — From "general purpose" to "robust & ergonomic"
+
+Updated 2026-06-20. v2 made Hikari a small general-purpose language. v3 has three
+goals: **(0)** fix the soundness/quality bugs the review surfaced, **(1)** raise
+expressive power (user generics, options, richer types), and **(2)** make Hikari
+pleasant to *live in* (better errors, tooling, a real stdlib, a module system).
+
+Phases are independently shippable and roughly ordered by impact. The detailed
+bug write-ups live in [KNOWN_ISSUES.md](KNOWN_ISSUES.md); internals they touch are
+described in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Status (v3)
+
+| Phase | Theme | Status |
+|-------|-------|--------|
+| １４ | Correctness fixes from the review | ⬜ Planned |
+| １５ | Optionality & error values (`省略可`, `?`, `結果` sugar) | ⬜ Planned |
+| １６ | User-written generics (`関数＜Ｔ＞ …`) | ⬜ Planned |
+| １７ | Standard-library expansion (string/number/collection/time/JSON) | ⬜ Planned |
+| １８ | A real module & namespace system | ⬜ Planned |
+| １９ | Diagnostics & developer tooling (fmt, expr spans, multi-error) | ⬜ Planned |
+| ２０ | Performance (peephole, constant folding, faster dispatch) | ⬜ Planned |
+
+---
+
+## フェーズ１４ — レビュー指摘の修正（Correctness Fixes）
+
+*Small, high-value fixes; ship first. Each maps to a KNOWN_ISSUES entry.*
+
+**14a. Exhaustive `照合` counts as a returning path.** Add a `Stmt::Match` arm to
+`always_returns` ([symbols.rs](../src/typechecker/symbols.rs:100)) returning
+`arms.iter().all(|a| always_returns(&a.body))`. Exhaustiveness is already proven
+by the checker, so this is sound. Removes the need for a dead trailing `返す`.
+*(KNOWN_ISSUES #1.)*
+
+**14b. Float display keeps the decimal point.** `display_value` should render an
+integral `小数` as `１．０`, not `１` ([value_ops.rs](../src/vm/value_ops.rs:8)).
+Decide `NaN`/`inf` rendering at the same time. *(KNOWN_ISSUES #3.)*
+
+**14c. `絶対値` overflow is checked.** Replace `wrapping_abs` with
+`checked_abs → IntegerOverflow` for consistency with all other integer ops.
+*(KNOWN_ISSUES #4.)*
+
+**14d. Defensive sort comparators.** Replace the `_ => Equal` fallbacks in
+`sort_values`/`MapKeys` with `unreachable!`/`TypeMismatch`. *(KNOWN_ISSUES #5.)*
+
+**14e. Imported files are self-contained.** Splice top-level `取り込む`/`型`/
+`構造` from imported files (not just `関数`), or at minimum emit a diagnostic that
+names the imported file instead of pointing into the importer. Folds into Phase 18
+if a fuller module system lands first. *(KNOWN_ISSUES #2.)*
+
+**マイルストーン:** the four KNOWN_ISSUES reproductions all behave correctly; no
+regression in the 434-test suite.
+
+---
+
+## フェーズ１５ — 省略可能性とエラー値（Optionality & Errors as Values）
+
+**Motivation.** Several builtins encode "absence" as sentinels: `位置` returns
+`-1`, `環境変数` returns `「」`, map lookup *raises* on a missing key. A
+first-class option type makes absence explicit and type-checked, and pairs with
+the existing `照合` machinery.
+
+**15a. `省略可＜Ｔ＞` (Option).** A built-in generic sum type with variants `有る（Ｔ）`
+and `無し`. Lowers to the existing enum representation (`Value::Enum`), so no new
+runtime — just checker/parser support and `照合` integration:
+
+```
+省略可＜整数＞ ｖ ＝ 探す（スコア、「アリス」）；
+照合 ｖ ｛
+  有る（ｎ） ならば ｛ 印刷（ｎ）； ｝
+  無し（） ならば ｛ 印刷（「見つかりません」）； ｝
+｝
+```
+
+**15b. Safe map/array access returning `省略可`.** Add `取得（m、key）→省略可＜Ｖ＞`
+and `取得（配列、添字）→省略可＜Ｔ＞` as non-raising lookups; migrate `位置` to return
+`省略可＜整数＞` (or add `位置可`). Existing raising index syntax (`m【key】`) stays.
+
+**15c. `結果＜Ｔ、Ｅ＞` sugar (optional).** A standard `成功（Ｔ）`/`失敗（Ｅ）` enum plus
+a `？` postfix that early-returns the error — bridging `照合`-style error values
+and `試す/失敗`. Lowers to a match + `返す`.
+
+**Dependency:** 15c benefits from Phase 16 (user generics) but `省略可`/`結果` can
+ship as *built-in* generics first.
+
+---
+
+## フェーズ１６ — ユーザー定義ジェネリクス（User-Written Generics）
+
+**The biggest expressiveness leap left.** 10b already built the representation
+(`SigType`, type variables) and the `unify`/`instantiate` machinery in
+[generics.rs](../src/typechecker/generics.rs). v3 exposes it to users.
+
+**16a. Generic function declarations.** `関数＜Ｔ＞ 恒等（Ｔ ｘ）ー＞ Ｔ ｛ 返す ｘ； ｝`
+and multi-parameter forms `関数＜Ｔ、Ｕ＞ …`. Parse a `＜…＞` type-variable list on
+`関数`, register each `Ｔ` as a fresh type variable in scope while checking the
+body, and at each call site infer the substitution from the argument types
+(reusing `unify`).
+
+**16b. Generic records/enums.** `型 箱＜Ｔ＞ ｛ Ｔ 値； ｝` and
+`構造 対＜Ａ、Ｂ＞ ｛ … ｝`, so user containers are as expressive as the built-in
+`配列`/`辞書`/`省略可`.
+
+**16c. Monomorphization vs. uniform representation.** The VM is already
+type-erased at runtime (a `Value` is a `Value`), so the simplest path is
+**checker-only generics with a single shared chunk** per generic function — no
+monomorphization needed. Document the constraint that generics are parametric
+(no overloading/specialization).
+
+**Design notes.** Keep inference local (per call site), no global HM unification
+or let-generalization — matches the current "infer, don't solve globally" style.
+Decide bounds later (e.g. an `整列可`/orderable constraint) — start unbounded.
+
+---
+
+## フェーズ１７ — 標準ライブラリの拡充（Standard Library）
+
+*Mostly new `builtin_sig`/`generic_builtin_sig` + `call_builtin` arms — little new
+machinery. Group by module; each is independently shippable.*
+
+**17a. 文字列 (richer strings).** `大文字`/`小文字` (upper/lower), `整形`
+(trim), `先頭一致`/`末尾一致` (starts/ends-with), `部分文字列（s、開始、終了）`,
+`文字列位置（s、部分）→省略可＜整数＞`, `繰り返し文字列（s、回数）`. Define string
+indexing semantics explicitly (char-based, consistent with `文字数`).
+
+**17b. 数学 (more numerics).** `符号` (sign), `挟む（値、下、上）` (clamp),
+`総和`/`平均`/`最大値`/`最小値` over numeric arrays, trig/log behind the existing
+`数学` gate.
+
+**17c. 配列 (more collections).** `平坦化` (flatten), `連結` (concat),
+`重複除去` (dedup), `分割（配列、サイズ）` (chunk), `畳み込み右` (foldr),
+`どれか`/`すべて` (any/all over a predicate), `数える（配列、述語）`.
+
+**17d. 辞書 (more maps).** `併合（a、b）` (merge), `数（m）` (size),
+`取得既定（m、key、既定）` (get-or-default), `項目一覧` (entries as a pair array
+— needs Phase 16's generic `対＜Ａ、Ｂ＞`).
+
+**17e. 時間 (time) module.** `現在時刻（）→整数` (epoch millis), `経過（開始）`,
+`眠る（ミリ秒）`. New `MOD_TIME`.
+
+**17f. JSON / 直列化 module.** `JSON化（値）→文字列` and `JSON解析（文字列）→…`.
+Non-trivial without a dynamic/`任意` type — likely depends on Phase 15/16
+(an `JSON値` enum). Tracked here, scheduled after generics.
+
+---
+
+## フェーズ１８ — モジュールと名前空間（Modules & Namespaces）
+
+**Motivation.** Today `取り込む` flattens a file's top-level `関数` into one global
+namespace — name collisions are silent, and a file's types/imports are dropped
+(KNOWN_ISSUES #2). v3 makes modules real.
+
+**18a. Namespaced imports.** `取り込む 「幾何」 として 幾何；` then `幾何。距離（…）`
+(or `幾何：距離`). Requires qualified-name resolution in the parser/checker and a
+module symbol table keyed by alias.
+
+**18b. Self-contained library files.** Resolve and merge an imported file's own
+`取り込む`/`型`/`構造`, scoped to that module (subsumes 14e). Prevents a library's
+internal stdlib needs from leaking to the importer.
+
+**18c. Export control.** A way to mark which `関数`/`型` are public (e.g. a
+`公開` keyword) so libraries can have private helpers.
+
+**18d. A standard search path.** Beyond relative paths, an env var
+(`HIKARI＿PATH`) or a conventional `ライブラリ/` directory so shared modules don't
+need relative `../../` paths.
+
+---
+
+## フェーズ１９ — 診断と開発ツール（Diagnostics & Tooling）
+
+**19a. Expression-level spans.** Add `Span` to `Expr` nodes so type errors and
+runtime errors point at the offending *sub-expression*, not just the statement
+(today's granularity, per ARCHITECTURE §8). The single biggest diagnostic-quality
+win; touches the parser, AST, checker, and the compiler's span checkpoints.
+
+**19b. Multi-error reporting.** Collect and report several type errors per run
+instead of stopping at the first, so a beginner sees all problems at once.
+Requires the checker to accumulate errors and recover at statement boundaries.
+
+**19c. A formatter (`hikari 整形`).** Canonical pretty-printer for `.hkr` files
+(the AST `Display` in [display.rs](../src/parser/display.rs) is a starting point).
+Critical for a full-width language where spacing is easy to get wrong.
+
+**19d. Editor support.** An LSP shim (or at least a TextMate/Tree-sitter grammar)
+for syntax highlighting, go-to-definition, and inline diagnostics. Lower priority;
+big ergonomics payoff.
+
+**19e. Lint expansion.** Build on [lints.rs](../src/lints.rs): unused functions,
+unused imports, shadowed-without-use, constant conditions, `照合` arms that can
+never match.
+
+---
+
+## フェーズ２０ — 性能（Performance）
+
+*Only if real programs get big enough to need it — correctness and ergonomics
+first.*
+
+**20a. Constant folding & peephole.** Fold literal arithmetic at compile time;
+collapse `LoadConst`-then-`Negate`, redundant jumps, and dead `Jump`-to-next.
+
+**20b. Faster dispatch.** Profile the `step` loop; consider a computed-goto-style
+dispatch or instruction superinstructions for hot patterns (loop increments).
+
+**20c. Local-slot reuse.** `next_slot` grows monotonically per function
+(ARCHITECTURE §6); reclaim slots on scope exit to shrink frames for large
+functions.
+
+**20d. String interning / small-value optimization.** If string-heavy programs
+dominate, intern constant-pool strings and consider a `SmallVec`-backed stack.
+
+---
+
+## Sequencing summary
+
+1. **Phase 14** first — small, fixes real bugs, no dependencies.
+2. **Phases 15 + 16** are the expressiveness core; `省略可`/`結果` can ship as
+   built-in generics (15) before user generics (16), then 15c/17f build on 16.
+3. **Phase 17** (stdlib) can proceed in parallel, module by module.
+4. **Phase 18** (modules) subsumes 14e and unblocks larger codebases.
+5. **Phases 19–20** (tooling, perf) are ongoing quality work, lowest urgency.
