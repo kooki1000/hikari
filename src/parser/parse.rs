@@ -899,6 +899,12 @@ impl Parser {
                 self.expect(&TokenKind::Gt)?;
                 Ok(HikariType::Fn(param_types, Box::new(ret_ty)))
             }
+            TokenKind::KwOption => {
+                self.expect(&TokenKind::Lt)?;
+                let inner = self.parse_type()?;
+                self.expect(&TokenKind::Gt)?;
+                Ok(HikariType::Option(Box::new(inner)))
+            }
             TokenKind::Ident(name) => Ok(HikariType::Record(name)),
             other => Err(ParseError::ExpectedType { got: other, span }),
         }
@@ -919,5 +925,6 @@ fn is_type_token(kind: &TokenKind) -> bool {
             | TokenKind::TyBoolArray
             | TokenKind::KwMap
             | TokenKind::KwFn
+            | TokenKind::KwOption
     )
 }

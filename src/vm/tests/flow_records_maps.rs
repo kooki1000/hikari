@@ -276,3 +276,119 @@ fn test_vm_multiple_closures_capture_independent_snapshots() {
     // a captured x=5, b captured x=20 → 25
     assert_eq!(run(src), Some(Value::Int(25)));
 }
+
+// ── 15a: 省略可＜T＞ — Option type ──────────────────────────────────────
+
+#[test]
+fn test_vm_option_aru_match_extracts_value() {
+    let src = "省略可＜整数＞ ｖ ＝ 有る（４２）；\
+               照合 ｖ ｛\
+                 有る（ｎ） ならば ｛ 返す ｎ； ｝\
+                 無し（） ならば ｛ 返す ０； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(42)));
+}
+
+#[test]
+fn test_vm_option_nashi_match_takes_none_arm() {
+    let src = "省略可＜整数＞ ｖ ＝ 無し（）；\
+               照合 ｖ ｛\
+                 有る（ｎ） ならば ｛ 返す ｎ； ｝\
+                 無し（） ならば ｛ 返す ー１； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(-1)));
+}
+
+#[test]
+fn test_vm_option_function_returning_aru() {
+    let src = "関数 探す（整数 ｎ）ー＞省略可＜整数＞｛\
+                 もし ｎ ＞ ０ ならば ｛ 返す 有る（ｎ）； ｝\
+                 違えば ｛ 返す 無し（）； ｝\
+               ｝\
+               照合 探す（５） ｛\
+                 有る（ｖ） ならば ｛ 返す ｖ； ｝\
+                 無し（） ならば ｛ 返す ー１； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(5)));
+}
+
+#[test]
+fn test_vm_option_function_returning_nashi() {
+    let src = "関数 探す（整数 ｎ）ー＞省略可＜整数＞｛\
+                 もし ｎ ＞ ０ ならば ｛ 返す 有る（ｎ）； ｝\
+                 違えば ｛ 返す 無し（）； ｝\
+               ｝\
+               照合 探す（ー１） ｛\
+                 有る（ｖ） ならば ｛ 返す ｖ； ｝\
+                 無し（） ならば ｛ 返す ー１； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(-1)));
+}
+
+// ── 15b: 取得 and 位置可 ── safe access builtins ─────────────────────
+
+#[test]
+fn test_vm_safe_map_get_hit_returns_aru() {
+    let src = "取り込む 「辞書」；\
+               辞書＜文字列、整数＞ ｍ ＝ ｛「ａ」：１、「ｂ」：２｝；\
+               照合 取得（ｍ、「ａ」） ｛\
+                 有る（ｖ） ならば ｛ 返す ｖ； ｝\
+                 無し（） ならば ｛ 返す ０； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(1)));
+}
+
+#[test]
+fn test_vm_safe_map_get_miss_returns_nashi() {
+    let src = "取り込む 「辞書」；\
+               辞書＜文字列、整数＞ ｍ ＝ ｛「ａ」：１｝；\
+               照合 取得（ｍ、「ｚ」） ｛\
+                 有る（ｖ） ならば ｛ 返す ｖ； ｝\
+                 無し（） ならば ｛ 返す ０； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(0)));
+}
+
+#[test]
+fn test_vm_safe_array_get_in_bounds_returns_aru() {
+    let src = "取り込む 「配列」；\
+               整数列 ａ ＝ 【１０、２０、３０】；\
+               照合 取得（ａ、１） ｛\
+                 有る（ｖ） ならば ｛ 返す ｖ； ｝\
+                 無し（） ならば ｛ 返す ０； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(20)));
+}
+
+#[test]
+fn test_vm_safe_array_get_out_of_bounds_returns_nashi() {
+    let src = "取り込む 「配列」；\
+               整数列 ａ ＝ 【１、２、３】；\
+               照合 取得（ａ、９９） ｛\
+                 有る（ｖ） ならば ｛ 返す ｖ； ｝\
+                 無し（） ならば ｛ 返す ー１； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(-1)));
+}
+
+#[test]
+fn test_vm_safe_pos_found_returns_aru() {
+    let src = "取り込む 「配列」；\
+               整数列 ａ ＝ 【１０、２０、３０】；\
+               照合 位置可（ａ、２０） ｛\
+                 有る（ｉ） ならば ｛ 返す ｉ； ｝\
+                 無し（） ならば ｛ 返す ー１； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(1)));
+}
+
+#[test]
+fn test_vm_safe_pos_not_found_returns_nashi() {
+    let src = "取り込む 「配列」；\
+               整数列 ａ ＝ 【１、２、３】；\
+               照合 位置可（ａ、９９） ｛\
+                 有る（ｉ） ならば ｛ 返す ｉ； ｝\
+                 無し（） ならば ｛ 返す ー１； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(-1)));
+}

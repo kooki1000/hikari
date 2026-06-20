@@ -347,5 +347,63 @@ pub(super) fn call_builtin(
         | BuiltinFn::ProgramArgs => {
             unreachable!("handled in step()")
         }
+
+        // ── Phase 15: safe access returning 省略可 ─────────────────────────
+        BuiltinFn::SafeGet => {
+            // 取得(辞書＜K,V＞, K) → 省略可＜V＞
+            // 取得(T列, 整数) → 省略可＜T＞
+            let key = args.pop().ok_or(RuntimeError::StackUnderflow)?;
+            let coll = args.pop().ok_or(RuntimeError::StackUnderflow)?;
+            let some = |v: Value| Value::Enum {
+                enum_name: "省略可".to_string(),
+                variant: "有る".to_string(),
+                payload: vec![v],
+            };
+            let none = || Value::Enum {
+                enum_name: "省略可".to_string(),
+                variant: "無し".to_string(),
+                payload: vec![],
+            };
+            match (coll, key) {
+                (Value::Map(m), Value::Str(k)) => {
+                    let result = m.borrow().get(&k).cloned();
+                    Ok(result.map(some).unwrap_or_else(none))
+                }
+                (Value::Array(a), Value::Int(i)) => {
+                    let borrowed = a.borrow();
+                    let result = if i >= 0 {
+                        borrowed.get(i as usize).cloned()
+                    } else {
+                        None
+                    };
+                    Ok(result.map(some).unwrap_or_else(none))
+                }
+                _ => Err(RuntimeError::TypeMismatch),
+            }
+        }
+
+        BuiltinFn::SafePos => {
+            // 位置可(T列, T) → 省略可＜整数＞
+            let val = args.pop().ok_or(RuntimeError::StackUnderflow)?;
+            let arr = args.pop().ok_or(RuntimeError::StackUnderflow)?;
+            match arr {
+                Value::Array(a) => {
+                    let pos = a.borrow().iter().position(|v| v == &val);
+                    Ok(match pos {
+                        Some(p) => Value::Enum {
+                            enum_name: "省略可".to_string(),
+                            variant: "有る".to_string(),
+                            payload: vec![Value::Int(p as i64)],
+                        },
+                        None => Value::Enum {
+                            enum_name: "省略可".to_string(),
+                            variant: "無し".to_string(),
+                            payload: vec![],
+                        },
+                    })
+                }
+                _ => Err(RuntimeError::TypeMismatch),
+            }
+        }
     }
 }

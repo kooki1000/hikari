@@ -98,6 +98,12 @@ impl Scopes {
 
 impl Compiler {
     pub fn new() -> Self {
+        // Pre-register the built-in 省略可 (Option) variant constructors so
+        // that 有る(val) and 無し() compile to MakeEnum without needing an
+        // EnumDecl in the source file.
+        let mut variant_enum = HashMap::new();
+        variant_enum.insert("有る".to_string(), "省略可".to_string());
+        variant_enum.insert("無し".to_string(), "省略可".to_string());
         Self {
             constants: Vec::new(),
             chunks: Vec::new(),
@@ -106,7 +112,7 @@ impl Compiler {
             synthetic_counter: 0,
             script_scopes: Scopes::new(),
             loop_targets: Vec::new(),
-            variant_enum: HashMap::new(),
+            variant_enum,
             limit_error: None,
         }
     }
