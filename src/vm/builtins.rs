@@ -72,7 +72,10 @@ pub(super) fn call_builtin(
             None => Err(RuntimeError::StackUnderflow),
         },
         BuiltinFn::Abs => match args.pop() {
-            Some(Value::Int(n)) => Ok(Value::Int(n.wrapping_abs())),
+            Some(Value::Int(n)) => n
+                .checked_abs()
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
             Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
             _ => Err(RuntimeError::TypeMismatch),
         },
@@ -277,7 +280,7 @@ pub(super) fn call_builtin(
                 // Sort for deterministic ordering.
                 keys.sort_by(|a, b| match (a, b) {
                     (Value::Str(x), Value::Str(y)) => x.cmp(y),
-                    _ => std::cmp::Ordering::Equal,
+                    _ => unreachable!("MapKeys sort: map keys are always strings"),
                 });
                 Ok(Value::Array(Rc::new(RefCell::new(keys))))
             }

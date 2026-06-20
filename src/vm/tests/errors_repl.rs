@@ -108,6 +108,21 @@ fn test_vm_abs_int_and_float() {
     assert_eq!(result, Some(Value::Float(5.5)));
 }
 
+// ── 14c: 絶対値 of i64::MIN raises IntegerOverflow ────────────────────
+
+#[test]
+fn test_vm_abs_i64_min_raises_integer_overflow() {
+    // i64::MIN cannot be negated as i64; checked_abs must raise IntegerOverflow
+    // rather than silently wrapping to a negative number.
+    // i64::MIN = -9223372036854775808; build it via arithmetic to avoid the
+    // literal parse overflow (the lexer rejects magnitudes > i64::MAX).
+    let src = "取り込む 「数学」；\
+               整数 小 ＝ ー９２２３３７２０３６８５４７７５８０７；\
+               整数 最小 ＝ 小 ー １；\
+               返す 絶対値（最小）；";
+    assert_eq!(run_result(src), Err(RuntimeError::IntegerOverflow));
+}
+
 #[test]
 fn test_vm_sqrt_of_perfect_square() {
     let result = run("取り込む 「数学」；返す 平方根（９）；");

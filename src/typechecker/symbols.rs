@@ -115,6 +115,9 @@ pub(super) fn always_returns(stmts: &[Stmt]) -> bool {
             catch_body,
             ..
         }) => always_returns(try_body) && always_returns(catch_body),
+        // Exhaustiveness is already proven by the type checker, so a 照合
+        // where every arm always returns genuinely returns on every path.
+        Some(Stmt::Match { arms, .. }) => arms.iter().all(|a| always_returns(&a.body)),
         Some(_) => false,
     }
 }

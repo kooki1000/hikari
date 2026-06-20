@@ -199,3 +199,33 @@ fn test_typecheck_void_call_as_condition_is_error() {
     let err = TypeChecker::new().check(&parse(&src)).unwrap_err();
     assert!(matches!(err, TypeError::VoidValueUsed { .. }));
 }
+
+// ── 14a: exhaustive 照合 counts as a returning path ───────────────────
+
+#[test]
+fn test_typecheck_exhaustive_match_all_arms_return_is_ok() {
+    // Previously rejected with MissingReturn; now recognized as exhaustive.
+    let src = "構造 色 ｛ 赤、 青 ｝\
+               関数 番号（色 ｃ）ー＞整数｛\
+                 照合 ｃ ｛\
+                   赤（）ならば ｛ 返す １； ｝\
+                   青（）ならば ｛ 返す ２； ｝\
+                 ｝\
+               ｝";
+    let ast = parse(src);
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+#[test]
+fn test_typecheck_match_with_non_returning_arm_is_missing_return() {
+    let src = "構造 色 ｛ 赤、 青 ｝\
+               関数 番号（色 ｃ）ー＞整数｛\
+                 照合 ｃ ｛\
+                   赤（）ならば ｛ 返す １； ｝\
+                   青（）ならば ｛ 印刷（２）； ｝\
+                 ｝\
+               ｝";
+    let ast = parse(src);
+    let err = TypeChecker::new().check(&ast).unwrap_err();
+    assert!(matches!(err, TypeError::MissingReturn { name, .. } if name == "番号"));
+}
