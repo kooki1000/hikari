@@ -18,8 +18,7 @@ ordered by impact. Each phase is independently shippable.
 
 ## Status (updated 2026-06-18)
 
-Since v2 was first written, most of the early phases have shipped. Current state
-(428 tests passing):
+**All roadmap phases are now complete.** Current state (434 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -27,7 +26,7 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | ８ | Sound control flow (`MissingReturn`, break/continue, bare `返す`) | ✅ **Done** |
 | ９ | User-defined types (records, enums + `照合`, maps `辞書`) | ✅ **Done** |
 | １０a | First-class functions + lambdas + map/filter/fold HOFs + **closures** | ✅ **Done** |
-| １０b | Generics | ❌ Not started |
+| １０b | Generics (parametric signatures for the polymorphic stdlib builtins) | ✅ **Done** |
 | １１a | File I/O (`ファイル読む`/`ファイル書く`, `入出力` module) | ✅ **Done** |
 | １１b | Formatted print — `印字` (no-newline) ✅; multi-value `印刷` ✅ | ✅ **Done** |
 | １１c / １３e | Program args & env access (`引数`/`環境変数`, `環境` module) | ✅ **Done** |
@@ -35,10 +34,24 @@ Since v2 was first written, most of the early phases have shipped. Current state
 | １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅, boundary checks ✅, REPL txn ✅, lints ✅, fuzz + parser depth limit ✅ | ✅ **Done** |
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
 
-The remaining sections below describe the open work. Completed work is marked ✅
-inline. Current focus: **remaining robustness (12) and generics (10b).**
+Every phase in this roadmap has shipped. Completed work is detailed ✅ inline below.
+A possible *future* extension beyond this roadmap is **user-written** generic
+functions (`関数＜Ｔ＞ …`); 10b delivered the internal parametric signatures the
+roadmap called for (removing the per-builtin type special-casing).
 
 ### Shipped since this status was added
+
+- **10b — Generics (parametric builtin signatures).** The polymorphic stdlib
+  builtins (`要素数`/`追加`/`取り出す`/`含む配列`/`位置`/`逆順`/`部分列`,
+  `鍵一覧`/`値一覧`/`削除`, `マップ`/`絞り込み`/`畳み込み`, `印字`) were each
+  hand-checked with ~20–50 lines of element-type extraction and matching. They now
+  share one table of generic signatures written with type variables
+  (`src/typechecker/generics.rs`: `配列＜Ｔ＞`, `マップ＜Ｔ、Ｕ＞`-style) plus a small
+  unifier that binds the variables against the actual argument types and
+  instantiates the result. This removed ~360 lines of special-casing from the type
+  checker with no change in behavior or error messages. (Builtins with non-parametric
+  constraints — math numerics, `整列`'s orderable constraint, `含む`'s overload,
+  `文字列化`'s union — stay hand-checked.)
 
 - **12 — Fuzz testing + parser depth limit.** A dependency-free, seeded
   property/fuzz harness (`src/fuzz_tests.rs`) drives ~25k pseudo-random and
@@ -208,10 +221,12 @@ callee's locals right after the params, so the body reads them as ordinary local
 no upvalue instruction needed. Reference types (arrays/records/maps) still alias via
 their `Rc`; nested lambdas compose; named `関数` bodies remain isolated.
 
-**10b. ジェネリクス（Generics）**
-Even minimal parametric types (`配列＜Ｔ＞`, generic `要素数`, generic
-`マップ＜Ｔ、Ｕ＞`) would remove the current need to special-case every builtin's
-types by hand in the type checker.
+**10b. ジェネリクス（Generics）** — ✅ *done.*
+The polymorphic stdlib builtins now share parametric signatures written with type
+variables (`配列＜Ｔ＞`, generic `要素数`, `マップ＜Ｔ、Ｕ＞`) plus a unifier
+(`src/typechecker/generics.rs`), replacing the per-builtin hand-checking in the type
+checker (~360 lines removed). User-written generic functions (`関数＜Ｔ＞ …`) remain
+a possible future extension beyond this roadmap.
 
 ---
 
@@ -306,20 +321,20 @@ arguments are exposed through `引数（）` (see **11c**).
 
 ---
 
-## Suggested ordering
+## Status: complete
 
-Shipped so far: **7–9, 10a (closures), all of 11, all of 12 (recursion limit,
-dynamic locals, `Rc<[Instruction]>` cheap frames, boundary hardening, REPL
-transactionality, beginner lints, fuzz testing + parser depth limit), 13 (CLI).**
+**Every phase of this roadmap has shipped** — 7–10 (closures + generics), all of
+11 (I/O, formatted print, program args/env, runtime spans), all of 12 (recursion
+limit, dynamic locals, cheap frames, boundary hardening, REPL transactionality,
+lints, fuzz testing + parser depth limit), and 13 (the Python-like CLI). Hikari
+went from "a language you can solve beginner exercises in" to a small but genuinely
+general-purpose language.
 
-The **only** remaining phase is:
+Possible directions *beyond* this roadmap, if the project continues:
 
-```
-Phase 10b (generics)  ← the last unbuilt feature; biggest design cost, lowest
-                         functional-completeness payoff
-```
-
-Every robustness and polish item is now done. The sole remaining *design* effort
-is **generics (10b)** — minimal parametric types (`配列＜Ｔ＞`, generic `要素数`,
-generic `マップ＜Ｔ、Ｕ＞`) so the stdlib stops hand-special-casing every builtin's
-types. It has the lowest functional-completeness payoff, so it was deferred to last.
+- **User-written generics** — `関数＜Ｔ＞ …` so users (not just the stdlib) can write
+  parametric functions. 10b laid the groundwork (a type-variable representation and
+  unifier).
+- **More stdlib** — date/time, richer string/number formatting, JSON, etc.
+- **A real module/namespace system** beyond the current flat `取り込む`.
+- **Optimization** — constant folding, peephole passes, or a faster dispatch loop.

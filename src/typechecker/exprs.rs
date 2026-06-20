@@ -4,6 +4,7 @@ use crate::lexer::Span;
 use crate::parser::{BinOpKind, Expr, HikariType};
 
 use super::error::TypeError;
+use super::generics::{generic_builtin_sig, instantiate, unify};
 use super::symbols::{always_returns, builtin_module, builtin_sig};
 
 impl super::TypeChecker {
@@ -149,6 +150,32 @@ impl super::TypeChecker {
                     });
                 }
 
+                // Polymorphic builtins (array/map/HOF helpers) share one set of
+                // generic signatures and a unifier instead of being hand-checked.
+                if let Some(sig) = generic_builtin_sig(name) {
+                    if args.len() != sig.params.len() {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: sig.params.len(),
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let mut subst = std::collections::HashMap::new();
+                    for (arg, param) in args.iter().zip(sig.params.iter()) {
+                        let arg_ty = self.infer_value_expr(arg, span)?;
+                        if unify(param, &arg_ty, &mut subst).is_err() {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: instantiate(param, &subst),
+                                got: arg_ty,
+                                span,
+                            });
+                        }
+                    }
+                    return Ok(instantiate(&sig.ret, &subst));
+                }
+
                 if name == "絶対値" || name == "平方根" {
                     if args.len() != 1 {
                         return Err(TypeError::ArgCountMismatch {
@@ -225,144 +252,6 @@ impl super::TypeChecker {
                     return Ok(HikariType::Int);
                 }
 
-                if name == "要素数" {
-                    if args.len() != 1 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 1,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arg_ty = self.infer_value_expr(&args[0], span)?;
-                    if !matches!(arg_ty, HikariType::Array(_)) {
-                        return Err(TypeError::ArgTypeMismatch {
-                            name: name.clone(),
-                            param: HikariType::Array(Box::new(HikariType::Int)),
-                            got: arg_ty,
-                            span,
-                        });
-                    }
-                    return Ok(HikariType::Int);
-                }
-
-                if name == "追加" {
-                    if args.len() != 2 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 2,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arr_ty = self.infer_value_expr(&args[0], span)?;
-                    let elem_ty = match arr_ty {
-                        HikariType::Array(inner) => *inner,
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Array(Box::new(HikariType::Int)),
-                                got: other,
-                                span,
-                            });
-                        }
-                    };
-                    let val_ty = self.infer_value_expr(&args[1], span)?;
-                    if val_ty != elem_ty {
-                        return Err(TypeError::ArgTypeMismatch {
-                            name: name.clone(),
-                            param: elem_ty,
-                            got: val_ty,
-                            span,
-                        });
-                    }
-                    return Ok(HikariType::Void);
-                }
-
-                if name == "取り出す" {
-                    if args.len() != 1 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 1,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arr_ty = self.infer_value_expr(&args[0], span)?;
-                    let elem_ty = match arr_ty {
-                        HikariType::Array(inner) => *inner,
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Array(Box::new(HikariType::Int)),
-                                got: other,
-                                span,
-                            });
-                        }
-                    };
-                    return Ok(elem_ty);
-                }
-
-                if name == "含む配列" || name == "位置" {
-                    if args.len() != 2 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 2,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arr_ty = self.infer_value_expr(&args[0], span)?;
-                    let elem_ty = match arr_ty {
-                        HikariType::Array(inner) => *inner,
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Array(Box::new(HikariType::Int)),
-                                got: other,
-                                span,
-                            });
-                        }
-                    };
-                    let val_ty = self.infer_value_expr(&args[1], span)?;
-                    if val_ty != elem_ty {
-                        return Err(TypeError::ArgTypeMismatch {
-                            name: name.clone(),
-                            param: elem_ty,
-                            got: val_ty,
-                            span,
-                        });
-                    }
-                    return Ok(if name == "位置" {
-                        HikariType::Int
-                    } else {
-                        HikariType::Bool
-                    });
-                }
-
-                if name == "逆順" {
-                    if args.len() != 1 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 1,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arr_ty = self.infer_value_expr(&args[0], span)?;
-                    match arr_ty {
-                        HikariType::Array(inner) => return Ok(HikariType::Array(inner)),
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Array(Box::new(HikariType::Int)),
-                                got: other,
-                                span,
-                            });
-                        }
-                    }
-                }
-
                 if name == "整列" {
                     if args.len() != 1 {
                         return Err(TypeError::ArgCountMismatch {
@@ -391,138 +280,6 @@ impl super::TypeChecker {
                             });
                         }
                     }
-                }
-
-                if name == "部分列" {
-                    if args.len() != 3 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 3,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arr_ty = self.infer_value_expr(&args[0], span)?;
-                    if !matches!(arr_ty, HikariType::Array(_)) {
-                        return Err(TypeError::ArgTypeMismatch {
-                            name: name.clone(),
-                            param: HikariType::Array(Box::new(HikariType::Int)),
-                            got: arr_ty,
-                            span,
-                        });
-                    }
-                    let start_ty = self.infer_value_expr(&args[1], span)?;
-                    if start_ty != HikariType::Int {
-                        return Err(TypeError::ArgTypeMismatch {
-                            name: name.clone(),
-                            param: HikariType::Int,
-                            got: start_ty,
-                            span,
-                        });
-                    }
-                    let end_ty = self.infer_value_expr(&args[2], span)?;
-                    if end_ty != HikariType::Int {
-                        return Err(TypeError::ArgTypeMismatch {
-                            name: name.clone(),
-                            param: HikariType::Int,
-                            got: end_ty,
-                            span,
-                        });
-                    }
-                    return Ok(arr_ty);
-                }
-
-                // Map builtins (require 辞書 module import).
-                if name == "鍵一覧" {
-                    if args.len() != 1 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 1,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arg_ty = self.infer_value_expr(&args[0], span)?;
-                    match arg_ty {
-                        HikariType::Map(k, _) => {
-                            return Ok(HikariType::Array(k));
-                        }
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Map(
-                                    Box::new(HikariType::String),
-                                    Box::new(HikariType::Void),
-                                ),
-                                got: other,
-                                span,
-                            });
-                        }
-                    }
-                }
-
-                if name == "値一覧" {
-                    if args.len() != 1 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 1,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arg_ty = self.infer_value_expr(&args[0], span)?;
-                    match arg_ty {
-                        HikariType::Map(_, v) => {
-                            return Ok(HikariType::Array(v));
-                        }
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Map(
-                                    Box::new(HikariType::String),
-                                    Box::new(HikariType::Void),
-                                ),
-                                got: other,
-                                span,
-                            });
-                        }
-                    }
-                }
-
-                if name == "削除" {
-                    if args.len() != 2 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 2,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let map_ty = self.infer_value_expr(&args[0], span)?;
-                    let key_ty = match map_ty {
-                        HikariType::Map(k, _) => *k,
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Map(
-                                    Box::new(HikariType::String),
-                                    Box::new(HikariType::Void),
-                                ),
-                                got: other,
-                                span,
-                            });
-                        }
-                    };
-                    let arg_key_ty = self.infer_value_expr(&args[1], span)?;
-                    if arg_key_ty != key_ty {
-                        return Err(TypeError::ArgTypeMismatch {
-                            name: name.clone(),
-                            param: key_ty,
-                            got: arg_key_ty,
-                            span,
-                        });
-                    }
-                    return Ok(HikariType::Void);
                 }
 
                 // 含む is polymorphic: String × String → Bool (文字列 module)
@@ -571,148 +328,6 @@ impl super::TypeChecker {
                         });
                     }
                     return Ok(HikariType::Bool);
-                }
-
-                // Higher-order function builtins.
-                if name == "マップ" {
-                    if args.len() != 2 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 2,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arr_ty = self.infer_value_expr(&args[0], span)?;
-                    let elem_ty = match arr_ty {
-                        HikariType::Array(inner) => *inner,
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Array(Box::new(HikariType::Int)),
-                                got: other,
-                                span,
-                            });
-                        }
-                    };
-                    let fn_ty = self.infer_value_expr(&args[1], span)?;
-                    let ret_ty = match fn_ty {
-                        HikariType::Fn(params, ret)
-                            if params.len() == 1 && params[0] == elem_ty =>
-                        {
-                            *ret
-                        }
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Fn(vec![elem_ty], Box::new(HikariType::Int)),
-                                got: other,
-                                span,
-                            });
-                        }
-                    };
-                    return Ok(HikariType::Array(Box::new(ret_ty)));
-                }
-
-                if name == "絞り込み" {
-                    if args.len() != 2 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 2,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arr_ty = self.infer_value_expr(&args[0], span)?;
-                    let elem_ty = match arr_ty.clone() {
-                        HikariType::Array(inner) => *inner,
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Array(Box::new(HikariType::Int)),
-                                got: other,
-                                span,
-                            });
-                        }
-                    };
-                    let fn_ty = self.infer_value_expr(&args[1], span)?;
-                    match fn_ty {
-                        HikariType::Fn(params, ret)
-                            if params.len() == 1
-                                && params[0] == elem_ty
-                                && *ret == HikariType::Bool => {}
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Fn(
-                                    vec![elem_ty.clone()],
-                                    Box::new(HikariType::Bool),
-                                ),
-                                got: other,
-                                span,
-                            });
-                        }
-                    }
-                    return Ok(arr_ty);
-                }
-
-                if name == "畳み込み" {
-                    if args.len() != 3 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 3,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    let arr_ty = self.infer_value_expr(&args[0], span)?;
-                    let elem_ty = match arr_ty {
-                        HikariType::Array(inner) => *inner,
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Array(Box::new(HikariType::Int)),
-                                got: other,
-                                span,
-                            });
-                        }
-                    };
-                    let acc_ty = self.infer_value_expr(&args[1], span)?;
-                    let fn_ty = self.infer_value_expr(&args[2], span)?;
-                    match &fn_ty {
-                        HikariType::Fn(params, ret)
-                            if params.len() == 2
-                                && params[0] == acc_ty
-                                && params[1] == elem_ty
-                                && **ret == acc_ty => {}
-                        other => {
-                            return Err(TypeError::ArgTypeMismatch {
-                                name: name.clone(),
-                                param: HikariType::Fn(
-                                    vec![acc_ty.clone(), elem_ty],
-                                    Box::new(acc_ty.clone()),
-                                ),
-                                got: other.clone(),
-                                span,
-                            });
-                        }
-                    }
-                    return Ok(acc_ty);
-                }
-
-                // 印字 prints any single value with no trailing newline, like
-                // 印刷 but newline-less; it accepts any type and returns 無.
-                if name == "印字" {
-                    if args.len() != 1 {
-                        return Err(TypeError::ArgCountMismatch {
-                            name: name.clone(),
-                            expected: 1,
-                            got: args.len(),
-                            span,
-                        });
-                    }
-                    self.infer_value_expr(&args[0], span)?;
-                    return Ok(HikariType::Void);
                 }
 
                 if let Some(sig) = builtin_sig(name) {
