@@ -62,7 +62,13 @@ pub fn resolve_imports(
                     .unwrap_or_else(|| PathBuf::from("."));
                 let resolved = resolve_imports(imported_stmts, &imported_dir, visited)?;
                 for resolved_stmt in resolved {
-                    if matches!(resolved_stmt, Stmt::FnDecl { .. }) {
+                    if matches!(
+                        resolved_stmt,
+                        Stmt::FnDecl { .. }
+                            | Stmt::Import { .. }
+                            | Stmt::TypeDecl { .. }
+                            | Stmt::EnumDecl { .. }
+                    ) {
                         out.push(resolved_stmt);
                     }
                 }
@@ -178,5 +184,70 @@ mod tests {
 
         std::fs::remove_file(&path_a).unwrap();
         std::fs::remove_file(&path_b).unwrap();
+    }
+
+    // ── 14e: imported files carry their own stdlib imports and type decls ──
+
+    #[test]
+    fn test_file_import_splices_stdlib_imports_from_library() {
+        let dir = std::env::temp_dir();
+        let module_path = dir.join(format!("hikari_test_lib_stdlib_{}.hkr", std::process::id()));
+        // Library uses 累乗 from 「数学」; that 取り込む must be carried over.
+        std::fs::write(
+            &module_path,
+            "取り込む 「数学」；関数 二乗（整数 ｎ）ー＞整数｛ 返す 累乗（ｎ、２）； ｝",
+        )
+        .unwrap();
+
+        let src = format!(
+            "取り込む 「{}」；",
+            module_path.file_name().unwrap().to_str().unwrap()
+        );
+        let stmts = parse(&src);
+        let mut visited = HashSet::new();
+        let resolved = resolve_imports(stmts, &dir, &mut visited).unwrap();
+
+        // Must contain both the stdlib import and the function declaration.
+        let has_math_import = resolved
+            .iter()
+            .any(|s| matches!(s, Stmt::Import { name, .. } if name == "数学"));
+        let has_fn = resolved
+            .iter()
+            .any(|s| matches!(s, Stmt::FnDecl { name, .. } if name == "二乗"));
+        assert!(has_math_import, "stdlib import from library must be spliced");
+        assert!(has_fn, "function from library must be spliced");
+
+        std::fs::remove_file(&module_path).unwrap();
+    }
+
+    #[test]
+    fn test_file_import_splices_enum_decl_from_library() {
+        let dir = std::env::temp_dir();
+        let module_path =
+            dir.join(format!("hikari_test_lib_enum_{}.hkr", std::process::id()));
+        std::fs::write(
+            &module_path,
+            "構造 方向 ｛ 北、南 ｝関数 反転（方向 ｄ）ー＞方向｛ 照合 ｄ ｛ 北（）ならば ｛ 返す 南（）； ｝ 南（）ならば ｛ 返す 北（）； ｝ ｝ ｝",
+        )
+        .unwrap();
+
+        let src = format!(
+            "取り込む 「{}」；",
+            module_path.file_name().unwrap().to_str().unwrap()
+        );
+        let stmts = parse(&src);
+        let mut visited = HashSet::new();
+        let resolved = resolve_imports(stmts, &dir, &mut visited).unwrap();
+
+        let has_enum = resolved
+            .iter()
+            .any(|s| matches!(s, Stmt::EnumDecl { name, .. } if name == "方向"));
+        let has_fn = resolved
+            .iter()
+            .any(|s| matches!(s, Stmt::FnDecl { name, .. } if name == "反転"));
+        assert!(has_enum, "enum decl from library must be spliced");
+        assert!(has_fn, "function from library must be spliced");
+
+        std::fs::remove_file(&module_path).unwrap();
     }
 }

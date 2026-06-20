@@ -262,3 +262,30 @@ fn test_vm_uninitialized_local_returns_error() {
     let result = Vm::new(vec![], instructions).run();
     assert_eq!(result, Err(RuntimeError::UninitializedLocal(0)));
 }
+
+// ── 14b: 小数 whole numbers display with decimal point ───────────────
+
+#[test]
+fn test_vm_float_display_integral_value_shows_decimal_point() {
+    // 1.0 must print as "1.0", not "1", to distinguish it from the integer 1.
+    assert_eq!(
+        run("取り込む 「文字列」；返す 文字列化（１．０）；"),
+        Some(Value::Str("1.0".to_string()))
+    );
+}
+
+#[test]
+fn test_vm_float_display_fractional_value_unchanged() {
+    assert_eq!(
+        run("取り込む 「文字列」；返す 文字列化（１．５）；"),
+        Some(Value::Str("1.5".to_string()))
+    );
+}
+
+#[test]
+fn test_vm_float_display_negative_integral_value_shows_decimal_point() {
+    assert_eq!(
+        run("取り込む 「文字列」；返す 文字列化（ー２．０）；"),
+        Some(Value::Str("-2.0".to_string()))
+    );
+}

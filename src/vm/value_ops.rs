@@ -5,7 +5,13 @@ use super::error::RuntimeError;
 pub fn display_value(val: &Value) -> String {
     match val {
         Value::Int(n) => n.to_string(),
-        Value::Float(f) => f.to_string(),
+        Value::Float(f) => {
+            if f.is_finite() && f.fract() == 0.0 {
+                format!("{f:.1}")
+            } else {
+                f.to_string()
+            }
+        }
         Value::Str(s) => s.clone(),
         Value::Bool(b) => if *b { "真" } else { "偽" }.to_string(),
         Value::Array(arr) => format!(
@@ -138,7 +144,7 @@ pub(super) fn sort_values(values: &mut [Value]) -> Result<(), RuntimeError> {
         (Value::Int(x), Value::Int(y)) => x.cmp(y),
         (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
         (Value::Str(x), Value::Str(y)) => x.cmp(y),
-        _ => std::cmp::Ordering::Equal,
+        _ => unreachable!("sort_values: type mismatch — type checker guarantees homogeneous arrays"),
     });
     Ok(())
 }
