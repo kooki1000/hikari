@@ -350,3 +350,74 @@ fn test_typecheck_env_var_returns_string() {
         }
     ));
 }
+
+// ── 10b: generic builtin signatures (parametric polymorphism) ────────
+
+#[test]
+fn test_typecheck_generic_length_over_any_element_type() {
+    // 要素数 works on 配列＜Ｔ＞ for any Ｔ.
+    for decl in [
+        "整数列 ａ ＝ 【１】",
+        "文字列列 ａ ＝ 【「x」】",
+        "真偽列 ａ ＝ 【真】",
+    ] {
+        let src = format!("取り込む 「配列」；{}；整数 ｎ ＝ 要素数（ａ）；", decl);
+        assert!(TypeChecker::new().check(&parse(&src)).is_ok(), "{}", decl);
+    }
+}
+
+#[test]
+fn test_typecheck_generic_pop_returns_element_type() {
+    // 取り出す（配列＜Ｔ＞）→ Ｔ: popping a 文字列列 yields a 文字列.
+    let src = "取り込む 「配列」；文字列列 ａ ＝ 【「x」】；文字列 ｓ ＝ 取り出す（ａ）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+    // Binding the popped 文字列 to an 整数 must fail.
+    let src = "取り込む 「配列」；文字列列 ａ ＝ 【「x」】；整数 ｓ ＝ 取り出す（ａ）；";
+    assert!(matches!(
+        TypeChecker::new().check(&parse(src)).unwrap_err(),
+        TypeError::VarDeclMismatch { .. }
+    ));
+}
+
+#[test]
+fn test_typecheck_generic_map_transforms_element_type() {
+    // マップ（配列＜Ｔ＞、Ｔ→Ｕ）→ 配列＜Ｕ＞: 整数列 → 文字列列.
+    let src = "取り込む 「関数」；整数列 ｎ ＝ 【１】；文字列列 ｓ ＝ マップ（ｎ、｜ｘ：整数｜ ー＞ 文字列 ｛ 返す 「a」； ｝）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_generic_unify_conflict_is_rejected() {
+    // 追加（整数列、文字列）: the element variable Ｔ is bound to 整数 by the
+    // array, so a 文字列 second argument conflicts.
+    let src = "取り込む 「配列」；整数列 ａ ＝ 【１】；追加（ａ、「x」）；";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::ArgTypeMismatch {
+            param: HikariType::Int,
+            got: HikariType::String,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn test_typecheck_generic_non_array_argument_is_rejected() {
+    let src = "取り込む 「配列」；整数 ｎ ＝ 要素数（５）；";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(
+        err,
+        TypeError::ArgTypeMismatch {
+            got: HikariType::Int,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn test_typecheck_generic_fold_threads_accumulator_type() {
+    // 畳み込み（整数列、文字列、（文字列、整数）→文字列）→ 文字列.
+    let src = "取り込む 「関数」；整数列 ｎ ＝ 【１】；文字列 ｓ ＝ 畳み込み（ｎ、「」、｜ａ：文字列、ｘ：整数｜ ー＞ 文字列 ｛ 返す ａ； ｝）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}

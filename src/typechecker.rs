@@ -3,6 +3,7 @@
 mod checker;
 mod error;
 mod exprs;
+mod generics;
 mod symbols;
 
 #[cfg(test)]
