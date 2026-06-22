@@ -9,6 +9,7 @@ fn parse(src: &str) -> Vec<Stmt> {
 }
 
 mod builtins;
+mod generics;
 mod language;
 mod records_enums;
 mod returns;

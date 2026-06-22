@@ -392,3 +392,59 @@ fn test_vm_safe_pos_not_found_returns_nashi() {
                ｝";
     assert_eq!(run(src), Some(Value::Int(-1)));
 }
+
+// ── 16a: generic function declarations ───────────────────────────────
+
+#[test]
+fn test_vm_generic_identity_int() {
+    let src = "関数＜Ｔ＞ 恒等（Ｔ ｘ）ー＞Ｔ｛ 返す ｘ； ｝返す 恒等（４２）；";
+    assert_eq!(run(src), Some(Value::Int(42)));
+}
+
+#[test]
+fn test_vm_generic_identity_string() {
+    let src = "関数＜Ｔ＞ 恒等（Ｔ ｘ）ー＞Ｔ｛ 返す ｘ； ｝返す 恒等（「こんにちは」）；";
+    assert_eq!(run(src), Some(Value::Str("こんにちは".to_string())));
+}
+
+#[test]
+fn test_vm_generic_identity_bool() {
+    let src = "関数＜Ｔ＞ 恒等（Ｔ ｘ）ー＞Ｔ｛ 返す ｘ； ｝返す 恒等（真）；";
+    assert_eq!(run(src), Some(Value::Bool(true)));
+}
+
+#[test]
+fn test_vm_generic_two_params_first() {
+    let src = "関数＜Ａ、Ｂ＞ 第一（Ａ ａ、Ｂ ｂ）ー＞Ａ｛ 返す ａ； ｝返す 第一（１０、「文字」）；";
+    assert_eq!(run(src), Some(Value::Int(10)));
+}
+
+#[test]
+fn test_vm_generic_two_params_second() {
+    let src = "関数＜Ａ、Ｂ＞ 第二（Ａ ａ、Ｂ ｂ）ー＞Ｂ｛ 返す ｂ； ｝返す 第二（１０、「文字」）；";
+    assert_eq!(run(src), Some(Value::Str("文字".to_string())));
+}
+
+#[test]
+fn test_vm_generic_called_multiple_times_with_different_types() {
+    let src = "関数＜Ｔ＞ 恒等（Ｔ ｘ）ー＞Ｔ｛ 返す ｘ； ｝\
+               整数 ａ ＝ 恒等（１）；\
+               文字列 ｂ ＝ 恒等（「ｈｉ」）；\
+               返す ａ；";
+    assert_eq!(run(src), Some(Value::Int(1)));
+}
+
+#[test]
+fn test_vm_generic_array_param_returns_element() {
+    let src = "取り込む 「配列」；\
+               関数＜Ｔ＞ 先頭（配列＜Ｔ＞ ｌ）ー＞Ｔ｛ 返す ｌ【０】； ｝\
+               返す 先頭（【１０、２０、３０】）；";
+    assert_eq!(run(src), Some(Value::Int(10)));
+}
+
+#[test]
+fn test_vm_generic_void_return_runs_side_effect() {
+    // Generic parameter, void return — runs side effect, no panic.
+    let src = "関数＜Ｔ＞ 表示（Ｔ ｖ）ー＞無｛ 印刷（ｖ）； ｝表示（７）；";
+    assert_eq!(run(src), None);
+}

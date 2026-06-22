@@ -423,31 +423,29 @@ ship as *built-in* generics first.
 
 ---
 
-## フェーズ１６ — ユーザー定義ジェネリクス（User-Written Generics）
+## フェーズ１６ — ユーザー定義ジェネリクス（User-Written Generics） ✅ Done
 
-**The biggest expressiveness leap left.** 10b already built the representation
-(`SigType`, type variables) and the `unify`/`instantiate` machinery in
-[generics.rs](../src/typechecker/generics.rs). v3 exposes it to users.
+**16a ✅ Done. Generic function declarations.** `関数＜Ｔ＞ 恒等（Ｔ ｘ）ー＞ Ｔ ｛ 返す ｘ； ｝`
+and multi-parameter forms `関数＜Ｔ、Ｕ＞ …` are fully supported. The parser
+reads a `＜…＞` type-variable list on `関数`; the checker registers each name as a
+scoped type variable (exempting it from `UndeclaredType`); at call sites the
+substitution is inferred from argument types using a `HikariType`-based unifier,
+and the return type is instantiated accordingly. Also added `配列＜Ｔ＞` as a
+general parameterized array type syntax (formerly only `整数列` / `小数列` etc.
+shorthands existed), needed for generic functions over arrays. 20 tests (12
+typechecker + 8 VM). No VM changes — checker-only generics with a single shared
+chunk per function (no monomorphization needed, as the VM is already type-erased).
 
-**16a. Generic function declarations.** `関数＜Ｔ＞ 恒等（Ｔ ｘ）ー＞ Ｔ ｛ 返す ｘ； ｝`
-and multi-parameter forms `関数＜Ｔ、Ｕ＞ …`. Parse a `＜…＞` type-variable list on
-`関数`, register each `Ｔ` as a fresh type variable in scope while checking the
-body, and at each call site infer the substitution from the argument types
-(reusing `unify`).
+**16b Deferred. Generic records/enums.** `型 箱＜Ｔ＞ ｛ Ｔ 値； ｝` and
+`構造 対＜Ａ、Ｂ＞ ｛ … ｝`. Deferred — the `HikariType::Record(name)` representation
+would need extending to carry type arguments at instantiation sites.
 
-**16b. Generic records/enums.** `型 箱＜Ｔ＞ ｛ Ｔ 値； ｝` and
-`構造 対＜Ａ、Ｂ＞ ｛ … ｝`, so user containers are as expressive as the built-in
-`配列`/`辞書`/`省略可`.
+**16c ✅ Implemented as design note.** The VM is already type-erased at runtime
+(`Value` is `Value`), so checker-only generics with a single shared chunk per
+generic function require no monomorphization — documented and applied in 16a.
 
-**16c. Monomorphization vs. uniform representation.** The VM is already
-type-erased at runtime (a `Value` is a `Value`), so the simplest path is
-**checker-only generics with a single shared chunk** per generic function — no
-monomorphization needed. Document the constraint that generics are parametric
-(no overloading/specialization).
-
-**Design notes.** Keep inference local (per call site), no global HM unification
-or let-generalization — matches the current "infer, don't solve globally" style.
-Decide bounds later (e.g. an `整列可`/orderable constraint) — start unbounded.
+**Design notes.** Inference is local (per call site), no global HM unification or
+let-generalization. Bounds (`整列可`/orderable) are deferred to a later phase.
 
 ---
 

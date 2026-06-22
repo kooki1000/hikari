@@ -7,6 +7,7 @@ use crate::parser::{HikariType, Stmt};
 pub(super) struct FnSig {
     pub(super) params: Vec<HikariType>,
     pub(super) return_ty: HikariType,
+    pub(super) type_params: Vec<String>,
 }
 
 pub(super) fn builtin_sig(name: &str) -> Option<FnSig> {
@@ -14,32 +15,39 @@ pub(super) fn builtin_sig(name: &str) -> Option<FnSig> {
         "文字数" => Some(FnSig {
             params: vec![HikariType::String],
             return_ty: HikariType::Int,
+            type_params: vec![],
         }),
         "入力" => Some(FnSig {
             params: vec![],
             return_ty: HikariType::String,
+            type_params: vec![],
         }),
         "整数化" => Some(FnSig {
             params: vec![HikariType::String],
             return_ty: HikariType::Int,
+            type_params: vec![],
         }),
         "小数化" => Some(FnSig {
             params: vec![HikariType::String],
             return_ty: HikariType::Float,
+            type_params: vec![],
         }),
         // 文字列化's single param is polymorphic (Int|Float|Bool); the param
         // type here is unused since Expr::Call checks it inline.
         "文字列化" => Some(FnSig {
             params: vec![HikariType::Int],
             return_ty: HikariType::String,
+            type_params: vec![],
         }),
         "乱数" => Some(FnSig {
             params: vec![HikariType::Int, HikariType::Int],
             return_ty: HikariType::Int,
+            type_params: vec![],
         }),
         "分割" => Some(FnSig {
             params: vec![HikariType::String, HikariType::String],
             return_ty: HikariType::Array(Box::new(HikariType::String)),
+            type_params: vec![],
         }),
         "結合" => Some(FnSig {
             params: vec![
@@ -47,30 +55,37 @@ pub(super) fn builtin_sig(name: &str) -> Option<FnSig> {
                 HikariType::String,
             ],
             return_ty: HikariType::String,
+            type_params: vec![],
         }),
         "含む" => Some(FnSig {
             params: vec![HikariType::String, HikariType::String],
             return_ty: HikariType::Bool,
+            type_params: vec![],
         }),
         "置換" => Some(FnSig {
             params: vec![HikariType::String, HikariType::String, HikariType::String],
             return_ty: HikariType::String,
+            type_params: vec![],
         }),
         "ファイル読む" => Some(FnSig {
             params: vec![HikariType::String],
             return_ty: HikariType::String,
+            type_params: vec![],
         }),
         "ファイル書く" => Some(FnSig {
             params: vec![HikariType::String, HikariType::String],
             return_ty: HikariType::Void,
+            type_params: vec![],
         }),
         "引数" => Some(FnSig {
             params: vec![],
             return_ty: HikariType::Array(Box::new(HikariType::String)),
+            type_params: vec![],
         }),
         "環境変数" => Some(FnSig {
             params: vec![HikariType::String],
             return_ty: HikariType::String,
+            type_params: vec![],
         }),
         _ => None,
     }

@@ -35,6 +35,7 @@ pub enum TokenKind {
     KwEnum,     // 構造
     KwMatch,    // 照合
     KwMap,      // 辞書
+    KwArray,    // 配列
     KwOption,   // 省略可
 
     Pipe, // ｜ (U+FF5C full-width vertical bar) — lambda parameter delimiter
@@ -234,6 +235,7 @@ impl Lexer {
             "構造" => TokenKind::KwEnum,
             "照合" => TokenKind::KwMatch,
             "辞書" => TokenKind::KwMap,
+            "配列" => TokenKind::KwArray,
             "省略可" => TokenKind::KwOption,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
