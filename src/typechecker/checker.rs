@@ -154,6 +154,42 @@ impl TypeChecker {
         Ok(())
     }
 
+    /// Like `check`, but collects **all** statement-level errors instead of
+    /// stopping at the first. Best-effort: a failed statement may leave the
+    /// checker in an inconsistent state, so some subsequent errors may be
+    /// cascades. Returns the error list (empty = no errors).
+    pub fn check_all(&mut self, stmts: &[Stmt]) -> Vec<TypeError> {
+        // Same pre-pass as `check`.
+        for stmt in stmts {
+            if let Stmt::FnDecl {
+                name,
+                type_params,
+                params,
+                return_ty,
+                is_public,
+                ..
+            } = stmt
+            {
+                let sig = super::symbols::FnSig {
+                    params: params.iter().map(|(t, _)| t.clone()).collect(),
+                    return_ty: return_ty.clone(),
+                    type_params: type_params.clone(),
+                };
+                self.fns.insert(name.clone(), sig);
+                if !is_public && name.contains('。') {
+                    self.private_fns.insert(name.clone());
+                }
+            }
+        }
+        let mut errors = Vec::new();
+        for stmt in stmts {
+            if let Err(e) = self.check_stmt(stmt) {
+                errors.push(e);
+            }
+        }
+        errors
+    }
+
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
         match stmt {
             Stmt::VarDecl {

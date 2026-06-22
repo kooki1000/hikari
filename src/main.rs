@@ -1,5 +1,6 @@
 mod compiler;
 mod diagnostic;
+mod formatter;
 mod lexer;
 mod lints;
 mod modules;
@@ -54,6 +55,35 @@ fn main() {
             let program_args = args.get(1..).map(<[_]>::to_vec).unwrap_or_default();
             run_source(&source, &entry_dir, program_args);
         }
+        // `hikari 整形 <file>` — pretty-print a source file to stdout.
+        // `hikari 整形 -i <file>` — format in place.
+        Some("整形") => {
+            let in_place = args.get(1).map(|s| s == "-i").unwrap_or(false);
+            let path_idx = if in_place { 2 } else { 1 };
+            let Some(path) = args.get(path_idx) else {
+                eprintln!("使い方: hikari 整形 [-i] <ファイル.hkr>");
+                process::exit(1);
+            };
+            let source = fs::read_to_string(path).unwrap_or_else(|e| {
+                eprintln!("エラー: ファイルを読み込めません '{}': {}", path, e);
+                process::exit(1);
+            });
+            let ast = Parser::new(Lexer::new(&source).tokenize())
+                .parse()
+                .unwrap_or_else(|e| {
+                    eprintln!("{}", diagnostic::render(&source, e.span(), &e.to_string()));
+                    process::exit(1);
+                });
+            let formatted = formatter::format_stmts(&ast);
+            if in_place {
+                fs::write(path, &formatted).unwrap_or_else(|e| {
+                    eprintln!("エラー: ファイルに書き込めません '{}': {}", path, e);
+                    process::exit(1);
+                });
+            } else {
+                print!("{}", formatted);
+            }
+        }
         Some(flag) if flag.starts_with('-') => {
             eprintln!("エラー: 不明なオプション '{}'", flag);
             print_usage();
@@ -81,10 +111,12 @@ fn print_usage() {
         "Hikari {ver} — 光プログラミング言語
 
 使い方:
-  hikari <ファイル.hkr> [引数...]   ファイルを実行する
-  hikari                          対話モード（REPL）を開始する
-  hikari - [引数...]               標準入力からプログラムを読んで実行する
-  hikari -c \"<コード>\" [引数...]    コードを直接実行する
+  hikari <ファイル.hkr> [引数...]       ファイルを実行する
+  hikari                              対話モード（REPL）を開始する
+  hikari - [引数...]                   標準入力からプログラムを読んで実行する
+  hikari -c \"<コード>\" [引数...]        コードを直接実行する
+  hikari 整形 <ファイル.hkr>            整形済みコードを標準出力に表示する
+  hikari 整形 -i <ファイル.hkr>         ファイルを直接整形する（上書き）
 
 （[引数...] は「環境」モジュールの 引数（） で取得できます）
 
@@ -114,8 +146,13 @@ fn run_source(source: &str, entry_dir: &Path, program_args: Vec<String>) {
         process::exit(1);
     });
 
-    if let Err(e) = TypeChecker::new().check(&ast) {
-        eprintln!("{}", diagnostic::render(source, e.span(), &e.to_string()));
+    // Collect all type errors (multi-error mode) so beginners see every
+    // problem in one run rather than fix-one-rerun-fix-one-rerun.
+    let type_errors = TypeChecker::new().check_all(&ast);
+    if !type_errors.is_empty() {
+        for e in &type_errors {
+            eprintln!("{}", diagnostic::render(source, e.span(), &e.to_string()));
+        }
         process::exit(1);
     }
 
