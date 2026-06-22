@@ -44,6 +44,41 @@ pub enum BuiltinFn {
     // Phase 15: safe access returning 省略可
     SafeGet, // 取得 (safe map/array lookup → 省略可)
     SafePos, // 位置可 (safe indexOf → 省略可＜整数＞)
+    // Phase 17a: richer strings
+    ToUpperCase, // 大文字
+    ToLowerCase, // 小文字
+    Trim,        // 整形
+    StartsWith,  // 先頭一致
+    EndsWith,    // 末尾一致
+    Substring,   // 部分文字列
+    StrFind,     // 文字列位置 (→ 省略可＜整数＞)
+    RepeatStr,   // 繰り返し文字列
+    // Phase 17b: more numerics
+    Sign,     // 符号
+    Clamp,    // 挟む
+    Sum,      // 総和
+    Average,  // 平均
+    ArrayMax, // 最大値
+    ArrayMin, // 最小値
+    Sin,      // 正弦
+    Cos,      // 余弦
+    Tan,      // 正接
+    Ln,       // 対数
+    Exp,      // 指数
+    // Phase 17c: more array ops
+    Concat,     // 連結
+    Flatten,    // 平坦化
+    AnyArray,   // どれか (HOF)
+    AllArray,   // すべて (HOF)
+    CountArray, // 数える (HOF)
+    // Phase 17d: more map ops
+    MapMerge,        // 併合
+    MapSize,         // 数
+    MapGetOrDefault, // 取得既定
+    // Phase 17e: time
+    NowMillis, // 現在時刻
+    Elapsed,   // 経過
+    Sleep,     // 眠る
 }
 
 pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
@@ -88,6 +123,41 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "畳み込み" => Some(BuiltinFn::FoldArray),
         "取得" => Some(BuiltinFn::SafeGet),
         "位置可" => Some(BuiltinFn::SafePos),
+        // 17a
+        "大文字" => Some(BuiltinFn::ToUpperCase),
+        "小文字" => Some(BuiltinFn::ToLowerCase),
+        "整形" => Some(BuiltinFn::Trim),
+        "先頭一致" => Some(BuiltinFn::StartsWith),
+        "末尾一致" => Some(BuiltinFn::EndsWith),
+        "部分文字列" => Some(BuiltinFn::Substring),
+        "文字列位置" => Some(BuiltinFn::StrFind),
+        "繰り返し文字列" => Some(BuiltinFn::RepeatStr),
+        // 17b
+        "符号" => Some(BuiltinFn::Sign),
+        "挟む" => Some(BuiltinFn::Clamp),
+        "総和" => Some(BuiltinFn::Sum),
+        "平均" => Some(BuiltinFn::Average),
+        "最大値" => Some(BuiltinFn::ArrayMax),
+        "最小値" => Some(BuiltinFn::ArrayMin),
+        "正弦" => Some(BuiltinFn::Sin),
+        "余弦" => Some(BuiltinFn::Cos),
+        "正接" => Some(BuiltinFn::Tan),
+        "対数" => Some(BuiltinFn::Ln),
+        "指数" => Some(BuiltinFn::Exp),
+        // 17c
+        "連結" => Some(BuiltinFn::Concat),
+        "平坦化" => Some(BuiltinFn::Flatten),
+        "どれか" => Some(BuiltinFn::AnyArray),
+        "すべて" => Some(BuiltinFn::AllArray),
+        "数える" => Some(BuiltinFn::CountArray),
+        // 17d
+        "併合" => Some(BuiltinFn::MapMerge),
+        "数" => Some(BuiltinFn::MapSize),
+        "取得既定" => Some(BuiltinFn::MapGetOrDefault),
+        // 17e
+        "現在時刻" => Some(BuiltinFn::NowMillis),
+        "経過" => Some(BuiltinFn::Elapsed),
+        "眠る" => Some(BuiltinFn::Sleep),
         _ => None,
     }
 }

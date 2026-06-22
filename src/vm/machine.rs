@@ -272,6 +272,90 @@ impl Vm {
                         }
                         self.stack.push(acc);
                     }
+                    BuiltinFn::AnyArray => {
+                        // Stack: [..., array, fn_val]
+                        let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let (chunk_index, captured) = match fn_val {
+                            Value::Function {
+                                chunk_index,
+                                captured,
+                                ..
+                            } => (chunk_index, captured),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let elements = match arr_val {
+                            Value::Array(a) => a.borrow().clone(),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let mut found = false;
+                        for elem in elements {
+                            match self.call_function(chunk_index, vec![elem], captured.clone())? {
+                                Value::Bool(true) => {
+                                    found = true;
+                                    break;
+                                }
+                                Value::Bool(false) => {}
+                                _ => return Err(RuntimeError::TypeMismatch),
+                            }
+                        }
+                        self.stack.push(Value::Bool(found));
+                    }
+                    BuiltinFn::AllArray => {
+                        // Stack: [..., array, fn_val]
+                        let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let (chunk_index, captured) = match fn_val {
+                            Value::Function {
+                                chunk_index,
+                                captured,
+                                ..
+                            } => (chunk_index, captured),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let elements = match arr_val {
+                            Value::Array(a) => a.borrow().clone(),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let mut all = true;
+                        for elem in elements {
+                            match self.call_function(chunk_index, vec![elem], captured.clone())? {
+                                Value::Bool(false) => {
+                                    all = false;
+                                    break;
+                                }
+                                Value::Bool(true) => {}
+                                _ => return Err(RuntimeError::TypeMismatch),
+                            }
+                        }
+                        self.stack.push(Value::Bool(all));
+                    }
+                    BuiltinFn::CountArray => {
+                        // Stack: [..., array, fn_val]
+                        let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let (chunk_index, captured) = match fn_val {
+                            Value::Function {
+                                chunk_index,
+                                captured,
+                                ..
+                            } => (chunk_index, captured),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let elements = match arr_val {
+                            Value::Array(a) => a.borrow().clone(),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let mut count = 0i64;
+                        for elem in elements {
+                            match self.call_function(chunk_index, vec![elem], captured.clone())? {
+                                Value::Bool(true) => count += 1,
+                                Value::Bool(false) => {}
+                                _ => return Err(RuntimeError::TypeMismatch),
+                            }
+                        }
+                        self.stack.push(Value::Int(count));
+                    }
                     BuiltinFn::ProgramArgs => {
                         // Handled here (not call_builtin) because it reads the
                         // VM's stored program arguments.

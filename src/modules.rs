@@ -14,9 +14,10 @@ pub const MOD_MAP: &str = "辞書";
 pub const MOD_FUNC: &str = "関数";
 pub const MOD_IO: &str = "入出力";
 pub const MOD_ENV: &str = "環境";
+pub const MOD_TIME: &str = "時間";
 
-pub const STDLIB_MODULES: [&str; 7] = [
-    MOD_MATH, MOD_STRING, MOD_ARRAY, MOD_MAP, MOD_FUNC, MOD_IO, MOD_ENV,
+pub const STDLIB_MODULES: [&str; 8] = [
+    MOD_MATH, MOD_STRING, MOD_ARRAY, MOD_MAP, MOD_FUNC, MOD_IO, MOD_ENV, MOD_TIME,
 ];
 
 // Imports are only resolved at the top level of a file: the roadmap's

@@ -19,6 +19,7 @@ mod collections;
 mod core;
 mod errors_repl;
 mod flow_records_maps;
+mod stdlib;
 
 fn run_result(src: &str) -> Result<Option<Value>, RuntimeError> {
     let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
