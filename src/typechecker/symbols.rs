@@ -1,4 +1,6 @@
-use crate::modules::{MOD_ARRAY, MOD_ENV, MOD_FUNC, MOD_IO, MOD_MAP, MOD_MATH, MOD_STRING};
+use crate::modules::{
+    MOD_ARRAY, MOD_ENV, MOD_FUNC, MOD_IO, MOD_MAP, MOD_MATH, MOD_STRING, MOD_TIME,
+};
 use crate::parser::{HikariType, Stmt};
 
 // ── Symbol tables ─────────────────────────────────────────────────────────────
@@ -87,6 +89,84 @@ pub(super) fn builtin_sig(name: &str) -> Option<FnSig> {
             return_ty: HikariType::String,
             type_params: vec![],
         }),
+        // 17a: string
+        "大文字" => Some(FnSig {
+            params: vec![HikariType::String],
+            return_ty: HikariType::String,
+            type_params: vec![],
+        }),
+        "小文字" => Some(FnSig {
+            params: vec![HikariType::String],
+            return_ty: HikariType::String,
+            type_params: vec![],
+        }),
+        "整形" => Some(FnSig {
+            params: vec![HikariType::String],
+            return_ty: HikariType::String,
+            type_params: vec![],
+        }),
+        "先頭一致" => Some(FnSig {
+            params: vec![HikariType::String, HikariType::String],
+            return_ty: HikariType::Bool,
+            type_params: vec![],
+        }),
+        "末尾一致" => Some(FnSig {
+            params: vec![HikariType::String, HikariType::String],
+            return_ty: HikariType::Bool,
+            type_params: vec![],
+        }),
+        "部分文字列" => Some(FnSig {
+            params: vec![HikariType::String, HikariType::Int, HikariType::Int],
+            return_ty: HikariType::String,
+            type_params: vec![],
+        }),
+        "繰り返し文字列" => Some(FnSig {
+            params: vec![HikariType::String, HikariType::Int],
+            return_ty: HikariType::String,
+            type_params: vec![],
+        }),
+        // 17b: trig/log (monomorphic Float → Float)
+        "正弦" => Some(FnSig {
+            params: vec![HikariType::Float],
+            return_ty: HikariType::Float,
+            type_params: vec![],
+        }),
+        "余弦" => Some(FnSig {
+            params: vec![HikariType::Float],
+            return_ty: HikariType::Float,
+            type_params: vec![],
+        }),
+        "正接" => Some(FnSig {
+            params: vec![HikariType::Float],
+            return_ty: HikariType::Float,
+            type_params: vec![],
+        }),
+        "対数" => Some(FnSig {
+            params: vec![HikariType::Float],
+            return_ty: HikariType::Float,
+            type_params: vec![],
+        }),
+        "指数" => Some(FnSig {
+            params: vec![HikariType::Float],
+            return_ty: HikariType::Float,
+            type_params: vec![],
+        }),
+        // 17e: time
+        "現在時刻" => Some(FnSig {
+            params: vec![],
+            return_ty: HikariType::Int,
+            type_params: vec![],
+        }),
+        "経過" => Some(FnSig {
+            params: vec![HikariType::Int],
+            return_ty: HikariType::Int,
+            type_params: vec![],
+        }),
+        "眠る" => Some(FnSig {
+            params: vec![HikariType::Int],
+            return_ty: HikariType::Void,
+            type_params: vec![],
+        }),
         _ => None,
     }
 }
@@ -96,15 +176,17 @@ pub(super) fn builtin_sig(name: &str) -> Option<FnSig> {
 pub(super) fn builtin_module(name: &str) -> Option<&'static str> {
     match name {
         "絶対値" | "平方根" | "乱数" | "最大" | "最小" | "累乗" | "切り捨て" | "切り上げ"
-        | "四捨五入" | "余り" => Some(MOD_MATH),
-        "分割" | "結合" | "置換" => Some(MOD_STRING),
-        "要素数" | "追加" | "取り出す" | "含む配列" | "位置" | "逆順" | "整列" | "部分列" => {
-            Some(MOD_ARRAY)
-        }
-        "鍵一覧" | "値一覧" | "削除" => Some(MOD_MAP),
+        | "四捨五入" | "余り" | "符号" | "挟む" | "総和" | "平均" | "最大値" | "最小値"
+        | "正弦" | "余弦" | "正接" | "対数" | "指数" => Some(MOD_MATH),
+        "分割" | "結合" | "置換" | "大文字" | "小文字" | "整形" | "先頭一致" | "末尾一致"
+        | "部分文字列" | "文字列位置" | "繰り返し文字列" => Some(MOD_STRING),
+        "要素数" | "追加" | "取り出す" | "含む配列" | "位置" | "逆順" | "整列" | "部分列"
+        | "連結" | "平坦化" | "どれか" | "すべて" | "数える" => Some(MOD_ARRAY),
+        "鍵一覧" | "値一覧" | "削除" | "併合" | "数" | "取得既定" => Some(MOD_MAP),
         "マップ" | "絞り込み" | "畳み込み" => Some(MOD_FUNC),
         "ファイル読む" | "ファイル書く" | "印字" => Some(MOD_IO),
         "引数" | "環境変数" => Some(MOD_ENV),
+        "現在時刻" | "経過" | "眠る" => Some(MOD_TIME),
         _ => None,
     }
 }

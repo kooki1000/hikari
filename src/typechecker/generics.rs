@@ -110,6 +110,40 @@ pub(super) fn generic_builtin_sig(name: &str) -> Option<GenericSig> {
             params: vec![var(0)],
             ret: SigType::Void,
         },
+        // ── Phase 17c: more 配列 ops ──
+        "連結" => GenericSig {
+            params: vec![arr(var(0)), arr(var(0))],
+            ret: arr(var(0)),
+        },
+        "平坦化" => GenericSig {
+            params: vec![arr(arr(var(0)))],
+            ret: arr(var(0)),
+        },
+        "どれか" => GenericSig {
+            params: vec![arr(var(0)), func(vec![var(0)], SigType::Bool)],
+            ret: SigType::Bool,
+        },
+        "すべて" => GenericSig {
+            params: vec![arr(var(0)), func(vec![var(0)], SigType::Bool)],
+            ret: SigType::Bool,
+        },
+        "数える" => GenericSig {
+            params: vec![arr(var(0)), func(vec![var(0)], SigType::Bool)],
+            ret: SigType::Int,
+        },
+        // ── Phase 17d: more 辞書 ops ──
+        "併合" => GenericSig {
+            params: vec![map(var(0), var(1)), map(var(0), var(1))],
+            ret: map(var(0), var(1)),
+        },
+        "数" => GenericSig {
+            params: vec![map(var(0), var(1))],
+            ret: SigType::Int,
+        },
+        "取得既定" => GenericSig {
+            params: vec![map(var(0), var(1)), var(0), var(1)],
+            ret: var(1),
+        },
         _ => return None,
     };
     Some(sig)

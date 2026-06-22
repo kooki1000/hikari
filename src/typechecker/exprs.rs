@@ -471,6 +471,128 @@ impl super::TypeChecker {
                     });
                 }
 
+                // 文字列位置（s、部分）→ 省略可＜整数＞ (requires 文字列 module).
+                if name == "文字列位置" && args.len() == 2 {
+                    let s_ty = self.infer_value_expr(&args[0], span)?;
+                    let p_ty = self.infer_value_expr(&args[1], span)?;
+                    if s_ty != HikariType::String {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::String,
+                            got: s_ty,
+                            span,
+                        });
+                    }
+                    if p_ty != HikariType::String {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::String,
+                            got: p_ty,
+                            span,
+                        });
+                    }
+                    return Ok(HikariType::Option(Box::new(HikariType::Int)));
+                }
+
+                // 符号（Int|Float）→ 整数 (requires 数学 module).
+                if name == "符号" && args.len() == 1 {
+                    let arg_ty = self.infer_value_expr(&args[0], span)?;
+                    if !matches!(arg_ty, HikariType::Int | HikariType::Float) {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::Int,
+                            got: arg_ty,
+                            span,
+                        });
+                    }
+                    return Ok(HikariType::Int);
+                }
+
+                // 挟む（T、T、T）→ T where T ∈ {整数, 小数} (requires 数学 module).
+                if name == "挟む" && args.len() == 3 {
+                    let v_ty = self.infer_value_expr(&args[0], span)?;
+                    let lo_ty = self.infer_value_expr(&args[1], span)?;
+                    let hi_ty = self.infer_value_expr(&args[2], span)?;
+                    if !matches!(v_ty, HikariType::Int | HikariType::Float) {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: HikariType::Int,
+                            got: v_ty,
+                            span,
+                        });
+                    }
+                    if lo_ty != v_ty || hi_ty != v_ty {
+                        return Err(TypeError::ArgTypeMismatch {
+                            name: name.clone(),
+                            param: v_ty.clone(),
+                            got: if lo_ty != v_ty { lo_ty } else { hi_ty },
+                            span,
+                        });
+                    }
+                    return Ok(v_ty);
+                }
+
+                // 総和（配列＜T＞）→ T where T ∈ {整数, 小数} (requires 数学 module).
+                if name == "総和" && args.len() == 1 {
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
+                    match &arr_ty {
+                        HikariType::Array(inner)
+                            if matches!(inner.as_ref(), HikariType::Int | HikariType::Float) =>
+                        {
+                            return Ok(*inner.clone());
+                        }
+                        _ => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: arr_ty,
+                                span,
+                            });
+                        }
+                    }
+                }
+
+                // 平均（配列＜T＞）→ 小数 where T ∈ {整数, 小数} (requires 数学 module).
+                if name == "平均" && args.len() == 1 {
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
+                    match &arr_ty {
+                        HikariType::Array(inner)
+                            if matches!(inner.as_ref(), HikariType::Int | HikariType::Float) => {}
+                        _ => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Float)),
+                                got: arr_ty,
+                                span,
+                            });
+                        }
+                    }
+                    return Ok(HikariType::Float);
+                }
+
+                // 最大値/最小値（配列＜T＞）→ T where T is orderable (requires 数学 module).
+                if (name == "最大値" || name == "最小値") && args.len() == 1 {
+                    let arr_ty = self.infer_value_expr(&args[0], span)?;
+                    match &arr_ty {
+                        HikariType::Array(inner)
+                            if matches!(
+                                inner.as_ref(),
+                                HikariType::Int | HikariType::Float | HikariType::String
+                            ) =>
+                        {
+                            return Ok(*inner.clone());
+                        }
+                        _ => {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: HikariType::Array(Box::new(HikariType::Int)),
+                                got: arr_ty,
+                                span,
+                            });
+                        }
+                    }
+                }
+
                 // 含む is polymorphic: String × String → Bool (文字列 module)
                 // or Map × Key → Bool (辞書 module).
                 if name == "含む" && args.len() == 2 {

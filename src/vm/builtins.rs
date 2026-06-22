@@ -405,5 +405,296 @@ pub(super) fn call_builtin(
                 _ => Err(RuntimeError::TypeMismatch),
             }
         }
+
+        // ── Phase 17a: richer strings ─────────────────────────────────────────
+        BuiltinFn::ToUpperCase => match args.pop() {
+            Some(Value::Str(s)) => Ok(Value::Str(s.to_uppercase())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::ToLowerCase => match args.pop() {
+            Some(Value::Str(s)) => Ok(Value::Str(s.to_lowercase())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Trim => match args.pop() {
+            Some(Value::Str(s)) => Ok(Value::Str(s.trim().to_string())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::StartsWith => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Str(s)), Some(Value::Str(prefix))) => {
+                Ok(Value::Bool(s.starts_with(prefix.as_str())))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::EndsWith => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Str(s)), Some(Value::Str(suffix))) => {
+                Ok(Value::Bool(s.ends_with(suffix.as_str())))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Substring => {
+            match (args.first().cloned(), args.get(1).cloned(), args.get(2).cloned()) {
+                (Some(Value::Str(s)), Some(Value::Int(start)), Some(Value::Int(end))) => {
+                    let chars: Vec<char> = s.chars().collect();
+                    let len = chars.len() as i64;
+                    let start = start.max(0).min(len) as usize;
+                    let end = end.max(0).min(len) as usize;
+                    let end = end.max(start);
+                    Ok(Value::Str(chars[start..end].iter().collect()))
+                }
+                _ => Err(RuntimeError::TypeMismatch),
+            }
+        }
+        BuiltinFn::StrFind => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Str(s)), Some(Value::Str(sub))) => {
+                let result = s.find(sub.as_str()).map(|byte_pos| {
+                    s[..byte_pos].chars().count() as i64
+                });
+                Ok(match result {
+                    Some(p) => Value::Enum {
+                        enum_name: "省略可".to_string(),
+                        variant: "有る".to_string(),
+                        payload: vec![Value::Int(p)],
+                    },
+                    None => Value::Enum {
+                        enum_name: "省略可".to_string(),
+                        variant: "無し".to_string(),
+                        payload: vec![],
+                    },
+                })
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::RepeatStr => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Str(s)), Some(Value::Int(n))) => {
+                let n = n.max(0) as usize;
+                Ok(Value::Str(s.repeat(n)))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+
+        // ── Phase 17b: more numerics ──────────────────────────────────────────
+        BuiltinFn::Sign => match args.pop() {
+            Some(Value::Int(n)) => Ok(Value::Int(n.signum())),
+            Some(Value::Float(f)) => Ok(Value::Int(if f == 0.0 { 0 } else { f.signum() as i64 })),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Clamp => {
+            match (args.first().cloned(), args.get(1).cloned(), args.get(2).cloned()) {
+                (Some(Value::Int(v)), Some(Value::Int(lo)), Some(Value::Int(hi))) => {
+                    Ok(Value::Int(v.max(lo).min(hi)))
+                }
+                (Some(Value::Float(v)), Some(Value::Float(lo)), Some(Value::Float(hi))) => {
+                    Ok(Value::Float(v.max(lo).min(hi)))
+                }
+                _ => Err(RuntimeError::TypeMismatch),
+            }
+        }
+        BuiltinFn::Sum => match args.pop() {
+            Some(Value::Array(arr)) => {
+                let elems = arr.borrow();
+                if elems.is_empty() {
+                    return Ok(Value::Int(0));
+                }
+                match &elems[0] {
+                    Value::Int(_) => {
+                        let mut sum = 0i64;
+                        for e in elems.iter() {
+                            match e {
+                                Value::Int(n) => {
+                                    sum = sum
+                                        .checked_add(*n)
+                                        .ok_or(RuntimeError::IntegerOverflow)?;
+                                }
+                                _ => return Err(RuntimeError::TypeMismatch),
+                            }
+                        }
+                        Ok(Value::Int(sum))
+                    }
+                    Value::Float(_) => {
+                        let sum: f64 = elems
+                            .iter()
+                            .map(|e| match e {
+                                Value::Float(f) => *f,
+                                _ => 0.0,
+                            })
+                            .sum();
+                        Ok(Value::Float(sum))
+                    }
+                    _ => Err(RuntimeError::TypeMismatch),
+                }
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Average => match args.pop() {
+            Some(Value::Array(arr)) => {
+                let elems = arr.borrow();
+                if elems.is_empty() {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                let n = elems.len() as f64;
+                let sum: f64 = match &elems[0] {
+                    Value::Int(_) => elems
+                        .iter()
+                        .map(|e| match e {
+                            Value::Int(x) => *x as f64,
+                            _ => 0.0,
+                        })
+                        .sum(),
+                    Value::Float(_) => elems
+                        .iter()
+                        .map(|e| match e {
+                            Value::Float(f) => *f,
+                            _ => 0.0,
+                        })
+                        .sum(),
+                    _ => return Err(RuntimeError::TypeMismatch),
+                };
+                Ok(Value::Float(sum / n))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::ArrayMax => match args.pop() {
+            Some(Value::Array(arr)) => {
+                let elems = arr.borrow();
+                if elems.is_empty() {
+                    return Err(RuntimeError::EmptyArray);
+                }
+                let max = elems[1..].iter().fold(elems[0].clone(), |a, b| match (&a, b) {
+                    (Value::Int(x), Value::Int(y)) => {
+                        if y > x { b.clone() } else { a.clone() }
+                    }
+                    (Value::Float(x), Value::Float(y)) => {
+                        if y > x { b.clone() } else { a.clone() }
+                    }
+                    (Value::Str(x), Value::Str(y)) => {
+                        if y > x { b.clone() } else { a.clone() }
+                    }
+                    _ => a.clone(),
+                });
+                Ok(max)
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::ArrayMin => match args.pop() {
+            Some(Value::Array(arr)) => {
+                let elems = arr.borrow();
+                if elems.is_empty() {
+                    return Err(RuntimeError::EmptyArray);
+                }
+                let min = elems[1..].iter().fold(elems[0].clone(), |a, b| match (&a, b) {
+                    (Value::Int(x), Value::Int(y)) => {
+                        if y < x { b.clone() } else { a.clone() }
+                    }
+                    (Value::Float(x), Value::Float(y)) => {
+                        if y < x { b.clone() } else { a.clone() }
+                    }
+                    (Value::Str(x), Value::Str(y)) => {
+                        if y < x { b.clone() } else { a.clone() }
+                    }
+                    _ => a.clone(),
+                });
+                Ok(min)
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Sin => match args.pop() {
+            Some(Value::Float(f)) => Ok(Value::Float(f.sin())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Cos => match args.pop() {
+            Some(Value::Float(f)) => Ok(Value::Float(f.cos())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Tan => match args.pop() {
+            Some(Value::Float(f)) => Ok(Value::Float(f.tan())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Ln => match args.pop() {
+            Some(Value::Float(f)) => Ok(Value::Float(f.ln())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Exp => match args.pop() {
+            Some(Value::Float(f)) => Ok(Value::Float(f.exp())),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+
+        // ── Phase 17c: more array ops ─────────────────────────────────────────
+        BuiltinFn::Concat => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Array(a)), Some(Value::Array(b))) => {
+                let mut result = a.borrow().clone();
+                result.extend_from_slice(&b.borrow());
+                Ok(Value::Array(Rc::new(RefCell::new(result))))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Flatten => match args.pop() {
+            Some(Value::Array(outer)) => {
+                let mut result = Vec::new();
+                for item in outer.borrow().iter() {
+                    match item {
+                        Value::Array(inner) => result.extend_from_slice(&inner.borrow()),
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    }
+                }
+                Ok(Value::Array(Rc::new(RefCell::new(result))))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        // HOF: handled in step() like MapArray/FilterArray/FoldArray.
+        BuiltinFn::AnyArray | BuiltinFn::AllArray | BuiltinFn::CountArray => {
+            unreachable!("handled in step()")
+        }
+
+        // ── Phase 17d: more map ops ───────────────────────────────────────────
+        BuiltinFn::MapMerge => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Map(a)), Some(Value::Map(b))) => {
+                let mut result = a.borrow().clone();
+                for (k, v) in b.borrow().iter() {
+                    result.insert(k.clone(), v.clone());
+                }
+                Ok(Value::Map(Rc::new(RefCell::new(result))))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::MapSize => match args.pop() {
+            Some(Value::Map(m)) => Ok(Value::Int(m.borrow().len() as i64)),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::MapGetOrDefault => {
+            match (args.first().cloned(), args.get(1).cloned(), args.get(2).cloned()) {
+                (Some(Value::Map(m)), Some(Value::Str(key)), Some(default)) => {
+                    Ok(m.borrow().get(&key).cloned().unwrap_or(default))
+                }
+                _ => Err(RuntimeError::TypeMismatch),
+            }
+        }
+
+        // ── Phase 17e: time ───────────────────────────────────────────────────
+        BuiltinFn::NowMillis => {
+            let ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
+            Ok(Value::Int(ms))
+        }
+        BuiltinFn::Elapsed => match args.pop() {
+            Some(Value::Int(start)) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+                Ok(Value::Int(now - start))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Sleep => match args.pop() {
+            Some(Value::Int(ms)) => {
+                if ms > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+                }
+                Ok(Value::Int(0))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
     }
 }
