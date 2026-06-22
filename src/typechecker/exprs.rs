@@ -9,6 +9,83 @@ use super::error::TypeError;
 use super::generics::{generic_builtin_sig, instantiate, unify};
 use super::symbols::{always_returns, builtin_module, builtin_sig};
 
+/// Unify `param_ty` (which may contain named type variables from `type_params`)
+/// against `arg_ty`, recording bindings in `subst`. Returns false on mismatch.
+fn unify_type_var(
+    param_ty: &HikariType,
+    arg_ty: &HikariType,
+    type_params: &[String],
+    subst: &mut HashMap<String, HikariType>,
+) -> bool {
+    match param_ty {
+        HikariType::Record(name) if type_params.contains(name) => match subst.get(name) {
+            Some(bound) => bound == arg_ty,
+            None => {
+                subst.insert(name.clone(), arg_ty.clone());
+                true
+            }
+        },
+        HikariType::Array(inner) => match arg_ty {
+            HikariType::Array(a) => unify_type_var(inner, a, type_params, subst),
+            _ => false,
+        },
+        HikariType::Map(k, v) => match arg_ty {
+            HikariType::Map(ak, av) => {
+                unify_type_var(k, ak, type_params, subst)
+                    && unify_type_var(v, av, type_params, subst)
+            }
+            _ => false,
+        },
+        HikariType::Option(inner) => match arg_ty {
+            HikariType::Option(a) => unify_type_var(inner, a, type_params, subst),
+            _ => false,
+        },
+        HikariType::Fn(ps, ret) => match arg_ty {
+            HikariType::Fn(aps, ar) if ps.len() == aps.len() => {
+                for (p, a) in ps.iter().zip(aps.iter()) {
+                    if !unify_type_var(p, a, type_params, subst) {
+                        return false;
+                    }
+                }
+                unify_type_var(ret, ar, type_params, subst)
+            }
+            _ => false,
+        },
+        _ => param_ty == arg_ty,
+    }
+}
+
+/// Substitute named type variables in `ty` using `subst`.
+/// Unbound variables are replaced with `整数` (placeholder for error messages).
+fn instantiate_type_var(
+    ty: &HikariType,
+    type_params: &[String],
+    subst: &HashMap<String, HikariType>,
+) -> HikariType {
+    match ty {
+        HikariType::Record(name) if type_params.contains(name) => {
+            subst.get(name).cloned().unwrap_or(HikariType::Int)
+        }
+        HikariType::Array(inner) => {
+            HikariType::Array(Box::new(instantiate_type_var(inner, type_params, subst)))
+        }
+        HikariType::Map(k, v) => HikariType::Map(
+            Box::new(instantiate_type_var(k, type_params, subst)),
+            Box::new(instantiate_type_var(v, type_params, subst)),
+        ),
+        HikariType::Option(inner) => {
+            HikariType::Option(Box::new(instantiate_type_var(inner, type_params, subst)))
+        }
+        HikariType::Fn(ps, ret) => HikariType::Fn(
+            ps.iter()
+                .map(|p| instantiate_type_var(p, type_params, subst))
+                .collect(),
+            Box::new(instantiate_type_var(ret, type_params, subst)),
+        ),
+        _ => ty.clone(),
+    }
+}
+
 impl super::TypeChecker {
     pub(super) fn infer_expr(&mut self, expr: &Expr, span: Span) -> Result<HikariType, TypeError> {
         match expr {
@@ -526,18 +603,36 @@ impl super::TypeChecker {
                         span,
                     });
                 }
-                for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
-                    let arg_ty = self.infer_value_expr(arg, span)?;
-                    if arg_ty != *param_ty && !option_none_compatible(param_ty, &arg_ty) {
-                        return Err(TypeError::ArgTypeMismatch {
-                            name: name.clone(),
-                            param: param_ty.clone(),
-                            got: arg_ty,
-                            span,
-                        });
+                if sig.type_params.is_empty() {
+                    // Non-generic function: exact type match (modulo Option sentinel).
+                    for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
+                        let arg_ty = self.infer_value_expr(arg, span)?;
+                        if arg_ty != *param_ty && !option_none_compatible(param_ty, &arg_ty) {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: param_ty.clone(),
+                                got: arg_ty,
+                                span,
+                            });
+                        }
                     }
+                    Ok(sig.return_ty)
+                } else {
+                    // Generic function: unify type variables and instantiate return type.
+                    let mut subst = HashMap::new();
+                    for (arg, param_ty) in args.iter().zip(sig.params.iter()) {
+                        let arg_ty = self.infer_value_expr(arg, span)?;
+                        if !unify_type_var(param_ty, &arg_ty, &sig.type_params, &mut subst) {
+                            return Err(TypeError::ArgTypeMismatch {
+                                name: name.clone(),
+                                param: instantiate_type_var(param_ty, &sig.type_params, &subst),
+                                got: arg_ty,
+                                span,
+                            });
+                        }
+                    }
+                    Ok(instantiate_type_var(&sig.return_ty, &sig.type_params, &subst))
                 }
-                Ok(sig.return_ty)
             }
 
             Expr::Array(elems) => {

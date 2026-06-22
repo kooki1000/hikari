@@ -33,6 +33,8 @@ pub struct TypeChecker {
     pub(super) enums: HashMap<String, Vec<(String, Vec<HikariType>)>>,
     // Variant name → owning enum name (variant names are globally unique).
     pub(super) variant_owner: HashMap<String, String>,
+    // Type variable names currently in scope (populated when checking a generic fn body).
+    pub(super) type_var_names: HashSet<String>,
 }
 
 impl TypeChecker {
@@ -46,6 +48,7 @@ impl TypeChecker {
             records: HashMap::new(),
             enums: HashMap::new(),
             variant_owner: HashMap::new(),
+            type_var_names: HashSet::new(),
         }
     }
 
@@ -72,7 +75,9 @@ impl TypeChecker {
     pub(super) fn check_type_declared(&self, ty: &HikariType, span: Span) -> Result<(), TypeError> {
         match ty {
             HikariType::Record(name)
-                if !self.records.contains_key(name) && !self.enums.contains_key(name) =>
+                if !self.records.contains_key(name)
+                    && !self.enums.contains_key(name)
+                    && !self.type_var_names.contains(name) =>
             {
                 Err(TypeError::UndeclaredType(name.clone(), span))
             }
@@ -158,11 +163,19 @@ impl TypeChecker {
 
             Stmt::FnDecl {
                 name,
+                type_params,
                 params,
                 return_ty,
                 body,
                 span,
             } => {
+                // Bring type-var names into scope before checking declared types
+                // so that e.g. `配列＜Ｔ＞` in a param type doesn't fail.
+                let outer_type_var_names = std::mem::replace(
+                    &mut self.type_var_names,
+                    type_params.iter().cloned().collect(),
+                );
+
                 for (ty, _) in params {
                     self.check_type_declared(ty, *span)?;
                 }
@@ -170,6 +183,7 @@ impl TypeChecker {
                 let sig = FnSig {
                     params: params.iter().map(|(t, _)| t.clone()).collect(),
                     return_ty: return_ty.clone(),
+                    type_params: type_params.clone(),
                 };
                 self.fns.insert(name.clone(), sig);
 
@@ -199,6 +213,7 @@ impl TypeChecker {
                 self.scopes = outer_scopes;
                 self.current_return_ty = outer_return_ty;
                 self.loop_depth = outer_loop_depth;
+                self.type_var_names = outer_type_var_names;
                 Ok(())
             }
 

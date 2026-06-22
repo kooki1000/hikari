@@ -75,7 +75,7 @@ fn test_parse_field_assignment() {
 
 #[test]
 fn test_parse_index_then_field_access_chain() {
-    let ast = parse_helper("返す 配列【０】：：ｘ；");
+    let ast = parse_helper("返す リスト【０】：：ｘ；");
     let Stmt::Return(Some(Expr::FieldAccess { record, field }), _) = &ast[0] else {
         panic!("expected FieldAccess")
     };

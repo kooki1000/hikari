@@ -88,6 +88,7 @@ pub enum Stmt {
     },
     FnDecl {
         name: String,
+        type_params: Vec<String>, // e.g. ["Ｔ", "Ｕ"] for 関数＜Ｔ、Ｕ＞
         params: Vec<(HikariType, String)>,
         return_ty: HikariType,
         body: Vec<Stmt>,

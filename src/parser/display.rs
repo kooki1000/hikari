@@ -38,6 +38,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwEnum => "「構造」".to_string(),
         TokenKind::KwMatch => "「照合」".to_string(),
         TokenKind::KwMap => "「辞書」".to_string(),
+        TokenKind::KwArray => "「配列」".to_string(),
         TokenKind::KwOption => "「省略可」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),

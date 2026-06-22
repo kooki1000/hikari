@@ -101,9 +101,16 @@ impl Parser {
 
     fn parse_stmt_inner(&mut self) -> Result<Stmt, ParseError> {
         match self.peek().clone() {
-            // 関数＜...＞ name ＝ expr;  is a var decl with Fn type.
-            // 関数 name（...） → ... ｛ ... ｝ is a named fn decl.
-            TokenKind::KwFn if self.peek_next() == &TokenKind::Lt => self.parse_var_decl(),
+            // 関数＜（...）→R＞ name ＝ expr;  is a var decl with Fn type.
+            // 関数＜T＞ name（...） → ... ｛ ... ｝ is a generic named fn decl.
+            // 関数 name（...） → ... ｛ ... ｝ is a plain named fn decl.
+            // Disambiguation: after ＜, an identifier starts type-var list; （ starts fn type.
+            TokenKind::KwFn
+                if self.peek_next() == &TokenKind::Lt
+                    && !matches!(self.peek_at(2), TokenKind::Ident(_)) =>
+            {
+                self.parse_var_decl()
+            }
             TokenKind::KwFn => self.parse_fn_decl(),
             TokenKind::KwReturn => self.parse_return(),
             TokenKind::KwPrint => self.parse_print(),
@@ -348,6 +355,46 @@ impl Parser {
     fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
         let span = self.peek_span();
         self.advance(); // consume 関数
+
+        // Optional type-parameter list: ＜T＞ or ＜T、U＞
+        let type_params = if self.peek() == &TokenKind::Lt {
+            self.advance(); // consume ＜
+            let mut tps = Vec::new();
+            loop {
+                let tp_span = self.peek_span();
+                let tp = match self.advance().clone() {
+                    TokenKind::Ident(n) => n,
+                    other => {
+                        return Err(ParseError::ExpectedIdentifier {
+                            got: other,
+                            span: tp_span,
+                        });
+                    }
+                };
+                tps.push(tp);
+                match self.peek() {
+                    TokenKind::Gt => {
+                        self.advance();
+                        break;
+                    }
+                    TokenKind::Comma => {
+                        self.advance();
+                    }
+                    _ => {
+                        let s = self.peek_span();
+                        return Err(ParseError::UnexpectedToken {
+                            expected: TokenKind::Gt,
+                            got: self.advance().clone(),
+                            span: s,
+                        });
+                    }
+                }
+            }
+            tps
+        } else {
+            Vec::new()
+        };
+
         let name = match (self.peek_span(), self.advance().clone()) {
             (_, TokenKind::Ident(n)) => n,
             (s, other) => {
@@ -386,6 +433,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace)?;
         Ok(Stmt::FnDecl {
             name,
+            type_params,
             params,
             return_ty,
             body,
@@ -899,6 +947,13 @@ impl Parser {
                 self.expect(&TokenKind::Gt)?;
                 Ok(HikariType::Fn(param_types, Box::new(ret_ty)))
             }
+            // 配列＜T＞ — generic array type (e.g. 配列＜ユーザー型＞ or 配列＜Ｔ＞ in generics)
+            TokenKind::KwArray => {
+                self.expect(&TokenKind::Lt)?;
+                let inner = self.parse_type()?;
+                self.expect(&TokenKind::Gt)?;
+                Ok(HikariType::Array(Box::new(inner)))
+            }
             TokenKind::KwOption => {
                 self.expect(&TokenKind::Lt)?;
                 let inner = self.parse_type()?;
@@ -924,6 +979,7 @@ fn is_type_token(kind: &TokenKind) -> bool {
             | TokenKind::TyStringArray
             | TokenKind::TyBoolArray
             | TokenKind::KwMap
+            | TokenKind::KwArray
             | TokenKind::KwFn
             | TokenKind::KwOption
     )
