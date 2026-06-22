@@ -120,6 +120,7 @@ impl Parser {
             TokenKind::KwEach => self.parse_for_each(),
             TokenKind::KwTry => self.parse_try_catch(),
             TokenKind::KwImport => self.parse_import(),
+            TokenKind::KwPub => self.parse_pub_fn_decl(),
             TokenKind::KwBreak => self.parse_break(),
             TokenKind::KwContinue => self.parse_continue(),
             TokenKind::KwType => self.parse_type_decl(),
@@ -437,8 +438,18 @@ impl Parser {
             params,
             return_ty,
             body,
+            is_public: false,
             span,
         })
+    }
+
+    fn parse_pub_fn_decl(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // consume 公開
+        let mut stmt = self.parse_fn_decl()?;
+        if let Stmt::FnDecl { ref mut is_public, .. } = stmt {
+            *is_public = true;
+        }
+        Ok(stmt)
     }
 
     fn parse_return(&mut self) -> Result<Stmt, ParseError> {
@@ -624,8 +635,25 @@ impl Parser {
                 });
             }
         };
+        // Optional `として エイリアス` clause.
+        let alias = if self.peek() == &TokenKind::KwAs {
+            self.advance(); // consume として
+            let alias_span = self.peek_span();
+            match self.advance().clone() {
+                TokenKind::Ident(a) => Some(a),
+                other => {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: TokenKind::Ident(String::new()),
+                        got: other,
+                        span: alias_span,
+                    });
+                }
+            }
+        } else {
+            None
+        };
         self.expect(&TokenKind::Semi)?;
-        Ok(Stmt::Import { name, span })
+        Ok(Stmt::Import { name, alias, span })
     }
 
     fn parse_print(&mut self) -> Result<Stmt, ParseError> {

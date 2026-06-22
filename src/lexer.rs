@@ -37,6 +37,8 @@ pub enum TokenKind {
     KwMap,      // 辞書
     KwArray,    // 配列
     KwOption,   // 省略可
+    KwAs,       // として  (aliased import: 取り込む 「…」 として エイリアス)
+    KwPub,      // 公開    (export marker: 公開 関数 …)
 
     Pipe, // ｜ (U+FF5C full-width vertical bar) — lambda parameter delimiter
 
@@ -237,6 +239,8 @@ impl Lexer {
             "辞書" => TokenKind::KwMap,
             "配列" => TokenKind::KwArray,
             "省略可" => TokenKind::KwOption,
+            "として" => TokenKind::KwAs,
+            "公開" => TokenKind::KwPub,
             "真" => TokenKind::LitTrue,
             "偽" => TokenKind::LitFalse,
             other => TokenKind::Ident(other.to_string()),

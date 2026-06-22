@@ -151,6 +151,11 @@ pub enum TypeError {
     VoidValueUsed {
         span: Span,
     },
+    // Call to a module-private function (not marked 公開) from outside its module.
+    PrivateFunctionAccess {
+        name: String,
+        span: Span,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -190,6 +195,7 @@ impl TypeError {
             TypeError::UndeclaredEnumVariant { span, .. } => *span,
             TypeError::NonExhaustiveMatch(info) => info.span,
             TypeError::VoidValueUsed { span } => *span,
+            TypeError::PrivateFunctionAccess { span, .. } => *span,
         }
     }
 }
@@ -362,6 +368,11 @@ impl std::fmt::Display for TypeError {
             TypeError::VoidValueUsed { .. } => write!(
                 f,
                 "「無」型の値は使用できません。（ヒント: 「無」を返す関数の結果を値として使うことはできません）"
+            ),
+            TypeError::PrivateFunctionAccess { name, .. } => write!(
+                f,
+                "関数「{}」はモジュール非公開です。（ヒント: 公開するには「公開 関数」として宣言してください）",
+                name
             ),
         }
     }

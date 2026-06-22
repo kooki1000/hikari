@@ -354,7 +354,7 @@ described in [ARCHITECTURE.md](ARCHITECTURE.md).
 | １５ | Optionality & error values (`省略可`, `?`, `結果` sugar) | ✅ **Done** (15a+15b; 15c deferred) |
 | １６ | User-written generics (`関数＜Ｔ＞ …`) | ✅ **Done** |
 | １７ | Standard-library expansion (string/number/collection/time/JSON) | ✅ **Done** (17a–17e; JSON deferred) |
-| １８ | A real module & namespace system | ⬜ Planned |
+| １８ | A real module & namespace system | ✅ **Done** (18a–18d; 18c export control via 公開) |
 | １９ | Diagnostics & developer tooling (fmt, expr spans, multi-error) | ⬜ Planned |
 | ２０ | Performance (peephole, constant folding, faster dispatch) | ⬜ Planned |
 

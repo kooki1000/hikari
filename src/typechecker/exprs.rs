@@ -712,6 +712,24 @@ impl super::TypeChecker {
                     }
                 }
 
+                // Reject calls to module-private functions from outside their module.
+                // Intra-module calls (same alias prefix) are always allowed.
+                if self.private_fns.contains(name.as_str()) {
+                    let same_module = self
+                        .current_fn_name
+                        .as_deref()
+                        .and_then(|caller| caller.split('。').next())
+                        .zip(name.split('。').next())
+                        .map(|(caller_prefix, callee_prefix)| caller_prefix == callee_prefix)
+                        .unwrap_or(false);
+                    if !same_module {
+                        return Err(TypeError::PrivateFunctionAccess {
+                            name: name.clone(),
+                            span,
+                        });
+                    }
+                }
+
                 let sig = self
                     .fns
                     .get(name)
