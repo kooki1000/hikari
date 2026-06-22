@@ -40,6 +40,8 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwMap => "「辞書」".to_string(),
         TokenKind::KwArray => "「配列」".to_string(),
         TokenKind::KwOption => "「省略可」".to_string(),
+        TokenKind::KwAs => "「として」".to_string(),
+        TokenKind::KwPub => "「公開」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),

@@ -35,6 +35,12 @@ pub struct TypeChecker {
     pub(super) variant_owner: HashMap<String, String>,
     // Type variable names currently in scope (populated when checking a generic fn body).
     pub(super) type_var_names: HashSet<String>,
+    // Mangled names of module-private functions (non-公開 functions from aliased imports).
+    // Calls to these from outside their own module body are rejected.
+    pub(super) private_fns: HashSet<String>,
+    // The mangled name of the function whose body is currently being checked.
+    // Used to allow intra-module private calls (alias。fn calling alias。helper).
+    pub(super) current_fn_name: Option<String>,
 }
 
 impl TypeChecker {
@@ -49,6 +55,8 @@ impl TypeChecker {
             enums: HashMap::new(),
             variant_owner: HashMap::new(),
             type_var_names: HashSet::new(),
+            private_fns: HashSet::new(),
+            current_fn_name: None,
         }
     }
 
@@ -115,6 +123,31 @@ impl TypeChecker {
     }
 
     pub fn check(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        // Pre-pass: register all top-level FnDecl signatures so that
+        // forward references and mutual recursion both type-check, and so
+        // that private-fn guards know about every module-private function
+        // before the first body is checked.
+        for stmt in stmts {
+            if let Stmt::FnDecl {
+                name,
+                type_params,
+                params,
+                return_ty,
+                is_public,
+                ..
+            } = stmt
+            {
+                let sig = super::symbols::FnSig {
+                    params: params.iter().map(|(t, _)| t.clone()).collect(),
+                    return_ty: return_ty.clone(),
+                    type_params: type_params.clone(),
+                };
+                self.fns.insert(name.clone(), sig);
+                if !is_public && name.contains('。') {
+                    self.private_fns.insert(name.clone());
+                }
+            }
+        }
         for stmt in stmts {
             self.check_stmt(stmt)?;
         }
@@ -167,6 +200,7 @@ impl TypeChecker {
                 params,
                 return_ty,
                 body,
+                is_public,
                 span,
             } => {
                 // Bring type-var names into scope before checking declared types
@@ -187,10 +221,18 @@ impl TypeChecker {
                 };
                 self.fns.insert(name.clone(), sig);
 
+                // Functions from aliased imports that are not 公開 are private:
+                // they can be called internally (their body references the mangled
+                // names of other module functions) but not from outside the module.
+                if !is_public && name.contains('。') {
+                    self.private_fns.insert(name.clone());
+                }
+
                 // Function bodies are fully isolated: they get a brand new
                 // scope stack, matching the VM's independent per-call Frame.
                 let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
                 let outer_return_ty = self.current_return_ty.take();
+                let outer_fn_name = self.current_fn_name.replace(name.clone());
                 // A 抜ける／続ける written inside a nested 関数 body must not
                 // be considered "inside a loop" just because the call site
                 // (or even the declaration site) happens to sit inside one.
@@ -212,6 +254,7 @@ impl TypeChecker {
 
                 self.scopes = outer_scopes;
                 self.current_return_ty = outer_return_ty;
+                self.current_fn_name = outer_fn_name;
                 self.loop_depth = outer_loop_depth;
                 self.type_var_names = outer_type_var_names;
                 Ok(())

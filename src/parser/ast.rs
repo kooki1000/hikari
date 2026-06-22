@@ -92,6 +92,7 @@ pub enum Stmt {
         params: Vec<(HikariType, String)>,
         return_ty: HikariType,
         body: Vec<Stmt>,
+        is_public: bool, // 公開 marker — controls export visibility
         span: Span,
     },
     Return(Option<Expr>, Span),
@@ -142,6 +143,7 @@ pub enum Stmt {
     },
     Import {
         name: String,
+        alias: Option<String>, // として エイリアス — None for unaliased / stdlib imports
         span: Span,
     },
     Break(Span),
