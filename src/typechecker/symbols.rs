@@ -173,7 +173,7 @@ pub(super) fn builtin_sig(name: &str) -> Option<FnSig> {
 
 // Maps gated stdlib builtins to the module that must be 取り込む'd before
 // they can be called. Phase-2 builtins are absent here, meaning ungated.
-pub(super) fn builtin_module(name: &str) -> Option<&'static str> {
+pub fn builtin_module(name: &str) -> Option<&'static str> {
     match name {
         "絶対値" | "平方根" | "乱数" | "最大" | "最小" | "累乗" | "切り捨て" | "切り上げ"
         | "四捨五入" | "余り" | "符号" | "挟む" | "総和" | "平均" | "最大値" | "最小値"
