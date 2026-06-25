@@ -4,6 +4,7 @@ mod builtins;
 mod bytecode;
 mod codegen;
 mod error;
+mod fold;
 mod value;
 
 #[cfg(test)]

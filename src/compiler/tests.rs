@@ -27,12 +27,35 @@ fn test_compile_bool_literal() {
 
 #[test]
 fn test_compile_binary_add() {
+    // Constant folding: 1 + 2 → single LoadConst(3), no Add instruction.
     let (instrs, constants) = compile("整数 結果 ＝ １ ＋ ２；");
     assert_eq!(instrs[0], Instruction::LoadConst(0));
-    assert_eq!(instrs[1], Instruction::LoadConst(1));
-    assert_eq!(instrs[2], Instruction::Add);
-    assert_eq!(instrs[3], Instruction::StoreLocal(0));
-    assert_eq!(constants, vec![Value::Int(1), Value::Int(2)]);
+    assert_eq!(instrs[1], Instruction::StoreLocal(0));
+    assert_eq!(instrs.len(), 2);
+    assert!(!instrs.contains(&Instruction::Add));
+    assert_eq!(constants, vec![Value::Int(3)]);
+}
+
+#[test]
+fn test_compile_binary_add_with_variable_emits_add() {
+    // When an operand is a variable, folding is not possible.
+    let (instrs, _) = compile("整数 ｘ ＝ １；整数 結果 ＝ ｘ ＋ ２；");
+    assert!(instrs.contains(&Instruction::Add));
+}
+
+#[test]
+fn test_compile_constant_folding_nested() {
+    // (2 * 3) + 4 → single LoadConst(10).
+    let (instrs, constants) = compile("整数 結果 ＝ （２ ＊ ３） ＋ ４；");
+    assert_eq!(instrs.len(), 2);
+    assert_eq!(constants, vec![Value::Int(10)]);
+}
+
+#[test]
+fn test_compile_constant_folding_string_concat() {
+    let (instrs, constants) = compile("文字列 挨拶 ＝ 「こんにちは」 ＋ 「世界」；");
+    assert_eq!(instrs.len(), 2);
+    assert_eq!(constants, vec![Value::Str("こんにちは世界".to_string())]);
 }
 
 #[test]
@@ -87,10 +110,19 @@ fn test_compile_reassignment_reuses_slot() {
 
 #[test]
 fn test_compile_unary_minus() {
-    let (instrs, _) = compile("整数 結果 ＝ ー５；");
+    // Constant folding folds ー5 directly into LoadConst(-5); no Negate instruction.
+    let (instrs, constants) = compile("整数 結果 ＝ ー５；");
     assert_eq!(instrs[0], Instruction::LoadConst(0));
-    assert_eq!(instrs[1], Instruction::Negate);
-    assert_eq!(instrs[2], Instruction::StoreLocal(0));
+    assert_eq!(instrs[1], Instruction::StoreLocal(0));
+    assert_eq!(instrs.len(), 2);
+    assert!(!instrs.contains(&Instruction::Negate));
+    assert_eq!(constants, vec![Value::Int(-5)]);
+}
+
+#[test]
+fn test_compile_unary_minus_variable_emits_negate() {
+    let (instrs, _) = compile("整数 ｘ ＝ ５；整数 結果 ＝ ーｘ；");
+    assert!(instrs.contains(&Instruction::Negate));
 }
 
 #[test]
@@ -122,9 +154,10 @@ fn test_compile_builtin_to_str_emits_call_builtin() {
 
 #[test]
 fn test_compile_stdlib_builtin_emits_call_builtin() {
+    // ー５ is folded to a single LoadConst(-5), so CallBuiltin is at index 1, not 2.
     let (instrs, _) = compile("取り込む 「数学」；整数 結果 ＝ 絶対値（ー５）；");
     assert!(matches!(
-        instrs[2],
+        instrs[1],
         Instruction::CallBuiltin(BuiltinFn::Abs, 1)
     ));
 }
@@ -244,8 +277,15 @@ fn test_compile_try_catch_emits_try_start_end_and_jump() {
 
 #[test]
 fn test_compile_modulo_emits_mod_instruction() {
-    let (instrs, _) = compile("整数 結果 ＝ １０ ％ ３；");
+    // Use a variable operand so folding is not possible and Mod is emitted.
+    let (instrs, _) = compile("整数 ｎ ＝ １０；整数 結果 ＝ ｎ ％ ３；");
     assert!(instrs.contains(&Instruction::Mod));
+}
+
+#[test]
+fn test_compile_modulo_constant_folds() {
+    let (_, constants) = compile("整数 結果 ＝ １０ ％ ３；");
+    assert_eq!(constants, vec![Value::Int(1)]);
 }
 
 #[test]
@@ -423,6 +463,27 @@ fn test_compile_print_multiple_values() {
 fn test_compile_print_no_values() {
     let (instrs, _) = compile("印刷（）；");
     assert_eq!(instrs[0], Instruction::PrintLine(0));
+}
+
+// ── 20c: local-slot reuse between sibling scopes ─────────────────────
+
+#[test]
+fn test_compile_sibling_scopes_reuse_slot() {
+    // Two sibling if-blocks each declare an inner variable.
+    // After slot-reuse optimisation they should share the same slot (1),
+    // since their live ranges do not overlap.
+    let src = "整数 ｘ ＝ ０；\
+               もし 真 ならば ｛ 整数 ａ ＝ １；印刷（ａ）； ｝\
+               もし 真 ならば ｛ 整数 ｂ ＝ ２；印刷（ｂ）； ｝";
+    let (instrs, _) = compile(src);
+    // Both ａ and ｂ should use StoreLocal(1) — same reused slot.
+    let store1_count = instrs
+        .iter()
+        .filter(|i| matches!(i, Instruction::StoreLocal(1)))
+        .count();
+    assert!(store1_count >= 2, "expected >=2 StoreLocal(1), got {store1_count}");
+    // No slot 2 should appear — that would indicate no reuse.
+    assert!(!instrs.iter().any(|i| matches!(i, Instruction::StoreLocal(2))));
 }
 
 // ── 12: fixed-width-field boundary hardening ─────────────────────────
