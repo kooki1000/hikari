@@ -152,6 +152,69 @@ or return a `TypeMismatch`, rather than `Equal`.
 
 ---
 
+## 6. 🔴 The formatter (`整形`) silently deletes all comments
+
+**Severity:** High (data loss — `整形 -i` permanently destroys comments in place).
+
+```
+＃ This is an important comment
+整数 ｘ ＝ ４２；   ＃ inline comment
+印刷（ｘ）；
+```
+after `hikari 整形` (or, destructively, `hikari 整形 -i`) becomes:
+```
+整数 ｘ ＝ ４２；
+印刷（ｘ）；
+```
+
+Both the standalone and the trailing comment are gone. Blank lines between
+statements are dropped the same way.
+
+**Root cause.** Comments are consumed and discarded in
+[`Lexer::skip_whitespace`](../src/lexer.rs:135): the `＃` branch scans to
+end-of-line and throws the text away, so comments never become tokens and are
+absent from the AST. The formatter ([formatter.rs](../src/formatter.rs)) renders
+from the AST, so it has nothing to emit. It is not a formatter-logic error — the
+information is dropped two layers earlier.
+
+**Planned fix — comment- and blank-line-preserving formatter.**
+
+Design: keep a *side channel* of comments so the parser and token stream stay
+untouched (the parser keeps receiving a clean, comment-free stream), then
+interleave comments into the formatter's output by source position. The `整形`
+path ([main.rs](../src/main.rs:60)) only does parse → format on a single file
+(no import resolution, no typecheck), so comment line/col map directly onto the
+file being formatted, and every `Stmt` already carries a `Span` to anchor against.
+
+1. **`src/lexer.rs`** — add `Comment { line, col, text }` and a
+   `comments: Vec<Comment>` field on `Lexer`, populated in `skip_whitespace`'s
+   `＃` branch instead of discarding. Add `into_comments()`. `tokenize()`'s
+   signature is unchanged, so the parser and every other caller are untouched.
+2. **`src/formatter.rs`** — add `format_stmts_with_comments(stmts, comments)`;
+   keep `format_stmts` as a thin wrapper passing `&[]`. Thread a
+   `Formatter { comments, next, out }` cursor through `format_stmt` /
+   `format_match_arm`. At each statement-emitting level (top level and every
+   block body): flush leading comments with `line < stmt.start_line` (own line,
+   current indent); splice trailing comments with `line == stmt.start_line`
+   before the line's `\n` (attached to the header line for block statements);
+   and emit a single blank line where consecutive statements have a source-line
+   gap. Flush any remaining comments at the end (trailing file comments).
+3. **`src/main.rs`** — in the `整形` branch, keep the lexer alive and pass
+   `lexer.into_comments()` into the new formatter entry point.
+
+Scope decisions:
+- **Preserved:** own-line comments (correct indent/order), trailing comments on a
+  statement's source line, and blank lines between statements.
+- **Not preserved (documented limitation):** comments embedded *inside* an
+  expression or argument list are relocated to the nearest statement boundary.
+  Full in-place fidelity there would require attaching comments to individual AST
+  nodes (parser changes); deliberately out of scope.
+
+This also removes the `整形 -i` data-loss as a side effect. Until it lands, treat
+`整形 -i` on comment-bearing files as destructive.
+
+---
+
 ## Verified correct (checked during the review)
 
 These were examined and behave correctly — listed so future reviewers don't
