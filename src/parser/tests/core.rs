@@ -272,7 +272,7 @@ fn test_parse_multi_arg_call() {
     // 返す 加算（１、２）；
     let src = "関数 加算（整数 Ａ、整数 Ｂ）ー＞ 整数 ｛ 返す Ａ ＋ Ｂ； ｝返す 加算（１、２）；";
     let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
-    let Stmt::Return(Some(Expr::Call { name, args }), _) = &ast[1] else {
+    let Stmt::Return(Some(Expr::Call { name, args, .. }), _) = &ast[1] else {
         panic!("expected Return(Call)")
     };
     assert_eq!(name, "加算");

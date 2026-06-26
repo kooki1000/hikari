@@ -56,7 +56,9 @@ pub enum BuiltinFn {
     // Phase 17b: more numerics
     Sign,     // 符号
     Clamp,    // 挟む
-    Sum,      // 総和
+    Sum,      // 総和 (整数列): empty → 整数 0
+    SumFloat, // 総和 (小数列): empty → 小数 0.0 — chosen by codegen from the
+    // type checker's element-type info so an empty 小数列 sums to 0.0, not 0.
     Average,  // 平均
     ArrayMax, // 最大値
     ArrayMin, // 最小値

@@ -835,7 +835,7 @@ impl Parser {
                         }
                     }
                     self.advance(); // consume ）
-                    Ok(Expr::Call { name, args })
+                    Ok(Expr::Call { name, args, span })
                 } else if self.peek() == &TokenKind::LBrace
                     && matches!(self.peek_at(1), TokenKind::Ident(_))
                     && self.peek_at(2) == &TokenKind::Colon

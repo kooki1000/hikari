@@ -367,7 +367,7 @@ fn mangle_expr(
     local_types: &HashSet<String>,
 ) -> Expr {
     match expr {
-        Expr::Call { name, args } => {
+        Expr::Call { name, args, span } => {
             let mangled_name = if local_fns.contains(&name) {
                 format!("{}。{}", alias, name)
             } else {
@@ -379,6 +379,7 @@ fn mangle_expr(
                     .into_iter()
                     .map(|a| mangle_expr(a, alias, local_fns, local_types))
                     .collect(),
+                span,
             }
         }
         Expr::RecordLit { type_name, fields } => {

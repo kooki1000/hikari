@@ -211,7 +211,7 @@ fn collect_called(stmt: &Stmt, called: &mut HashSet<String>, builtins: &mut Hash
 
 fn collect_called_expr(expr: &Expr, called: &mut HashSet<String>, builtins: &mut HashSet<String>) {
     match expr {
-        Expr::Call { name, args } => {
+        Expr::Call { name, args, .. } => {
             called.insert(name.clone());
             if builtin_module(name).is_some() {
                 builtins.insert(name.clone());
@@ -446,7 +446,7 @@ impl Linter {
     fn expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Ident(name) => self.mark_used(name),
-            Expr::Call { name, args } => {
+            Expr::Call { name, args, .. } => {
                 // The callee may be a function-typed local variable.
                 self.mark_used(name);
                 for a in args {

@@ -187,7 +187,11 @@ impl super::TypeChecker {
                 }
             }
 
-            Expr::Call { name, args } => {
+            Expr::Call {
+                name,
+                args,
+                span: call_span,
+            } => {
                 // Built-in 省略可 constructors — handled before variant_owner
                 // because they are not registered via EnumDecl.
                 if name == "有る" {
@@ -539,6 +543,12 @@ impl super::TypeChecker {
                         HikariType::Array(inner)
                             if matches!(inner.as_ref(), HikariType::Int | HikariType::Float) =>
                         {
+                            // Record float-element sums so the compiler lowers
+                            // them to a float-aware builtin (empty → 0.0). Keyed
+                            // by this call's span (see float_sum_sites).
+                            if inner.as_ref() == &HikariType::Float {
+                                self.float_sum_sites.insert(*call_span);
+                            }
                             return Ok(*inner.clone());
                         }
                         _ => {

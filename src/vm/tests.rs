@@ -14,6 +14,23 @@ fn run(src: &str) -> Option<Value> {
         .unwrap()
 }
 
+// Run a program through the full pipeline including the type checker, so
+// type-directed lowering (e.g. 総和's float-vs-int variant selection) is
+// exercised. `run` above deliberately skips the checker, which is fine for
+// most VM tests but would miss the checker→compiler handoff.
+fn run_typed(src: &str) -> Option<Value> {
+    use crate::typechecker::TypeChecker;
+    let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+    let mut checker = TypeChecker::new();
+    assert!(checker.check(&ast).is_ok(), "type check failed");
+    let mut compiler = Compiler::new();
+    compiler.set_float_sum_sites(checker.take_float_sum_sites());
+    let script = compiler.compile(&ast).unwrap();
+    Vm::with_chunks(compiler.constants, compiler.chunks, script)
+        .run()
+        .unwrap()
+}
+
 mod builtins;
 mod collections;
 mod core;

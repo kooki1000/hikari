@@ -157,6 +157,17 @@ fn test_vm_remainder_by_zero_returns_error() {
     assert_eq!(run_result(src), Err(RuntimeError::DivisionByZero));
 }
 
+#[test]
+fn test_vm_remainder_min_by_neg_one_is_catchable_overflow() {
+    // Regression: 余り(i64::MIN, -1) used to compute `a % b` directly, which
+    // overflows and panicked the interpreter (escaping 試す/失敗). It now uses
+    // checked_rem and surfaces a catchable IntegerOverflow like the ％ operator.
+    let src = "取り込む 「数学」；\
+        整数 ｍ ＝ ０ ー ９２２３３７２０３６８５４７７５８０７ ー １；\
+        返す 余り（ｍ、０ ー １）；";
+    assert_eq!(run_result(src), Err(RuntimeError::IntegerOverflow));
+}
+
 // ── 11a: file I/O ────────────────────────────────────────────────────
 
 #[test]

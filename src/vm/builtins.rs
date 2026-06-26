@@ -193,7 +193,12 @@ pub(super) fn call_builtin(
         },
         BuiltinFn::Rem => match (args.first().cloned(), args.get(1).cloned()) {
             (Some(Value::Int(_)), Some(Value::Int(0))) => Err(RuntimeError::DivisionByZero),
-            (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Int(a % b)),
+            // checked_rem matches the VM's ％ operator: it also guards
+            // i64::MIN % -1, which would otherwise overflow and panic.
+            (Some(Value::Int(a)), Some(Value::Int(b))) => a
+                .checked_rem(b)
+                .map(Value::Int)
+                .ok_or(RuntimeError::IntegerOverflow),
             (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a % b)),
             _ => Err(RuntimeError::TypeMismatch),
         },
@@ -497,38 +502,37 @@ pub(super) fn call_builtin(
                 _ => Err(RuntimeError::TypeMismatch),
             }
         }
+        // 総和 over an 整数列. The compiler emits this only for integer arrays,
+        // so an empty array correctly sums to the integer identity 0.
         BuiltinFn::Sum => match args.pop() {
             Some(Value::Array(arr)) => {
                 let elems = arr.borrow();
-                if elems.is_empty() {
-                    return Ok(Value::Int(0));
-                }
-                match &elems[0] {
-                    Value::Int(_) => {
-                        let mut sum = 0i64;
-                        for e in elems.iter() {
-                            match e {
-                                Value::Int(n) => {
-                                    sum =
-                                        sum.checked_add(*n).ok_or(RuntimeError::IntegerOverflow)?;
-                                }
-                                _ => return Err(RuntimeError::TypeMismatch),
-                            }
+                let mut sum = 0i64;
+                for e in elems.iter() {
+                    match e {
+                        Value::Int(n) => {
+                            sum = sum.checked_add(*n).ok_or(RuntimeError::IntegerOverflow)?;
                         }
-                        Ok(Value::Int(sum))
+                        _ => return Err(RuntimeError::TypeMismatch),
                     }
-                    Value::Float(_) => {
-                        let sum: f64 = elems
-                            .iter()
-                            .map(|e| match e {
-                                Value::Float(f) => *f,
-                                _ => 0.0,
-                            })
-                            .sum();
-                        Ok(Value::Float(sum))
-                    }
-                    _ => Err(RuntimeError::TypeMismatch),
                 }
+                Ok(Value::Int(sum))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        // 総和 over a 小数列. Emitted by the compiler when the type checker knows
+        // the element type is 小数, so an empty array yields the float identity
+        // 0.0 — not the integer 0 the untyped path would otherwise produce.
+        BuiltinFn::SumFloat => match args.pop() {
+            Some(Value::Array(arr)) => {
+                let mut sum = 0.0f64;
+                for e in arr.borrow().iter() {
+                    match e {
+                        Value::Float(f) => sum += *f,
+                        _ => return Err(RuntimeError::TypeMismatch),
+                    }
+                }
+                Ok(Value::Float(sum))
             }
             _ => Err(RuntimeError::TypeMismatch),
         },
@@ -722,7 +726,10 @@ pub(super) fn call_builtin(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as i64;
-                Ok(Value::Int(now - start))
+                // saturating_sub avoids an overflow panic if a caller passes a
+                // bogus (e.g. very negative) start timestamp; a real 現在時刻
+                // start always yields a small non-negative elapsed value.
+                Ok(Value::Int(now.saturating_sub(start)))
             }
             _ => Err(RuntimeError::TypeMismatch),
         },

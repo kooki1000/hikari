@@ -84,7 +84,7 @@ pub enum TokenKind {
     Eof,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub line: usize,
     pub col: usize,
