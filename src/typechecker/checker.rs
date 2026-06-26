@@ -41,13 +41,17 @@ pub struct TypeChecker {
     // The mangled name of the function whose body is currently being checked.
     // Used to allow intra-module private calls (alias。fn calling alias。helper).
     pub(super) current_fn_name: Option<String>,
-    // Node identities (`&Expr as *const _ as usize`) of 総和 calls whose array
-    // argument has a 小数 element type. The compiler reads this immediately
-    // after checking the same AST to lower those calls to a float-aware sum
-    // (so an empty 小数列 yields 0.0, not the integer 0). Cleared at the start
-    // of every check so stale addresses from a previous REPL line — whose AST
-    // has since been freed — can never alias a later line's nodes.
-    pub(super) float_sum_sites: HashSet<usize>,
+    // Spans of 総和 calls whose array argument has a 小数 element type. The
+    // compiler reads this immediately after checking the same AST to lower
+    // those calls to a float-aware sum (so an empty 小数列 yields 0.0, not the
+    // integer 0). Keyed by Expr::Call's own span; cleared at the start of every
+    // check so a previous REPL line's sites can't leak into the next.
+    //
+    // Spans carry no file identity, so in principle two 総和 calls at the exact
+    // same line:col:len in different imported files could collide after import
+    // merging. That is harmless unless one sums 整数 and the other 小数; a future
+    // file-aware Span would close the gap entirely.
+    pub(super) float_sum_sites: HashSet<Span>,
 }
 
 impl TypeChecker {
@@ -72,7 +76,7 @@ impl TypeChecker {
     /// the most recent `check`/`check_all`, for the compiler to consult while
     /// lowering the *same* AST. Draining it transfers ownership and leaves the
     /// checker's set empty for the next line.
-    pub fn take_float_sum_sites(&mut self) -> HashSet<usize> {
+    pub fn take_float_sum_sites(&mut self) -> HashSet<Span> {
         std::mem::take(&mut self.float_sum_sites)
     }
 

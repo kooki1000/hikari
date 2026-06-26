@@ -154,7 +154,7 @@ fn test_parse_variant_construction_is_ordinary_call() {
     let ast = parse_helper("返す 成功（１２３）；");
     assert!(matches!(
         &ast[0],
-        Stmt::Return(Some(Expr::Call { name, args }), _)
+        Stmt::Return(Some(Expr::Call { name, args, .. }), _)
         if name == "成功" && args.len() == 1
     ));
 }
@@ -164,7 +164,7 @@ fn test_parse_zero_payload_variant_construction_requires_parens() {
     let ast = parse_helper("返す 異常（）；");
     assert!(matches!(
         &ast[0],
-        Stmt::Return(Some(Expr::Call { name, args }), _)
+        Stmt::Return(Some(Expr::Call { name, args, .. }), _)
         if name == "異常" && args.is_empty()
     ));
 }

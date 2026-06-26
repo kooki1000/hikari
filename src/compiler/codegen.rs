@@ -32,11 +32,11 @@ pub struct Compiler {
     // emit_* methods stay infallible and record overflow here (emitting a
     // placeholder); compile() turns this into an Err before the bytecode runs.
     limit_error: Option<CompileError>,
-    // Node identities (`&Expr as *const _ as usize`) of 総和 calls the type
-    // checker flagged as summing a 小数列. Such calls lower to SumFloat so an
-    // empty array yields 0.0 rather than the integer 0. Populated from the
-    // checker right before compile() on the same AST (see set_float_sum_sites).
-    float_sum_sites: HashSet<usize>,
+    // Spans of 総和 calls the type checker flagged as summing a 小数列. Such
+    // calls lower to SumFloat so an empty array yields 0.0 rather than the
+    // integer 0. Populated from the checker before compile() (see
+    // set_float_sum_sites); the spans come from Expr::Call's own span field.
+    float_sum_sites: HashSet<Span>,
 }
 
 // For While, continue_target is known immediately (loop_start, where the
@@ -137,7 +137,7 @@ impl Compiler {
     /// checker for the AST about to be compiled. Must be called with the set
     /// drained from the checker that just checked the *same* `&[Stmt]`, since
     /// the keys are node addresses into that AST.
-    pub fn set_float_sum_sites(&mut self, sites: HashSet<usize>) {
+    pub fn set_float_sum_sites(&mut self, sites: HashSet<Span>) {
         self.float_sum_sites = sites;
     }
 
@@ -737,7 +737,7 @@ impl Compiler {
                 self.emit_expr(inner, instrs, scopes);
                 instrs.push(Instruction::Not);
             }
-            Expr::Call { name, args } => {
+            Expr::Call { name, args, span } => {
                 // Push arguments left-to-right; the VM seeds locals from them.
                 for arg in args {
                     self.emit_expr(arg, instrs, scopes);
@@ -750,13 +750,9 @@ impl Compiler {
                     let argc =
                         self.count_u8(args.len(), CompileError::TooManyArguments(args.len()));
                     // 総和 over a 小数列 lowers to SumFloat (empty → 0.0). The
-                    // checker flagged this exact call node by address; all other
-                    // 総和 calls keep the integer Sum.
-                    if name == "総和"
-                        && self
-                            .float_sum_sites
-                            .contains(&(expr as *const Expr as usize))
-                    {
+                    // checker flagged this exact call site by its span; all
+                    // other 総和 calls keep the integer Sum.
+                    if name == "総和" && self.float_sum_sites.contains(span) {
                         instrs.push(Instruction::CallBuiltin(BuiltinFn::SumFloat, argc));
                     } else if let Some(builtin) = builtin_name(name) {
                         instrs.push(Instruction::CallBuiltin(builtin, argc));
@@ -1020,7 +1016,7 @@ fn collect_expr(expr: &Expr, referenced: &mut Vec<String>, seen: &mut HashSet<St
         | Expr::LitBool(_)
         | Expr::NewArray(_) => {}
         Expr::Ident(name) => add_ref(name, referenced, seen),
-        Expr::Call { name, args } => {
+        Expr::Call { name, args, .. } => {
             // The callee name may be a captured fn-typed local; record it.
             add_ref(name, referenced, seen);
             for a in args {

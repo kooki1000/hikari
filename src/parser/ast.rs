@@ -35,6 +35,9 @@ pub enum Expr {
     Call {
         name: String,
         args: Vec<Expr>,
+        // Source location of the call (the callee name), for diagnostics and
+        // for type-directed lowering that must identify a specific call site.
+        span: Span,
     },
     UnaryMinus(Box<Expr>),
     UnaryNot(Box<Expr>),

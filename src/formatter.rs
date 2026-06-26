@@ -295,7 +295,7 @@ fn format_expr(expr: &Expr) -> String {
         }
         Expr::UnaryMinus(e) => format!("ー{}", format_expr(e)),
         Expr::UnaryNot(e) => format!("否定 {}", format_expr(e)),
-        Expr::Call { name, args } => {
+        Expr::Call { name, args, .. } => {
             let arg_str = args.iter().map(format_expr).collect::<Vec<_>>().join("、");
             format!("{}（{}）", name, arg_str)
         }
