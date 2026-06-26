@@ -27,7 +27,8 @@ fn test_typecheck_generic_identity_wrong_result_type_is_error() {
 #[test]
 fn test_typecheck_generic_two_type_params_is_ok() {
     // 関数＜Ａ、Ｂ＞ 最初（Ａ ａ、Ｂ ｂ）ー＞Ａ｛ 返す ａ； ｝
-    let src = "関数＜Ａ、Ｂ＞ 最初（Ａ ａ、Ｂ ｂ）ー＞Ａ｛ 返す ａ； ｝整数 ｒ ＝ 最初（１、「文字」）；";
+    let src =
+        "関数＜Ａ、Ｂ＞ 最初（Ａ ａ、Ｂ ｂ）ー＞Ａ｛ 返す ａ； ｝整数 ｒ ＝ 最初（１、「文字」）；";
     assert!(TypeChecker::new().check(&parse(src)).is_ok());
 }
 
@@ -42,8 +43,7 @@ fn test_typecheck_generic_second_type_param_is_ok() {
 fn test_typecheck_generic_arg_mismatch_when_two_params_same_type_var() {
     // 関数＜Ｔ＞ ペア（Ｔ ａ、Ｔ ｂ）ー＞Ｔ｛ 返す ａ； ｝
     // ペア(1, "x") — first arg binds T=整数, second arg is 文字列: mismatch.
-    let src =
-        "関数＜Ｔ＞ ペア（Ｔ ａ、Ｔ ｂ）ー＞Ｔ｛ 返す ａ； ｝整数 ｒ ＝ ペア（１、「ｘ」）；";
+    let src = "関数＜Ｔ＞ ペア（Ｔ ａ、Ｔ ｂ）ー＞Ｔ｛ 返す ａ； ｝整数 ｒ ＝ ペア（１、「ｘ」）；";
     let err = TypeChecker::new().check(&parse(src)).unwrap_err();
     assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
 }

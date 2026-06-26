@@ -29,7 +29,11 @@ fn test_aliased_import_call_type_checks() {
     );
     let res = typecheck_with_imports(&src, &dir);
     std::fs::remove_file(&path).unwrap();
-    assert!(res.is_ok(), "aliased qualified call should type-check: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "aliased qualified call should type-check: {:?}",
+        res
+    );
 }
 
 #[test]
@@ -60,11 +64,7 @@ fn test_aliased_import_arg_type_mismatch_is_caught() {
 fn test_unaliased_import_still_works() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("tc_unaliased_{}.hkr", std::process::id()));
-    std::fs::write(
-        &path,
-        "関数 旧来（整数 ｎ）ー＞整数｛ 返す ｎ ＊ ２； ｝",
-    )
-    .unwrap();
+    std::fs::write(&path, "関数 旧来（整数 ｎ）ー＞整数｛ 返す ｎ ＊ ２； ｝").unwrap();
 
     let src = format!(
         "取り込む 「{}」；整数 結果 ＝ 旧来（５）；",
@@ -72,7 +72,11 @@ fn test_unaliased_import_still_works() {
     );
     let res = typecheck_with_imports(&src, &dir);
     std::fs::remove_file(&path).unwrap();
-    assert!(res.is_ok(), "unaliased (flat) import must still work: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "unaliased (flat) import must still work: {:?}",
+        res
+    );
 }
 
 // ── 18c: export control ───────────────────────────────────────────────────────
@@ -105,11 +109,7 @@ fn test_private_fn_call_from_outside_is_rejected() {
 fn test_public_fn_call_from_outside_is_allowed() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("tc_public_{}.hkr", std::process::id()));
-    std::fs::write(
-        &path,
-        "公開 関数 こんにちは（）ー＞整数｛ 返す １； ｝",
-    )
-    .unwrap();
+    std::fs::write(&path, "公開 関数 こんにちは（）ー＞整数｛ 返す １； ｝").unwrap();
 
     let src = format!(
         "取り込む 「{}」 として 模；整数 ｘ ＝ 模。こんにちは（）；",
@@ -117,7 +117,11 @@ fn test_public_fn_call_from_outside_is_allowed() {
     );
     let res = typecheck_with_imports(&src, &dir);
     std::fs::remove_file(&path).unwrap();
-    assert!(res.is_ok(), "public fn should be callable from outside: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "public fn should be callable from outside: {:?}",
+        res
+    );
 }
 
 #[test]
@@ -138,5 +142,9 @@ fn test_private_fn_call_from_within_module_is_allowed() {
     );
     let res = typecheck_with_imports(&src, &dir);
     std::fs::remove_file(&path).unwrap();
-    assert!(res.is_ok(), "internal private call should be allowed: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "internal private call should be allowed: {:?}",
+        res
+    );
 }

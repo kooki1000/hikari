@@ -693,8 +693,7 @@ impl super::TypeChecker {
                             }
                             for (arg, param_ty) in args.iter().zip(params.iter()) {
                                 let arg_ty = self.infer_value_expr(arg, span)?;
-                                if arg_ty != *param_ty
-                                    && !option_none_compatible(param_ty, &arg_ty)
+                                if arg_ty != *param_ty && !option_none_compatible(param_ty, &arg_ty)
                                 {
                                     return Err(TypeError::ArgTypeMismatch {
                                         name: name.clone(),
@@ -771,7 +770,11 @@ impl super::TypeChecker {
                             });
                         }
                     }
-                    Ok(instantiate_type_var(&sig.return_ty, &sig.type_params, &subst))
+                    Ok(instantiate_type_var(
+                        &sig.return_ty,
+                        &sig.type_params,
+                        &subst,
+                    ))
                 }
             }
 

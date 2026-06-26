@@ -128,13 +128,15 @@ fn test_vm_clamp_above_max() {
 
 #[test]
 fn test_vm_sum_int_array() {
-    let src = "取り込む 「数学」；取り込む 「配列」；整数列 ａ ＝ 【１、２、３、４】；返す 総和（ａ）；";
+    let src =
+        "取り込む 「数学」；取り込む 「配列」；整数列 ａ ＝ 【１、２、３、４】；返す 総和（ａ）；";
     assert_eq!(run(src), Some(Value::Int(10)));
 }
 
 #[test]
 fn test_vm_average_int_array() {
-    let src = "取り込む 「数学」；取り込む 「配列」；整数列 ａ ＝ 【１、２、３、４】；返す 平均（ａ）；";
+    let src =
+        "取り込む 「数学」；取り込む 「配列」；整数列 ａ ＝ 【１、２、３、４】；返す 平均（ａ）；";
     assert_eq!(run(src), Some(Value::Float(2.5)));
 }
 

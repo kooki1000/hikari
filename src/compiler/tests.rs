@@ -481,9 +481,16 @@ fn test_compile_sibling_scopes_reuse_slot() {
         .iter()
         .filter(|i| matches!(i, Instruction::StoreLocal(1)))
         .count();
-    assert!(store1_count >= 2, "expected >=2 StoreLocal(1), got {store1_count}");
+    assert!(
+        store1_count >= 2,
+        "expected >=2 StoreLocal(1), got {store1_count}"
+    );
     // No slot 2 should appear — that would indicate no reuse.
-    assert!(!instrs.iter().any(|i| matches!(i, Instruction::StoreLocal(2))));
+    assert!(
+        !instrs
+            .iter()
+            .any(|i| matches!(i, Instruction::StoreLocal(2)))
+    );
 }
 
 // ── 12: fixed-width-field boundary hardening ─────────────────────────

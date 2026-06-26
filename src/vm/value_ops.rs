@@ -144,7 +144,9 @@ pub(super) fn sort_values(values: &mut [Value]) -> Result<(), RuntimeError> {
         (Value::Int(x), Value::Int(y)) => x.cmp(y),
         (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
         (Value::Str(x), Value::Str(y)) => x.cmp(y),
-        _ => unreachable!("sort_values: type mismatch — type checker guarantees homogeneous arrays"),
+        _ => {
+            unreachable!("sort_values: type mismatch — type checker guarantees homogeneous arrays")
+        }
     });
     Ok(())
 }

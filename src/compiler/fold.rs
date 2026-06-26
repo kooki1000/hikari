@@ -53,9 +53,7 @@ fn eval_binop(op: &BinOpKind, l: Value, r: Value) -> Option<Value> {
         (BinOpKind::Add, Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
         (BinOpKind::Sub, Value::Float(a), Value::Float(b)) => Some(Value::Float(a - b)),
         (BinOpKind::Mul, Value::Float(a), Value::Float(b)) => Some(Value::Float(a * b)),
-        (BinOpKind::Div, Value::Float(a), Value::Float(b)) if b != 0.0 => {
-            Some(Value::Float(a / b))
-        }
+        (BinOpKind::Div, Value::Float(a), Value::Float(b)) if b != 0.0 => Some(Value::Float(a / b)),
         // String concatenation.
         (BinOpKind::Add, Value::Str(a), Value::Str(b)) => Some(Value::Str(a + &b)),
         // Integer comparisons.
@@ -102,7 +100,11 @@ mod tests {
         Expr::LitString(s.to_string())
     }
     fn binop(op: BinOpKind, l: Expr, r: Expr) -> Expr {
-        Expr::BinOp { op, lhs: Box::new(l), rhs: Box::new(r) }
+        Expr::BinOp {
+            op,
+            lhs: Box::new(l),
+            rhs: Box::new(r),
+        }
     }
 
     #[test]

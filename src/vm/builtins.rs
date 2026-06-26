@@ -432,7 +432,11 @@ pub(super) fn call_builtin(
             _ => Err(RuntimeError::TypeMismatch),
         },
         BuiltinFn::Substring => {
-            match (args.first().cloned(), args.get(1).cloned(), args.get(2).cloned()) {
+            match (
+                args.first().cloned(),
+                args.get(1).cloned(),
+                args.get(2).cloned(),
+            ) {
                 (Some(Value::Str(s)), Some(Value::Int(start)), Some(Value::Int(end))) => {
                     let chars: Vec<char> = s.chars().collect();
                     let len = chars.len() as i64;
@@ -446,9 +450,9 @@ pub(super) fn call_builtin(
         }
         BuiltinFn::StrFind => match (args.first().cloned(), args.get(1).cloned()) {
             (Some(Value::Str(s)), Some(Value::Str(sub))) => {
-                let result = s.find(sub.as_str()).map(|byte_pos| {
-                    s[..byte_pos].chars().count() as i64
-                });
+                let result = s
+                    .find(sub.as_str())
+                    .map(|byte_pos| s[..byte_pos].chars().count() as i64);
                 Ok(match result {
                     Some(p) => Value::Enum {
                         enum_name: "省略可".to_string(),
@@ -479,7 +483,11 @@ pub(super) fn call_builtin(
             _ => Err(RuntimeError::TypeMismatch),
         },
         BuiltinFn::Clamp => {
-            match (args.first().cloned(), args.get(1).cloned(), args.get(2).cloned()) {
+            match (
+                args.first().cloned(),
+                args.get(1).cloned(),
+                args.get(2).cloned(),
+            ) {
                 (Some(Value::Int(v)), Some(Value::Int(lo)), Some(Value::Int(hi))) => {
                     Ok(Value::Int(v.max(lo).min(hi)))
                 }
@@ -501,9 +509,8 @@ pub(super) fn call_builtin(
                         for e in elems.iter() {
                             match e {
                                 Value::Int(n) => {
-                                    sum = sum
-                                        .checked_add(*n)
-                                        .ok_or(RuntimeError::IntegerOverflow)?;
+                                    sum =
+                                        sum.checked_add(*n).ok_or(RuntimeError::IntegerOverflow)?;
                                 }
                                 _ => return Err(RuntimeError::TypeMismatch),
                             }
@@ -559,18 +566,32 @@ pub(super) fn call_builtin(
                 if elems.is_empty() {
                     return Err(RuntimeError::EmptyArray);
                 }
-                let max = elems[1..].iter().fold(elems[0].clone(), |a, b| match (&a, b) {
-                    (Value::Int(x), Value::Int(y)) => {
-                        if y > x { b.clone() } else { a.clone() }
-                    }
-                    (Value::Float(x), Value::Float(y)) => {
-                        if y > x { b.clone() } else { a.clone() }
-                    }
-                    (Value::Str(x), Value::Str(y)) => {
-                        if y > x { b.clone() } else { a.clone() }
-                    }
-                    _ => a.clone(),
-                });
+                let max = elems[1..]
+                    .iter()
+                    .fold(elems[0].clone(), |a, b| match (&a, b) {
+                        (Value::Int(x), Value::Int(y)) => {
+                            if y > x {
+                                b.clone()
+                            } else {
+                                a.clone()
+                            }
+                        }
+                        (Value::Float(x), Value::Float(y)) => {
+                            if y > x {
+                                b.clone()
+                            } else {
+                                a.clone()
+                            }
+                        }
+                        (Value::Str(x), Value::Str(y)) => {
+                            if y > x {
+                                b.clone()
+                            } else {
+                                a.clone()
+                            }
+                        }
+                        _ => a.clone(),
+                    });
                 Ok(max)
             }
             _ => Err(RuntimeError::TypeMismatch),
@@ -581,18 +602,32 @@ pub(super) fn call_builtin(
                 if elems.is_empty() {
                     return Err(RuntimeError::EmptyArray);
                 }
-                let min = elems[1..].iter().fold(elems[0].clone(), |a, b| match (&a, b) {
-                    (Value::Int(x), Value::Int(y)) => {
-                        if y < x { b.clone() } else { a.clone() }
-                    }
-                    (Value::Float(x), Value::Float(y)) => {
-                        if y < x { b.clone() } else { a.clone() }
-                    }
-                    (Value::Str(x), Value::Str(y)) => {
-                        if y < x { b.clone() } else { a.clone() }
-                    }
-                    _ => a.clone(),
-                });
+                let min = elems[1..]
+                    .iter()
+                    .fold(elems[0].clone(), |a, b| match (&a, b) {
+                        (Value::Int(x), Value::Int(y)) => {
+                            if y < x {
+                                b.clone()
+                            } else {
+                                a.clone()
+                            }
+                        }
+                        (Value::Float(x), Value::Float(y)) => {
+                            if y < x {
+                                b.clone()
+                            } else {
+                                a.clone()
+                            }
+                        }
+                        (Value::Str(x), Value::Str(y)) => {
+                            if y < x {
+                                b.clone()
+                            } else {
+                                a.clone()
+                            }
+                        }
+                        _ => a.clone(),
+                    });
                 Ok(min)
             }
             _ => Err(RuntimeError::TypeMismatch),
@@ -661,7 +696,11 @@ pub(super) fn call_builtin(
             _ => Err(RuntimeError::TypeMismatch),
         },
         BuiltinFn::MapGetOrDefault => {
-            match (args.first().cloned(), args.get(1).cloned(), args.get(2).cloned()) {
+            match (
+                args.first().cloned(),
+                args.get(1).cloned(),
+                args.get(2).cloned(),
+            ) {
                 (Some(Value::Map(m)), Some(Value::Str(key)), Some(default)) => {
                     Ok(m.borrow().get(&key).cloned().unwrap_or(default))
                 }

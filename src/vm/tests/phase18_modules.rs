@@ -73,11 +73,7 @@ fn test_vm_aliased_import_multiple_calls() {
 fn test_vm_public_fn_is_callable() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("vm18_pub_{}.hkr", std::process::id()));
-    std::fs::write(
-        &path,
-        "公開 関数 こんにちは（）ー＞整数｛ 返す ９９； ｝",
-    )
-    .unwrap();
+    std::fs::write(&path, "公開 関数 こんにちは（）ー＞整数｛ 返す ９９； ｝").unwrap();
 
     let src = format!(
         "取り込む 「{}」 として 模；返す 模。こんにちは（）；",

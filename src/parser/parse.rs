@@ -446,7 +446,10 @@ impl Parser {
     fn parse_pub_fn_decl(&mut self) -> Result<Stmt, ParseError> {
         self.advance(); // consume 公開
         let mut stmt = self.parse_fn_decl()?;
-        if let Stmt::FnDecl { ref mut is_public, .. } = stmt {
+        if let Stmt::FnDecl {
+            ref mut is_public, ..
+        } = stmt
+        {
             *is_public = true;
         }
         Ok(stmt)

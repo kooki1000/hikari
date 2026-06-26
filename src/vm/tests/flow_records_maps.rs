@@ -415,13 +415,15 @@ fn test_vm_generic_identity_bool() {
 
 #[test]
 fn test_vm_generic_two_params_first() {
-    let src = "関数＜Ａ、Ｂ＞ 第一（Ａ ａ、Ｂ ｂ）ー＞Ａ｛ 返す ａ； ｝返す 第一（１０、「文字」）；";
+    let src =
+        "関数＜Ａ、Ｂ＞ 第一（Ａ ａ、Ｂ ｂ）ー＞Ａ｛ 返す ａ； ｝返す 第一（１０、「文字」）；";
     assert_eq!(run(src), Some(Value::Int(10)));
 }
 
 #[test]
 fn test_vm_generic_two_params_second() {
-    let src = "関数＜Ａ、Ｂ＞ 第二（Ａ ａ、Ｂ ｂ）ー＞Ｂ｛ 返す ｂ； ｝返す 第二（１０、「文字」）；";
+    let src =
+        "関数＜Ａ、Ｂ＞ 第二（Ａ ａ、Ｂ ｂ）ー＞Ｂ｛ 返す ｂ； ｝返す 第二（１０、「文字」）；";
     assert_eq!(run(src), Some(Value::Str("文字".to_string())));
 }
 

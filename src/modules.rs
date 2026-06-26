@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::lexer::Lexer;
 use crate::lexer::Span;
 use crate::parser::{Expr, Parser, Stmt};
-use crate::lexer::Lexer;
 
 // Canonical names of the built-in stdlib modules. These constants are the
 // single source of truth: the typechecker references them when gating builtins
@@ -154,8 +154,7 @@ fn mangle_module(stmts: Vec<Stmt>, alias: &str) -> Vec<Stmt> {
                 span,
             } => {
                 let mangled_name = format!("{}。{}", alias, name);
-                let mangled_body =
-                    mangle_stmts(body, alias, &local_fns, &local_types);
+                let mangled_body = mangle_stmts(body, alias, &local_fns, &local_types);
                 Some(Stmt::FnDecl {
                     name: mangled_name,
                     type_params,
@@ -173,7 +172,11 @@ fn mangle_module(stmts: Vec<Stmt>, alias: &str) -> Vec<Stmt> {
                 fields,
                 span,
             }),
-            Stmt::EnumDecl { name, variants, span } => Some(Stmt::EnumDecl {
+            Stmt::EnumDecl {
+                name,
+                variants,
+                span,
+            } => Some(Stmt::EnumDecl {
                 name: format!("{}。{}", alias, name),
                 variants,
                 span,
@@ -205,10 +208,16 @@ fn mangle_stmt(
     local_types: &HashSet<String>,
 ) -> Stmt {
     match stmt {
-        Stmt::Return(expr, span) => {
-            Stmt::Return(expr.map(|e| mangle_expr(e, alias, local_fns, local_types)), span)
-        }
-        Stmt::VarDecl { ty, name, value, span } => Stmt::VarDecl {
+        Stmt::Return(expr, span) => Stmt::Return(
+            expr.map(|e| mangle_expr(e, alias, local_fns, local_types)),
+            span,
+        ),
+        Stmt::VarDecl {
+            ty,
+            name,
+            value,
+            span,
+        } => Stmt::VarDecl {
             ty,
             name,
             value: mangle_expr(value, alias, local_fns, local_types),
@@ -219,50 +228,92 @@ fn mangle_stmt(
             value: mangle_expr(value, alias, local_fns, local_types),
             span,
         },
-        Stmt::IndexAssign { name, index, value, span } => Stmt::IndexAssign {
+        Stmt::IndexAssign {
+            name,
+            index,
+            value,
+            span,
+        } => Stmt::IndexAssign {
             name,
             index: mangle_expr(index, alias, local_fns, local_types),
             value: mangle_expr(value, alias, local_fns, local_types),
             span,
         },
-        Stmt::FieldAssign { record, field, value, span } => Stmt::FieldAssign {
+        Stmt::FieldAssign {
+            record,
+            field,
+            value,
+            span,
+        } => Stmt::FieldAssign {
             record: mangle_expr(record, alias, local_fns, local_types),
             field,
             value: mangle_expr(value, alias, local_fns, local_types),
             span,
         },
-        Stmt::If { condition, then_body, else_body, span } => Stmt::If {
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+            span,
+        } => Stmt::If {
             condition: mangle_expr(condition, alias, local_fns, local_types),
             then_body: mangle_stmts(then_body, alias, local_fns, local_types),
-            else_body: else_body
-                .map(|b| mangle_stmts(b, alias, local_fns, local_types)),
+            else_body: else_body.map(|b| mangle_stmts(b, alias, local_fns, local_types)),
             span,
         },
-        Stmt::While { condition, body, span } => Stmt::While {
+        Stmt::While {
+            condition,
+            body,
+            span,
+        } => Stmt::While {
             condition: mangle_expr(condition, alias, local_fns, local_types),
             body: mangle_stmts(body, alias, local_fns, local_types),
             span,
         },
-        Stmt::ForRange { var, from, to, body, span } => Stmt::ForRange {
+        Stmt::ForRange {
+            var,
+            from,
+            to,
+            body,
+            span,
+        } => Stmt::ForRange {
             var,
             from: mangle_expr(from, alias, local_fns, local_types),
             to: mangle_expr(to, alias, local_fns, local_types),
             body: mangle_stmts(body, alias, local_fns, local_types),
             span,
         },
-        Stmt::ForEach { var, array, body, span } => Stmt::ForEach {
+        Stmt::ForEach {
+            var,
+            array,
+            body,
+            span,
+        } => Stmt::ForEach {
             var,
             array: mangle_expr(array, alias, local_fns, local_types),
             body: mangle_stmts(body, alias, local_fns, local_types),
             span,
         },
-        Stmt::TryCatch { try_body, error_var, catch_body, span } => Stmt::TryCatch {
+        Stmt::TryCatch {
+            try_body,
+            error_var,
+            catch_body,
+            span,
+        } => Stmt::TryCatch {
             try_body: mangle_stmts(try_body, alias, local_fns, local_types),
             error_var,
             catch_body: mangle_stmts(catch_body, alias, local_fns, local_types),
             span,
         },
-        Stmt::FnDecl { name, type_params, params, return_ty, body, is_public, span } => {
+        Stmt::FnDecl {
+            name,
+            type_params,
+            params,
+            return_ty,
+            body,
+            is_public,
+            span,
+        } => {
             // Nested function inside a module function body.
             Stmt::FnDecl {
                 name,
@@ -274,7 +325,11 @@ fn mangle_stmt(
                 span,
             }
         }
-        Stmt::Match { subject, arms, span } => Stmt::Match {
+        Stmt::Match {
+            subject,
+            arms,
+            span,
+        } => Stmt::Match {
             subject: mangle_expr(subject, alias, local_fns, local_types),
             arms: arms
                 .into_iter()
@@ -376,7 +431,11 @@ fn mangle_expr(
             record: Box::new(mangle_expr(*record, alias, local_fns, local_types)),
             field,
         },
-        Expr::Lambda { params, return_ty, body } => Expr::Lambda {
+        Expr::Lambda {
+            params,
+            return_ty,
+            body,
+        } => Expr::Lambda {
             params,
             return_ty,
             body: mangle_stmts(body, alias, local_fns, local_types),
@@ -526,7 +585,10 @@ mod tests {
         let has_fn = resolved
             .iter()
             .any(|s| matches!(s, Stmt::FnDecl { name, .. } if name == "二乗"));
-        assert!(has_math_import, "stdlib import from library must be spliced");
+        assert!(
+            has_math_import,
+            "stdlib import from library must be spliced"
+        );
         assert!(has_fn, "function from library must be spliced");
 
         std::fs::remove_file(&module_path).unwrap();
@@ -535,8 +597,7 @@ mod tests {
     #[test]
     fn test_file_import_splices_enum_decl_from_library() {
         let dir = std::env::temp_dir();
-        let module_path =
-            dir.join(format!("hikari_test_lib_enum_{}.hkr", std::process::id()));
+        let module_path = dir.join(format!("hikari_test_lib_enum_{}.hkr", std::process::id()));
         std::fs::write(
             &module_path,
             "構造 方向 ｛ 北、南 ｝関数 反転（方向 ｄ）ー＞方向｛ 照合 ｄ ｛ 北（）ならば ｛ 返す 南（）； ｝ 南（）ならば ｛ 返す 北（）； ｝ ｝ ｝",
@@ -610,12 +671,18 @@ mod tests {
         let resolved = resolve_imports(stmts, &dir, &mut visited).unwrap();
 
         // 倍's body should call 数。補助, not 補助.
-        let fn_decl = resolved.iter().find(|s| matches!(s, Stmt::FnDecl { name, .. } if name == "数。倍")).unwrap();
+        let fn_decl = resolved
+            .iter()
+            .find(|s| matches!(s, Stmt::FnDecl { name, .. } if name == "数。倍"))
+            .unwrap();
         if let Stmt::FnDecl { body, .. } = fn_decl {
             let has_mangled_call = body.iter().any(|s| {
                 matches!(s, Stmt::Return(Some(Expr::Call { name, .. }), _) if name == "数。補助")
             });
-            assert!(has_mangled_call, "internal call should be rewritten to alias。fn");
+            assert!(
+                has_mangled_call,
+                "internal call should be rewritten to alias。fn"
+            );
         }
 
         std::fs::remove_file(&module_path).unwrap();
@@ -627,7 +694,13 @@ mod tests {
     fn test_public_fn_has_is_public_true() {
         let stmts = parse("公開 関数 こんにちは（）ー＞無｛ 印刷（「hi」）； ｝");
         assert!(
-            matches!(&stmts[0], Stmt::FnDecl { is_public: true, .. }),
+            matches!(
+                &stmts[0],
+                Stmt::FnDecl {
+                    is_public: true,
+                    ..
+                }
+            ),
             "公開 関数 should set is_public = true"
         );
     }
@@ -636,7 +709,13 @@ mod tests {
     fn test_private_fn_has_is_public_false() {
         let stmts = parse("関数 こんにちは（）ー＞無｛ 印刷（「hi」）； ｝");
         assert!(
-            matches!(&stmts[0], Stmt::FnDecl { is_public: false, .. }),
+            matches!(
+                &stmts[0],
+                Stmt::FnDecl {
+                    is_public: false,
+                    ..
+                }
+            ),
             "unmarked 関数 should set is_public = false"
         );
     }
@@ -648,11 +727,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hikari_path_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let module_path = dir.join("ライブラリ.hkr");
-        std::fs::write(
-            &module_path,
-            "関数 テスト（）ー＞整数｛ 返す ４２； ｝",
-        )
-        .unwrap();
+        std::fs::write(&module_path, "関数 テスト（）ー＞整数｛ 返す ４２； ｝").unwrap();
 
         // Set HIKARI_PATH to our temp dir, import from a different base_dir.
         // SAFETY: test is single-threaded (cargo test --test-threads=1 enforced

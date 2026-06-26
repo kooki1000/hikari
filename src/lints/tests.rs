@@ -75,7 +75,8 @@ fn test_lint_unused_function_is_warned_when_main_code_present() {
     let msgs = messages("関数 未使用（）ー＞ 無 ｛ 印刷（０）； ｝印刷（１）；");
     assert!(
         msgs.iter().any(|m| m.contains("未使用")),
-        "expected unused-function warning, got: {:?}", msgs
+        "expected unused-function warning, got: {:?}",
+        msgs
     );
 }
 
@@ -83,14 +84,22 @@ fn test_lint_unused_function_is_warned_when_main_code_present() {
 fn test_lint_called_function_not_warned() {
     // Function is called from main code — no warning.
     let msgs = messages("関数 ｆ（）ー＞ 整数 ｛ 返す １； ｝整数 ｘ ＝ ｆ（）；印刷（ｘ）；");
-    assert!(!msgs.iter().any(|m| m.contains("呼び出されていません")), "got: {:?}", msgs);
+    assert!(
+        !msgs.iter().any(|m| m.contains("呼び出されていません")),
+        "got: {:?}",
+        msgs
+    );
 }
 
 #[test]
 fn test_lint_library_file_no_unused_function_warning() {
     // File has only declarations (no top-level executable code) → no unused-function warning.
     let msgs = messages("関数 ｆ（）ー＞ 整数 ｛ 返す ０； ｝関数 ｇ（）ー＞ 整数 ｛ 返す ０； ｝");
-    assert!(!msgs.iter().any(|m| m.contains("呼び出されていません")), "got: {:?}", msgs);
+    assert!(
+        !msgs.iter().any(|m| m.contains("呼び出されていません")),
+        "got: {:?}",
+        msgs
+    );
 }
 
 // ── unreachable code ─────────────────────────────────────────────────
