@@ -63,10 +63,10 @@ fn global_lints(stmts: &[Stmt], warnings: &mut Vec<Warning>) {
     for stmt in stmts {
         collect_declared(stmt, &mut declared_fns);
         collect_called(stmt, &mut called_fns, &mut used_builtins);
-        if let Stmt::Import { name, span, .. } = stmt {
-            if STDLIB_MODULES.contains(&name.as_str()) {
-                imported_modules.push((name.clone(), *span));
-            }
+        if let Stmt::Import { name, span, .. } = stmt
+            && STDLIB_MODULES.contains(&name.as_str())
+        {
+            imported_modules.push((name.clone(), *span));
         }
     }
 
@@ -81,7 +81,10 @@ fn global_lints(stmts: &[Stmt], warnings: &mut Vec<Warning>) {
             if !called_fns.contains(name.as_str()) && !name.contains('。') {
                 warnings.push(Warning {
                     span: *span,
-                    message: format!("関数「{}」は宣言されていますが、呼び出されていません。", name),
+                    message: format!(
+                        "関数「{}」は宣言されていますが、呼び出されていません。",
+                        name
+                    ),
                 });
             }
         }
@@ -141,37 +144,66 @@ fn collect_called(stmt: &Stmt, called: &mut HashSet<String>, builtins: &mut Hash
                 collect_called_expr(e, called, builtins);
             }
         }
-        Stmt::If { condition, then_body, else_body, .. } => {
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
             collect_called_expr(condition, called, builtins);
-            for s in then_body { collect_called(s, called, builtins); }
+            for s in then_body {
+                collect_called(s, called, builtins);
+            }
             if let Some(eb) = else_body {
-                for s in eb { collect_called(s, called, builtins); }
+                for s in eb {
+                    collect_called(s, called, builtins);
+                }
             }
         }
-        Stmt::While { condition, body, .. } => {
+        Stmt::While {
+            condition, body, ..
+        } => {
             collect_called_expr(condition, called, builtins);
-            for s in body { collect_called(s, called, builtins); }
+            for s in body {
+                collect_called(s, called, builtins);
+            }
         }
         Stmt::ForRange { from, to, body, .. } => {
             collect_called_expr(from, called, builtins);
             collect_called_expr(to, called, builtins);
-            for s in body { collect_called(s, called, builtins); }
+            for s in body {
+                collect_called(s, called, builtins);
+            }
         }
         Stmt::ForEach { array, body, .. } => {
             collect_called_expr(array, called, builtins);
-            for s in body { collect_called(s, called, builtins); }
+            for s in body {
+                collect_called(s, called, builtins);
+            }
         }
-        Stmt::TryCatch { try_body, catch_body, .. } => {
-            for s in try_body { collect_called(s, called, builtins); }
-            for s in catch_body { collect_called(s, called, builtins); }
+        Stmt::TryCatch {
+            try_body,
+            catch_body,
+            ..
+        } => {
+            for s in try_body {
+                collect_called(s, called, builtins);
+            }
+            for s in catch_body {
+                collect_called(s, called, builtins);
+            }
         }
         Stmt::FnDecl { body, .. } => {
-            for s in body { collect_called(s, called, builtins); }
+            for s in body {
+                collect_called(s, called, builtins);
+            }
         }
         Stmt::Match { subject, arms, .. } => {
             collect_called_expr(subject, called, builtins);
             for arm in arms {
-                for s in &arm.body { collect_called(s, called, builtins); }
+                for s in &arm.body {
+                    collect_called(s, called, builtins);
+                }
             }
         }
     }
@@ -196,7 +228,9 @@ fn collect_called_expr(expr: &Expr, called: &mut HashSet<String>, builtins: &mut
             collect_called_expr(e, called, builtins);
         }
         Expr::Array(elems) => {
-            for e in elems { collect_called_expr(e, called, builtins); }
+            for e in elems {
+                collect_called_expr(e, called, builtins);
+            }
         }
         Expr::Index { array, index } => {
             collect_called_expr(array, called, builtins);
@@ -209,10 +243,14 @@ fn collect_called_expr(expr: &Expr, called: &mut HashSet<String>, builtins: &mut
             }
         }
         Expr::RecordLit { fields, .. } => {
-            for (_, v) in fields { collect_called_expr(v, called, builtins); }
+            for (_, v) in fields {
+                collect_called_expr(v, called, builtins);
+            }
         }
         Expr::Lambda { body, .. } => {
-            for s in body { collect_called(s, called, builtins); }
+            for s in body {
+                collect_called(s, called, builtins);
+            }
         }
         Expr::Ident(_)
         | Expr::LitInt(_)
@@ -290,13 +328,13 @@ impl Linter {
     // Warn once, at the first statement that follows a terminating statement
     // (返す／抜ける／続ける) in this block.
     fn report_unreachable(&mut self, stmts: &[Stmt]) {
-        if let Some(pos) = stmts.iter().position(is_terminator) {
-            if let Some(next) = stmts.get(pos + 1) {
-                self.warnings.push(Warning {
-                    span: stmt_span(next),
-                    message: "この後の文には到達しません。".to_string(),
-                });
-            }
+        if let Some(pos) = stmts.iter().position(is_terminator)
+            && let Some(next) = stmts.get(pos + 1)
+        {
+            self.warnings.push(Warning {
+                span: stmt_span(next),
+                message: "この後の文には到達しません。".to_string(),
+            });
         }
     }
 

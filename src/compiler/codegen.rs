@@ -883,7 +883,7 @@ fn collect_stmt(
 ) {
     match stmt {
         Stmt::VarDecl { name, value, .. } => {
-            collect_expr(value, referenced, seen, bound);
+            collect_expr(value, referenced, seen);
             bound.insert(name.clone());
         }
         // Named functions inside a lambda body are not compiled (nested fn
@@ -891,10 +891,10 @@ fn collect_stmt(
         Stmt::FnDecl { name, .. } => {
             bound.insert(name.clone());
         }
-        Stmt::Return(Some(e), _) | Stmt::Expr(e, _) => collect_expr(e, referenced, seen, bound),
+        Stmt::Return(Some(e), _) | Stmt::Expr(e, _) => collect_expr(e, referenced, seen),
         Stmt::Print(exprs, _) => {
             for e in exprs {
-                collect_expr(e, referenced, seen, bound);
+                collect_expr(e, referenced, seen);
             }
         }
         Stmt::Return(None, _) | Stmt::Import { .. } | Stmt::Break(_) | Stmt::Continue(_) => {}
@@ -905,7 +905,7 @@ fn collect_stmt(
             else_body,
             ..
         } => {
-            collect_expr(condition, referenced, seen, bound);
+            collect_expr(condition, referenced, seen);
             for s in then_body {
                 collect_stmt(s, referenced, seen, bound);
             }
@@ -918,21 +918,21 @@ fn collect_stmt(
         Stmt::While {
             condition, body, ..
         } => {
-            collect_expr(condition, referenced, seen, bound);
+            collect_expr(condition, referenced, seen);
             for s in body {
                 collect_stmt(s, referenced, seen, bound);
             }
         }
         Stmt::Assign { name, value, .. } => {
             add_ref(name, referenced, seen);
-            collect_expr(value, referenced, seen, bound);
+            collect_expr(value, referenced, seen);
         }
         Stmt::IndexAssign {
             name, index, value, ..
         } => {
             add_ref(name, referenced, seen);
-            collect_expr(index, referenced, seen, bound);
-            collect_expr(value, referenced, seen, bound);
+            collect_expr(index, referenced, seen);
+            collect_expr(value, referenced, seen);
         }
         Stmt::ForRange {
             var,
@@ -941,8 +941,8 @@ fn collect_stmt(
             body,
             ..
         } => {
-            collect_expr(from, referenced, seen, bound);
-            collect_expr(to, referenced, seen, bound);
+            collect_expr(from, referenced, seen);
+            collect_expr(to, referenced, seen);
             bound.insert(var.clone());
             for s in body {
                 collect_stmt(s, referenced, seen, bound);
@@ -951,7 +951,7 @@ fn collect_stmt(
         Stmt::ForEach {
             var, array, body, ..
         } => {
-            collect_expr(array, referenced, seen, bound);
+            collect_expr(array, referenced, seen);
             bound.insert(var.clone());
             for s in body {
                 collect_stmt(s, referenced, seen, bound);
@@ -972,11 +972,11 @@ fn collect_stmt(
             }
         }
         Stmt::FieldAssign { record, value, .. } => {
-            collect_expr(record, referenced, seen, bound);
-            collect_expr(value, referenced, seen, bound);
+            collect_expr(record, referenced, seen);
+            collect_expr(value, referenced, seen);
         }
         Stmt::Match { subject, arms, .. } => {
-            collect_expr(subject, referenced, seen, bound);
+            collect_expr(subject, referenced, seen);
             for arm in arms {
                 for binder in &arm.binders {
                     bound.insert(binder.clone());
@@ -989,12 +989,7 @@ fn collect_stmt(
     }
 }
 
-fn collect_expr(
-    expr: &Expr,
-    referenced: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-    bound: &mut HashSet<String>,
-) {
+fn collect_expr(expr: &Expr, referenced: &mut Vec<String>, seen: &mut HashSet<String>) {
     match expr {
         Expr::LitInt(_)
         | Expr::LitFloat(_)
@@ -1006,34 +1001,34 @@ fn collect_expr(
             // The callee name may be a captured fn-typed local; record it.
             add_ref(name, referenced, seen);
             for a in args {
-                collect_expr(a, referenced, seen, bound);
+                collect_expr(a, referenced, seen);
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            collect_expr(lhs, referenced, seen, bound);
-            collect_expr(rhs, referenced, seen, bound);
+            collect_expr(lhs, referenced, seen);
+            collect_expr(rhs, referenced, seen);
         }
         Expr::UnaryMinus(e) | Expr::UnaryNot(e) | Expr::FieldAccess { record: e, .. } => {
-            collect_expr(e, referenced, seen, bound)
+            collect_expr(e, referenced, seen)
         }
         Expr::Array(elems) => {
             for e in elems {
-                collect_expr(e, referenced, seen, bound);
+                collect_expr(e, referenced, seen);
             }
         }
         Expr::Index { array, index } => {
-            collect_expr(array, referenced, seen, bound);
-            collect_expr(index, referenced, seen, bound);
+            collect_expr(array, referenced, seen);
+            collect_expr(index, referenced, seen);
         }
         Expr::MapLit(pairs) => {
             for (k, v) in pairs {
-                collect_expr(k, referenced, seen, bound);
-                collect_expr(v, referenced, seen, bound);
+                collect_expr(k, referenced, seen);
+                collect_expr(v, referenced, seen);
             }
         }
         Expr::RecordLit { fields, .. } => {
             for (_, v) in fields {
-                collect_expr(v, referenced, seen, bound);
+                collect_expr(v, referenced, seen);
             }
         }
         // A nested lambda's own free variables become references of the

@@ -26,12 +26,17 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
     match stmt {
         Stmt::Import { name, alias, .. } => {
             if let Some(alias_name) = alias {
-                out.push_str(&format!("{}取り込む 「{}」 として {}；\n", ind, name, alias_name));
+                out.push_str(&format!(
+                    "{}取り込む 「{}」 として {}；\n",
+                    ind, name, alias_name
+                ));
             } else {
                 out.push_str(&format!("{}取り込む 「{}」；\n", ind, name));
             }
         }
-        Stmt::VarDecl { ty, name, value, .. } => {
+        Stmt::VarDecl {
+            ty, name, value, ..
+        } => {
             out.push_str(&format!(
                 "{}{} {} ＝ {}；\n",
                 ind,
@@ -43,7 +48,9 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
         Stmt::Assign { name, value, .. } => {
             out.push_str(&format!("{}{} ＝ {}；\n", ind, name, format_expr(value)));
         }
-        Stmt::IndexAssign { name, index, value, .. } => {
+        Stmt::IndexAssign {
+            name, index, value, ..
+        } => {
             out.push_str(&format!(
                 "{}{}【{}】 ＝ {}；\n",
                 ind,
@@ -52,7 +59,12 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
                 format_expr(value)
             ));
         }
-        Stmt::FieldAssign { record, field, value, .. } => {
+        Stmt::FieldAssign {
+            record,
+            field,
+            value,
+            ..
+        } => {
             out.push_str(&format!(
                 "{}{}：：{} ＝ {}；\n",
                 ind,
@@ -80,8 +92,17 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
         Stmt::Continue(_) => {
             out.push_str(&format!("{}続ける；\n", ind));
         }
-        Stmt::If { condition, then_body, else_body, .. } => {
-            out.push_str(&format!("{}もし {} ならば ｛\n", ind, format_expr(condition)));
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            out.push_str(&format!(
+                "{}もし {} ならば ｛\n",
+                ind,
+                format_expr(condition)
+            ));
             for s in then_body {
                 format_stmt(s, level + 1, out);
             }
@@ -93,14 +114,22 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
             }
             out.push_str(&format!("{}｝\n", ind));
         }
-        Stmt::While { condition, body, .. } => {
+        Stmt::While {
+            condition, body, ..
+        } => {
             out.push_str(&format!("{}間 {} ならば ｛\n", ind, format_expr(condition)));
             for s in body {
                 format_stmt(s, level + 1, out);
             }
             out.push_str(&format!("{}｝\n", ind));
         }
-        Stmt::ForRange { var, from, to, body, .. } => {
+        Stmt::ForRange {
+            var,
+            from,
+            to,
+            body,
+            ..
+        } => {
             out.push_str(&format!(
                 "{}繰り返す {} ＝ {} から {} ならば ｛\n",
                 ind,
@@ -113,7 +142,9 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
             }
             out.push_str(&format!("{}｝\n", ind));
         }
-        Stmt::ForEach { var, array, body, .. } => {
+        Stmt::ForEach {
+            var, array, body, ..
+        } => {
             out.push_str(&format!(
                 "{}各 {} ：{} ならば ｛\n",
                 ind,
@@ -125,7 +156,12 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
             }
             out.push_str(&format!("{}｝\n", ind));
         }
-        Stmt::TryCatch { try_body, error_var, catch_body, .. } => {
+        Stmt::TryCatch {
+            try_body,
+            error_var,
+            catch_body,
+            ..
+        } => {
             out.push_str(&format!("{}試す ｛\n", ind));
             for s in try_body {
                 format_stmt(s, level + 1, out);
@@ -136,7 +172,14 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
             }
             out.push_str(&format!("{}｝\n", ind));
         }
-        Stmt::FnDecl { name, params, return_ty, body, is_public, .. } => {
+        Stmt::FnDecl {
+            name,
+            params,
+            return_ty,
+            body,
+            is_public,
+            ..
+        } => {
             let pub_prefix = if *is_public { "公開 " } else { "" };
             let param_str = params
                 .iter()
@@ -160,10 +203,11 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
             out.push_str(&format!("{}型 {} ｛\n", ind, name));
             for (ty, field_name) in fields {
                 out.push_str(&format!(
-                    "{}{}{}；\n",
+                    "{}{}{} {}；\n",
                     ind,
                     INDENT_UNIT,
-                    format!("{} {}", format_type(ty), field_name)
+                    format_type(ty),
+                    field_name
                 ));
             }
             out.push_str(&format!("{}｝\n", ind));
@@ -175,7 +219,11 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
                     if payload.is_empty() {
                         vname.clone()
                     } else {
-                        let tys = payload.iter().map(format_type).collect::<Vec<_>>().join("、");
+                        let tys = payload
+                            .iter()
+                            .map(format_type)
+                            .collect::<Vec<_>>()
+                            .join("、");
                         format!("{}（{}）", vname, tys)
                     }
                 })
@@ -204,7 +252,10 @@ fn format_match_arm(arm: &MatchArm, level: usize, out: &mut String) {
     } else {
         format!("（{}）", arm.binders.join("、"))
     };
-    out.push_str(&format!("{}{}{}  ならば ｛\n", ind, arm.variant, binder_str));
+    out.push_str(&format!(
+        "{}{}{}  ならば ｛\n",
+        ind, arm.variant, binder_str
+    ));
     for s in &arm.body {
         format_stmt(s, level + 1, out);
     }
@@ -216,7 +267,13 @@ fn format_expr(expr: &Expr) -> String {
         Expr::LitInt(n) => format_int(*n),
         Expr::LitFloat(f) => format_float(*f),
         Expr::LitString(s) => format!("「{}」", s),
-        Expr::LitBool(b) => if *b { "真".to_string() } else { "偽".to_string() },
+        Expr::LitBool(b) => {
+            if *b {
+                "真".to_string()
+            } else {
+                "偽".to_string()
+            }
+        }
         Expr::Ident(name) => name.clone(),
         Expr::BinOp { op, lhs, rhs } => {
             // Parenthesize sub-expressions for binary ops to preserve precedence.
@@ -224,8 +281,16 @@ fn format_expr(expr: &Expr) -> String {
             let r = format_expr(rhs);
             let needs_paren_l = matches!(**lhs, Expr::BinOp { .. });
             let needs_paren_r = matches!(**rhs, Expr::BinOp { .. });
-            let lf = if needs_paren_l { format!("（{}）", l) } else { l };
-            let rf = if needs_paren_r { format!("（{}）", r) } else { r };
+            let lf = if needs_paren_l {
+                format!("（{}）", l)
+            } else {
+                l
+            };
+            let rf = if needs_paren_r {
+                format!("（{}）", r)
+            } else {
+                r
+            };
             format!("{} {} {}", lf, format_binop(op), rf)
         }
         Expr::UnaryMinus(e) => format!("ー{}", format_expr(e)),
@@ -265,7 +330,11 @@ fn format_expr(expr: &Expr) -> String {
         Expr::FieldAccess { record, field } => {
             format!("{}：：{}", format_expr(record), field)
         }
-        Expr::Lambda { params, return_ty, body } => {
+        Expr::Lambda {
+            params,
+            return_ty,
+            body,
+        } => {
             let param_str = params
                 .iter()
                 .map(|(n, ty)| format!("{}：{}", n, format_type(ty)))
@@ -322,7 +391,11 @@ pub fn format_type(ty: &HikariType) -> String {
         HikariType::Map(k, v) => format!("辞書＜{}、{}＞", format_type(k), format_type(v)),
         HikariType::Record(name) => name.clone(),
         HikariType::Fn(params, ret) => {
-            let param_str = params.iter().map(format_type).collect::<Vec<_>>().join("、");
+            let param_str = params
+                .iter()
+                .map(format_type)
+                .collect::<Vec<_>>()
+                .join("、");
             format!("関数＜（{}）ー＞{}＞", param_str, format_type(ret))
         }
         HikariType::Option(inner) => format!("省略可＜{}＞", format_type(inner)),
@@ -418,7 +491,11 @@ mod tests {
     #[test]
     fn test_format_for_range() {
         let out = round_trip("繰り返す ｉ ＝ １ から ５ ならば ｛ 印刷（ｉ）； ｝");
-        assert!(out.contains("繰り返す ｉ ＝ １ から ５ ならば ｛"), "got: {:?}", out);
+        assert!(
+            out.contains("繰り返す ｉ ＝ １ から ５ ならば ｛"),
+            "got: {:?}",
+            out
+        );
     }
 
     #[test]
@@ -448,9 +525,14 @@ mod tests {
 
     #[test]
     fn test_format_type_renders_compound_arrays() {
-        assert_eq!(format_type(&HikariType::Array(Box::new(HikariType::Int))), "整数列");
         assert_eq!(
-            format_type(&HikariType::Array(Box::new(HikariType::Array(Box::new(HikariType::Int))))),
+            format_type(&HikariType::Array(Box::new(HikariType::Int))),
+            "整数列"
+        );
+        assert_eq!(
+            format_type(&HikariType::Array(Box::new(HikariType::Array(Box::new(
+                HikariType::Int
+            ))))),
             "配列＜整数列＞"
         );
     }
@@ -458,6 +540,10 @@ mod tests {
     #[test]
     fn test_format_negative_int() {
         let out = round_trip("整数 ｘ ＝ ー４２；");
-        assert!(out.contains("ー４２") || out.contains("ー ４２"), "got: {:?}", out);
+        assert!(
+            out.contains("ー４２") || out.contains("ー ４２"),
+            "got: {:?}",
+            out
+        );
     }
 }
