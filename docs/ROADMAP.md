@@ -352,11 +352,11 @@ described in [ARCHITECTURE.md](ARCHITECTURE.md).
 |-------|-------|--------|
 | １４ | Correctness fixes from the review | ✅ **Done** |
 | １５ | Optionality & error values (`省略可`, `?`, `結果` sugar) | ✅ **Done** (15a+15b; 15c deferred) |
-| １６ | User-written generics (`関数＜Ｔ＞ …`) | ✅ **Done** |
-| １７ | Standard-library expansion (string/number/collection/time/JSON) | ✅ **Done** (17a–17e; JSON deferred) |
-| １８ | A real module & namespace system | ✅ **Done** (18a–18d; 18c export control via 公開) |
-| １９ | Diagnostics & developer tooling (fmt, expr spans, multi-error) | ⬜ Planned |
-| ２０ | Performance (peephole, constant folding, faster dispatch) | ⬜ Planned |
+| １６ | User-written generics (`関数＜Ｔ＞ …`) | ✅ **Done** (16a+16c; 16b generic records deferred) |
+| １７ | Standard-library expansion (string/number/collection/time/JSON) | ✅ **Done** (17a–17e; 17f JSON deferred) |
+| １８ | A real module & namespace system | ✅ **Done** (18a–18d) |
+| １９ | Diagnostics & developer tooling (fmt, multi-error, lint expansion) | ✅ **Done** (19b+19c+19e; 19a expr spans + 19d LSP deferred) |
+| ２０ | Performance (constant folding, slot reuse) | ✅ **Done** (20a+20c; 20b dispatch + 20d interning deferred) |
 
 ---
 
