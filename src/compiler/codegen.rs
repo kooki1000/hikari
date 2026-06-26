@@ -7,6 +7,7 @@ use crate::parser::{BinOpKind, Expr, Stmt};
 use super::builtins::builtin_name;
 use super::bytecode::{Chunk, Instruction};
 use super::error::CompileError;
+use super::fold::try_const_eval;
 use super::value::Value;
 
 // ── Compiler ──────────────────────────────────────────────────────────────────
@@ -57,6 +58,10 @@ struct LoopTarget {
 struct Scopes {
     frames: Vec<HashMap<String, u16>>,
     next_slot: u16,
+    // `next_slot` value at each `enter()`, restored on the matching `exit()`.
+    // This lets sibling scopes reuse the same local slots, shrinking frame size
+    // for functions with many non-overlapping block-level bindings.
+    watermarks: Vec<u16>,
 }
 
 impl Scopes {
@@ -64,15 +69,20 @@ impl Scopes {
         Self {
             frames: vec![HashMap::new()],
             next_slot: 0,
+            watermarks: Vec::new(),
         }
     }
 
     fn enter(&mut self) {
+        self.watermarks.push(self.next_slot);
         self.frames.push(HashMap::new());
     }
 
     fn exit(&mut self) {
         self.frames.pop();
+        if let Some(mark) = self.watermarks.pop() {
+            self.next_slot = mark;
+        }
     }
 
     // Reuses the slot only on same-scope redeclaration; a name that exists
@@ -607,6 +617,14 @@ impl Compiler {
     }
 
     fn emit_expr(&mut self, expr: &Expr, instrs: &mut Vec<Instruction>, scopes: &mut Scopes) {
+        // Constant folding: evaluate fully-constant expressions at compile time
+        // and emit a single LoadConst. Skips expressions that would trap at
+        // runtime (division by zero, overflow) so the VM still raises the error.
+        if let Some(val) = try_const_eval(expr) {
+            let idx = self.add_constant(val);
+            instrs.push(Instruction::LoadConst(idx));
+            return;
+        }
         match expr {
             Expr::LitInt(n) => {
                 let idx = self.add_constant(Value::Int(*n));

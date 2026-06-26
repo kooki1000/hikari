@@ -533,15 +533,19 @@ never match.
 *Only if real programs get big enough to need it — correctness and ergonomics
 first.*
 
-**20a. Constant folding & peephole.** Fold literal arithmetic at compile time;
-collapse `LoadConst`-then-`Negate`, redundant jumps, and dead `Jump`-to-next.
+**20a. Constant folding & peephole.** ✅ Done — `src/compiler/fold.rs`: `try_const_eval`
+recursively evaluates fully-constant expressions (literals + operators) at
+compile time and emits a single `LoadConst`. Covers integer/float/string/bool
+arithmetic, comparisons, logic, unary ops. Uses checked arithmetic matching the
+VM's overflow / div-by-zero semantics (returns `None` for trapping cases so the
+runtime still raises the error).
 
 **20b. Faster dispatch.** Profile the `step` loop; consider a computed-goto-style
 dispatch or instruction superinstructions for hot patterns (loop increments).
 
-**20c. Local-slot reuse.** `next_slot` grows monotonically per function
-(ARCHITECTURE §6); reclaim slots on scope exit to shrink frames for large
-functions.
+**20c. Local-slot reuse.** ✅ Done — `Scopes::enter/exit` now save/restore
+`next_slot` via a `watermarks` stack. Sibling block-level scopes share the same
+local slots, shrinking frames for functions with many non-overlapping bindings.
 
 **20d. String interning / small-value optimization.** If string-heavy programs
 dominate, intern constant-pool strings and consider a `SmallVec`-backed stack.
