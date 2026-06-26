@@ -148,7 +148,8 @@ fn run_source(source: &str, entry_dir: &Path, program_args: Vec<String>) {
 
     // Collect all type errors (multi-error mode) so beginners see every
     // problem in one run rather than fix-one-rerun-fix-one-rerun.
-    let type_errors = TypeChecker::new().check_all(&ast);
+    let mut checker = TypeChecker::new();
+    let type_errors = checker.check_all(&ast);
     if !type_errors.is_empty() {
         for e in &type_errors {
             eprintln!("{}", diagnostic::render(source, e.span(), &e.to_string()));
@@ -161,6 +162,9 @@ fn run_source(source: &str, entry_dir: &Path, program_args: Vec<String>) {
     }
 
     let mut compiler = Compiler::new();
+    // Hand the compiler the type checker's float-element 総和 sites (keyed by
+    // node address into this same `ast`) so those calls lower to SumFloat.
+    compiler.set_float_sum_sites(checker.take_float_sum_sites());
     let instructions = compiler.compile(&ast).unwrap_or_else(|e: CompileError| {
         eprintln!("コンパイルエラー: {}", e);
         process::exit(1);
@@ -252,6 +256,10 @@ fn eval_repl_line(
     checker
         .check(&ast)
         .map_err(|e| diagnostic::render(line, e.span(), &e.to_string()))?;
+
+    // Float-element 総和 sites for this line's AST (consumed immediately below
+    // by compile() on the same AST, so the node addresses stay valid).
+    compiler.set_float_sum_sites(checker.take_float_sum_sites());
 
     let instrs = compiler
         .compile(&ast)

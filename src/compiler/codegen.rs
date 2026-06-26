@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::lexer::Span;
 use crate::parser::{BinOpKind, Expr, Stmt};
 
-use super::builtins::builtin_name;
+use super::builtins::{BuiltinFn, builtin_name};
 use super::bytecode::{Chunk, Instruction};
 use super::error::CompileError;
 use super::fold::try_const_eval;
@@ -32,6 +32,11 @@ pub struct Compiler {
     // emit_* methods stay infallible and record overflow here (emitting a
     // placeholder); compile() turns this into an Err before the bytecode runs.
     limit_error: Option<CompileError>,
+    // Node identities (`&Expr as *const _ as usize`) of 総和 calls the type
+    // checker flagged as summing a 小数列. Such calls lower to SumFloat so an
+    // empty array yields 0.0 rather than the integer 0. Populated from the
+    // checker right before compile() on the same AST (see set_float_sum_sites).
+    float_sum_sites: HashSet<usize>,
 }
 
 // For While, continue_target is known immediately (loop_start, where the
@@ -124,7 +129,16 @@ impl Compiler {
             loop_targets: Vec::new(),
             variant_enum,
             limit_error: None,
+            float_sum_sites: HashSet::new(),
         }
+    }
+
+    /// Install the float-element 総和 call-node identities collected by the type
+    /// checker for the AST about to be compiled. Must be called with the set
+    /// drained from the checker that just checked the *same* `&[Stmt]`, since
+    /// the keys are node addresses into that AST.
+    pub fn set_float_sum_sites(&mut self, sites: HashSet<usize>) {
+        self.float_sum_sites = sites;
     }
 
     // Convert a count to u8, recording an overflow (and returning a placeholder)
@@ -735,7 +749,16 @@ impl Compiler {
                 } else {
                     let argc =
                         self.count_u8(args.len(), CompileError::TooManyArguments(args.len()));
-                    if let Some(builtin) = builtin_name(name) {
+                    // 総和 over a 小数列 lowers to SumFloat (empty → 0.0). The
+                    // checker flagged this exact call node by address; all other
+                    // 総和 calls keep the integer Sum.
+                    if name == "総和"
+                        && self
+                            .float_sum_sites
+                            .contains(&(expr as *const Expr as usize))
+                    {
+                        instrs.push(Instruction::CallBuiltin(BuiltinFn::SumFloat, argc));
+                    } else if let Some(builtin) = builtin_name(name) {
                         instrs.push(Instruction::CallBuiltin(builtin, argc));
                     } else if let Some(slot) = scopes.lookup(name) {
                         // calling a Fn-typed local variable.

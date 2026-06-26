@@ -134,6 +134,28 @@ fn test_vm_sum_int_array() {
 }
 
 #[test]
+fn test_vm_sum_empty_float_array_is_float_zero() {
+    // Regression: an empty 小数列 must sum to the float identity 0.0, not the
+    // integer 0. The compiler selects SumFloat from the type checker's
+    // element-type info; without it, the result would be Int(0) and any
+    // downstream float use would fail with a type mismatch at runtime.
+    let src = "取り込む 「数学」；小数列 ｘ ＝ 新配列＜小数＞；返す 総和（ｘ）；";
+    assert_eq!(run_typed(src), Some(Value::Float(0.0)));
+}
+
+#[test]
+fn test_vm_sum_empty_int_array_is_int_zero() {
+    let src = "取り込む 「数学」；整数列 ｘ ＝ 新配列＜整数＞；返す 総和（ｘ）；";
+    assert_eq!(run_typed(src), Some(Value::Int(0)));
+}
+
+#[test]
+fn test_vm_sum_float_array_nonempty() {
+    let src = "取り込む 「数学」；小数列 ｘ ＝ 【１．５、２．５】；返す 総和（ｘ）；";
+    assert_eq!(run_typed(src), Some(Value::Float(4.0)));
+}
+
+#[test]
 fn test_vm_average_int_array() {
     let src =
         "取り込む 「数学」；取り込む 「配列」；整数列 ａ ＝ 【１、２、３、４】；返す 平均（ａ）；";

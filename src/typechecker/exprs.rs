@@ -539,6 +539,13 @@ impl super::TypeChecker {
                         HikariType::Array(inner)
                             if matches!(inner.as_ref(), HikariType::Int | HikariType::Float) =>
                         {
+                            // Record float-element sums so the compiler lowers
+                            // them to a float-aware builtin (empty → 0.0). Keyed
+                            // by this Call node's address; the compiler reads it
+                            // back off the very same AST. See float_sum_sites.
+                            if inner.as_ref() == &HikariType::Float {
+                                self.float_sum_sites.insert(expr as *const Expr as usize);
+                            }
                             return Ok(*inner.clone());
                         }
                         _ => {

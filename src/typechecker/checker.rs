@@ -41,6 +41,13 @@ pub struct TypeChecker {
     // The mangled name of the function whose body is currently being checked.
     // Used to allow intra-module private calls (alias。fn calling alias。helper).
     pub(super) current_fn_name: Option<String>,
+    // Node identities (`&Expr as *const _ as usize`) of 総和 calls whose array
+    // argument has a 小数 element type. The compiler reads this immediately
+    // after checking the same AST to lower those calls to a float-aware sum
+    // (so an empty 小数列 yields 0.0, not the integer 0). Cleared at the start
+    // of every check so stale addresses from a previous REPL line — whose AST
+    // has since been freed — can never alias a later line's nodes.
+    pub(super) float_sum_sites: HashSet<usize>,
 }
 
 impl TypeChecker {
@@ -57,7 +64,16 @@ impl TypeChecker {
             type_var_names: HashSet::new(),
             private_fns: HashSet::new(),
             current_fn_name: None,
+            float_sum_sites: HashSet::new(),
         }
+    }
+
+    /// Take the set of float-element 総和 call-node identities collected during
+    /// the most recent `check`/`check_all`, for the compiler to consult while
+    /// lowering the *same* AST. Draining it transfers ownership and leaves the
+    /// checker's set empty for the next line.
+    pub fn take_float_sum_sites(&mut self) -> HashSet<usize> {
+        std::mem::take(&mut self.float_sum_sites)
     }
 
     pub(super) fn enter_scope(&mut self) {
@@ -123,6 +139,7 @@ impl TypeChecker {
     }
 
     pub fn check(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        self.float_sum_sites.clear();
         // Pre-pass: register all top-level FnDecl signatures so that
         // forward references and mutual recursion both type-check, and so
         // that private-fn guards know about every module-private function
@@ -159,6 +176,7 @@ impl TypeChecker {
     /// checker in an inconsistent state, so some subsequent errors may be
     /// cascades. Returns the error list (empty = no errors).
     pub fn check_all(&mut self, stmts: &[Stmt]) -> Vec<TypeError> {
+        self.float_sum_sites.clear();
         // Same pre-pass as `check`.
         for stmt in stmts {
             if let Stmt::FnDecl {
