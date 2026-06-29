@@ -16,9 +16,9 @@ ordered by impact. Each phase is independently shippable.
 
 ---
 
-## Status (updated 2026-06-18)
+## Status (updated 2026-06-29)
 
-**All roadmap phases are now complete.** Current state (583 tests passing):
+**All roadmap phases through 22 are now complete.** Current state (610 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -33,8 +33,10 @@ ordered by impact. Each phase is independently shippable.
 | １１d | Runtime error source spans | ✅ **Done** |
 | １２ | Robustness — recursion limit ✅, dynamic locals ✅, `Rc<[Instruction]>` ✅, boundary checks ✅, REPL txn ✅, lints ✅, fuzz + parser depth limit ✅ | ✅ **Done** |
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
+| ２１ | Close open gaps — comment-preserving formatter, `i64::MIN`, empty-array inference | ✅ **Done** |
+| ２２ | Finish the type system — `結果＜T、E＞` + `？` operator, generic type/enum decls, nested-fn error | ✅ **Done** |
 
-Every phase in this roadmap has shipped. Completed work is detailed ✅ inline below.
+Every phase in this roadmap through 22 has shipped. Completed work is detailed ✅ inline below.
 A possible *future* extension beyond this roadmap is **user-written** generic
 functions (`関数＜Ｔ＞ …`); 10b delivered the internal parametric signatures the
 roadmap called for (removing the per-builtin type special-casing).
@@ -624,27 +626,33 @@ every AST node and the entire checker/compiler.)*
 
 ---
 
-## フェーズ２２ — 型システムの完成（Finish the Type System）
+## フェーズ２２ — 型システムの完成（Finish the Type System） ✅ DONE
 
-**22a. `結果＜Ｔ、Ｅ＞` and the `？` operator (v3 15c).** A standard
-`成功（Ｔ）`/`失敗（Ｅ）` enum plus a `？` postfix that early-returns the error,
-lowering to a `照合` + `返す`. Bridges `照合`-style error values and `試す/失敗`,
-and completes the optionality story begun with `省略可` (15a/15b shipped).
+**22a. ✅ `結果＜T、E＞` and the `？` operator.** `HikariType::Result(ok, err)` is
+a built-in type parsed as `結果＜T、E＞`. `成功（v）` and `失敗（e）` are built-in
+constructors (user-defined variants with the same names take priority).
+`照合` against a `結果` checks exhaustiveness over `｛成功（x） → … 失敗（e） → …｝`.
+The `？` postfix operator on a `結果` expression short-circuits by propagating `失敗`
+when the value is an error, or unwraps the `成功` payload otherwise. `？` is only
+legal inside a function whose return type is also `結果＜_、_＞`.
+"結果" is handled contextually (stays `Ident` in the lexer; special-cased in
+`parse_type()` when followed by `＜`) so the 116+ existing tests using "結果" as a
+variable name are unaffected.
 
-**22b. Generic records & enums (v3 16b).** `型 箱＜Ｔ＞ ｛ Ｔ 値； ｝` and
-`構造 対＜Ａ、Ｂ＞ ｛ … ｝`. Requires extending `HikariType::Record(name)` to carry
-type arguments at instantiation sites. Unblocks `項目一覧` (map entries as
-`対＜鍵、値＞` pairs, v3 17d) and a typed JSON value (23a).
+**22b. ✅ Generic record & enum declarations.** `型 箱＜T＞ ｛ … ｝` and
+`構造 対＜A、B＞ ｛ … ｝` are parsed; type params are threaded through the type
+checker and stored alongside field/variant definitions. Full generic *instantiation*
+at use sites (e.g. `箱＜整数＞ x ＝ …`) is deferred — the disambiguation between
+`Ident Lt` as a generic type annotation versus a comparison expression requires
+dedicated parser work.
 
-**22c. Nested / local function declarations.** The compiler currently rejects
-`関数` declared inside another body (codegen no-ops nested `FnDecl`; named bodies
-are isolated). Real programs want local helpers; support nested `関数` with proper
-lexical scoping (or document lambdas as the sanctioned alternative if this stays
-out).
+**22c. ✅ Error on nested function declarations.** `関数` declared inside another
+`関数` body now raises `NestedFunctionNotSupported` at type-check time. The
+previous behaviour (silent no-op) masked hard-to-find bugs; lambdas remain the
+sanctioned alternative for local helpers.
 
-**22d. Bounded generics & tuples.** A `整列可`/orderable bound so user generics
-can sort/compare, and a lightweight tuple (or anonymous record) type so functions
-can return multiple values without declaring a one-off `型`.
+**22d. Bounded generics & tuples.** A `整列可`/orderable bound and lightweight
+tuple type. *(Deferred — requires significant type-system machinery.)*
 
 ---
 

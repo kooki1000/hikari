@@ -40,7 +40,8 @@ pub enum TokenKind {
     KwAs,       // として  (aliased import: 取り込む 「…」 として エイリアス)
     KwPub,      // 公開    (export marker: 公開 関数 …)
 
-    Pipe, // ｜ (U+FF5C full-width vertical bar) — lambda parameter delimiter
+    Pipe,     // ｜ (U+FF5C full-width vertical bar) — lambda parameter delimiter
+    Question, // ？ (U+FF1F full-width question mark) — postfix result-propagation
 
     // Literals
     LitInt(i64),
@@ -415,6 +416,10 @@ impl Lexer {
                     self.advance();
                     TokenKind::Pipe
                 }
+                '？' => {
+                    self.advance();
+                    TokenKind::Question
+                }
                 '「' => {
                     self.advance();
                     TokenKind::LitString(self.read_string_literal())
@@ -484,6 +489,7 @@ fn is_symbol(ch: char) -> bool {
             | '】'
             | '：'
             | '｜'
+            | '？'
     )
 }
 

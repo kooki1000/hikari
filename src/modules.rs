@@ -167,17 +167,25 @@ fn mangle_module(stmts: Vec<Stmt>, alias: &str) -> Vec<Stmt> {
                     span,
                 })
             }
-            Stmt::TypeDecl { name, fields, span } => Some(Stmt::TypeDecl {
+            Stmt::TypeDecl {
+                name,
+                type_params,
+                fields,
+                span,
+            } => Some(Stmt::TypeDecl {
                 name: format!("{}。{}", alias, name),
+                type_params,
                 fields,
                 span,
             }),
             Stmt::EnumDecl {
                 name,
+                type_params,
                 variants,
                 span,
             } => Some(Stmt::EnumDecl {
                 name: format!("{}。{}", alias, name),
+                type_params,
                 variants,
                 span,
             }),
@@ -441,6 +449,10 @@ fn mangle_expr(
             return_ty,
             body: mangle_stmts(body, alias, local_fns, local_types),
         },
+        Expr::Question(inner, span) => Expr::Question(
+            Box::new(mangle_expr(*inner, alias, local_fns, local_types)),
+            span,
+        ),
         // Atoms (no sub-expressions to mangle).
         leaf @ (Expr::LitInt(_)
         | Expr::LitFloat(_)

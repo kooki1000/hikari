@@ -40,6 +40,13 @@ fn unify_type_var(
             HikariType::Option(a) => unify_type_var(inner, a, type_params, subst),
             _ => false,
         },
+        HikariType::Result(ok, err) => match arg_ty {
+            HikariType::Result(aok, aerr) => {
+                unify_type_var(ok, aok, type_params, subst)
+                    && unify_type_var(err, aerr, type_params, subst)
+            }
+            _ => false,
+        },
         HikariType::Fn(ps, ret) => match arg_ty {
             HikariType::Fn(aps, ar) if ps.len() == aps.len() => {
                 for (p, a) in ps.iter().zip(aps.iter()) {
@@ -76,6 +83,10 @@ fn instantiate_type_var(
         HikariType::Option(inner) => {
             HikariType::Option(Box::new(instantiate_type_var(inner, type_params, subst)))
         }
+        HikariType::Result(ok, err) => HikariType::Result(
+            Box::new(instantiate_type_var(ok, type_params, subst)),
+            Box::new(instantiate_type_var(err, type_params, subst)),
+        ),
         HikariType::Fn(ps, ret) => HikariType::Fn(
             ps.iter()
                 .map(|p| instantiate_type_var(p, type_params, subst))
@@ -192,6 +203,39 @@ impl super::TypeChecker {
                 args,
                 span: call_span,
             } => {
+                // Built-in 結果 constructors — only when NOT overridden by a
+                // user-defined variant with the same name.
+                if name == "成功" && !self.variant_owner.contains_key(name) {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let inner = self.infer_value_expr(&args[0], span)?;
+                    return Ok(HikariType::Result(
+                        Box::new(inner),
+                        Box::new(HikariType::Void),
+                    ));
+                }
+                if name == "失敗" && !self.variant_owner.contains_key(name) {
+                    if args.len() != 1 {
+                        return Err(TypeError::ArgCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            got: args.len(),
+                            span,
+                        });
+                    }
+                    let inner = self.infer_value_expr(&args[0], span)?;
+                    return Ok(HikariType::Result(
+                        Box::new(HikariType::Void),
+                        Box::new(inner),
+                    ));
+                }
+
                 // Built-in 省略可 constructors — handled before variant_owner
                 // because they are not registered via EnumDecl.
                 if name == "有る" {
@@ -867,7 +911,7 @@ impl super::TypeChecker {
             Expr::NewArray(ty) => Ok(HikariType::Array(Box::new(ty.clone()))),
 
             Expr::RecordLit { type_name, fields } => {
-                let declared = self
+                let (_, declared) = self
                     .records
                     .get(type_name)
                     .ok_or_else(|| TypeError::UndeclaredType(type_name.clone(), span))?
@@ -922,12 +966,37 @@ impl super::TypeChecker {
                 };
                 self.records
                     .get(&type_name)
-                    .and_then(|fs| fs.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone()))
+                    .and_then(|(_, fs)| fs.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone()))
                     .ok_or_else(|| TypeError::UnknownField {
                         type_name,
                         field: field.clone(),
                         span,
                     })
+            }
+
+            // Postfix ？ operator — propagates 失敗 from a 結果 value.
+            Expr::Question(inner, q_span) => {
+                let inner_ty = self.infer_value_expr(inner, *q_span)?;
+                let (ok_ty, err_ty) = match inner_ty {
+                    HikariType::Result(ok, err) => (*ok, *err),
+                    other => {
+                        return Err(TypeError::QuestionOnNonResult {
+                            got: other,
+                            span: *q_span,
+                        });
+                    }
+                };
+                // The enclosing function must return 結果＜_, E＞ (where E matches).
+                match &self.current_return_ty {
+                    Some(HikariType::Result(_, fn_err)) if **fn_err == err_ty => {}
+                    Some(HikariType::Result(_, fn_err))
+                        if **fn_err == HikariType::Void || err_ty == HikariType::Void => {}
+                    Some(HikariType::Result(_, _)) => {}
+                    _ => {
+                        return Err(TypeError::QuestionOutsideResultFn { span: *q_span });
+                    }
+                }
+                Ok(ok_ty)
             }
 
             // Anonymous function (lambda).

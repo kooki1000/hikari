@@ -16,6 +16,8 @@ pub enum HikariType {
     Fn(Vec<HikariType>, Box<HikariType>),
     // built-in option type — 省略可＜T＞
     Option(Box<HikariType>),
+    // built-in result type — 結果＜T、E＞
+    Result(Box<HikariType>, Box<HikariType>),
 }
 
 // ── AST nodes ────────────────────────────────────────────────────────────────
@@ -62,6 +64,8 @@ pub enum Expr {
         return_ty: HikariType,
         body: Vec<Stmt>,
     },
+    // postfix ？ operator — propagate 失敗 from a 結果 value
+    Question(Box<Expr>, Span),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -153,6 +157,7 @@ pub enum Stmt {
     Continue(Span),
     TypeDecl {
         name: String,
+        type_params: Vec<String>,
         fields: Vec<(HikariType, String)>,
         span: Span,
     },
@@ -168,6 +173,7 @@ pub enum Stmt {
     },
     EnumDecl {
         name: String,
+        type_params: Vec<String>,
         variants: Vec<(String, Vec<HikariType>)>,
         span: Span,
     },

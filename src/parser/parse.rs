@@ -137,6 +137,10 @@ impl Parser {
             TokenKind::Ident(_) if matches!(self.peek_next(), TokenKind::Ident(_)) => {
                 self.parse_var_decl()
             }
+            // 結果＜T、E＞ 変数名 ＝ ... — result-typed var-decl.
+            TokenKind::Ident(n) if n == "結果" && self.peek_next() == &TokenKind::Lt => {
+                self.parse_var_decl()
+            }
             _ => self.parse_expr_or_field_assign(),
         }
     }
@@ -175,6 +179,7 @@ impl Parser {
                 });
             }
         };
+        let type_params = self.parse_type_params()?;
         self.expect(&TokenKind::LBrace)?;
         let mut fields = Vec::new();
         while self.peek() != &TokenKind::RBrace {
@@ -192,7 +197,12 @@ impl Parser {
             fields.push((ty, fname));
         }
         self.expect(&TokenKind::RBrace)?;
-        Ok(Stmt::TypeDecl { name, fields, span })
+        Ok(Stmt::TypeDecl {
+            name,
+            type_params,
+            fields,
+            span,
+        })
     }
 
     fn parse_enum_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -207,6 +217,7 @@ impl Parser {
                 });
             }
         };
+        let type_params = self.parse_type_params()?;
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();
         while self.peek() != &TokenKind::RBrace {
@@ -238,6 +249,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace)?;
         Ok(Stmt::EnumDecl {
             name,
+            type_params,
             variants,
             span,
         })
@@ -252,6 +264,8 @@ impl Parser {
         while self.peek() != &TokenKind::RBrace {
             let variant = match (self.peek_span(), self.advance().clone()) {
                 (_, TokenKind::Ident(n)) => n,
+                // 失敗 is KwCatch but is valid as a Result match arm variant.
+                (_, TokenKind::KwCatch) => "失敗".to_string(),
                 (s, other) => {
                     return Err(ParseError::ExpectedIdentifier {
                         got: other,
@@ -353,48 +367,53 @@ impl Parser {
         })
     }
 
+    /// Parse an optional `＜T＞` or `＜T、U＞` type-parameter list.
+    /// Advances past the `＞` if present; returns an empty Vec if absent.
+    fn parse_type_params(&mut self) -> Result<Vec<String>, ParseError> {
+        if self.peek() != &TokenKind::Lt {
+            return Ok(Vec::new());
+        }
+        self.advance(); // consume ＜
+        let mut tps = Vec::new();
+        loop {
+            let tp_span = self.peek_span();
+            let tp = match self.advance().clone() {
+                TokenKind::Ident(n) => n,
+                other => {
+                    return Err(ParseError::ExpectedIdentifier {
+                        got: other,
+                        span: tp_span,
+                    });
+                }
+            };
+            tps.push(tp);
+            match self.peek() {
+                TokenKind::Gt => {
+                    self.advance();
+                    break;
+                }
+                TokenKind::Comma => {
+                    self.advance();
+                }
+                _ => {
+                    let s = self.peek_span();
+                    return Err(ParseError::UnexpectedToken {
+                        expected: TokenKind::Gt,
+                        got: self.advance().clone(),
+                        span: s,
+                    });
+                }
+            }
+        }
+        Ok(tps)
+    }
+
     fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
         let span = self.peek_span();
         self.advance(); // consume 関数
 
         // Optional type-parameter list: ＜T＞ or ＜T、U＞
-        let type_params = if self.peek() == &TokenKind::Lt {
-            self.advance(); // consume ＜
-            let mut tps = Vec::new();
-            loop {
-                let tp_span = self.peek_span();
-                let tp = match self.advance().clone() {
-                    TokenKind::Ident(n) => n,
-                    other => {
-                        return Err(ParseError::ExpectedIdentifier {
-                            got: other,
-                            span: tp_span,
-                        });
-                    }
-                };
-                tps.push(tp);
-                match self.peek() {
-                    TokenKind::Gt => {
-                        self.advance();
-                        break;
-                    }
-                    TokenKind::Comma => {
-                        self.advance();
-                    }
-                    _ => {
-                        let s = self.peek_span();
-                        return Err(ParseError::UnexpectedToken {
-                            expected: TokenKind::Gt,
-                            got: self.advance().clone(),
-                            span: s,
-                        });
-                    }
-                }
-            }
-            tps
-        } else {
-            Vec::new()
-        };
+        let type_params = self.parse_type_params()?;
 
         let name = match (self.peek_span(), self.advance().clone()) {
             (_, TokenKind::Ident(n)) => n,
@@ -879,6 +898,24 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 Ok(expr)
             }
+            // 失敗（expr） — Result error constructor (失敗 is KwCatch so it can't be
+            // an Ident, but we allow it in expression position as a call).
+            TokenKind::KwCatch if self.peek() == &TokenKind::LParen => {
+                self.advance(); // consume （
+                let mut args = Vec::new();
+                while self.peek() != &TokenKind::RParen {
+                    args.push(self.parse_expr()?);
+                    if self.peek() != &TokenKind::RParen {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                }
+                self.advance(); // consume ）
+                Ok(Expr::Call {
+                    name: "失敗".to_string(),
+                    args,
+                    span,
+                })
+            }
             TokenKind::KwNewArray => {
                 self.expect(&TokenKind::Lt)?;
                 let ty = self.parse_type()?;
@@ -940,6 +977,10 @@ impl Parser {
                     record: Box::new(expr),
                     field,
                 };
+            } else if self.peek() == &TokenKind::Question {
+                let span = self.peek_span();
+                self.advance(); // consume ？
+                expr = Expr::Question(Box::new(expr), span);
             } else {
                 break;
             }
@@ -996,6 +1037,15 @@ impl Parser {
                 let inner = self.parse_type()?;
                 self.expect(&TokenKind::Gt)?;
                 Ok(HikariType::Option(Box::new(inner)))
+            }
+            // 結果＜T、E＞ — built-in result type (contextual keyword)
+            TokenKind::Ident(name) if name == "結果" && self.peek() == &TokenKind::Lt => {
+                self.expect(&TokenKind::Lt)?;
+                let ok_ty = self.parse_type()?;
+                self.expect(&TokenKind::Comma)?;
+                let err_ty = self.parse_type()?;
+                self.expect(&TokenKind::Gt)?;
+                Ok(HikariType::Result(Box::new(ok_ty), Box::new(err_ty)))
             }
             TokenKind::Ident(name) => Ok(HikariType::Record(name)),
             other => Err(ParseError::ExpectedType { got: other, span }),

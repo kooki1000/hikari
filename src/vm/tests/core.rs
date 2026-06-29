@@ -322,3 +322,61 @@ fn test_vm_empty_array_decl_and_append() {
         Some(Value::Int(1))
     );
 }
+
+// ── 22a: 結果＜T、E＞ type + ？ operator ─────────────────────────────────────
+
+#[test]
+fn test_vm_result_success_constructor_and_match() {
+    let src = "結果＜整数、文字列＞ ｒ ＝ 成功（７）；\
+               照合 ｒ ｛\
+                 成功（ｎ） ならば ｛ 返す ｎ； ｝\
+                 失敗（ｅ） ならば ｛ 返す ０； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(7)));
+}
+
+#[test]
+fn test_vm_result_failure_constructor_and_match() {
+    let src = "結果＜整数、文字列＞ ｒ ＝ 失敗（「エラー」）；\
+               照合 ｒ ｛\
+                 成功（ｎ） ならば ｛ 返す ｎ； ｝\
+                 失敗（ｅ） ならば ｛ 返す ー１； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(-1)));
+}
+
+#[test]
+fn test_vm_question_operator_success_unwraps() {
+    // 割る returns 成功(5), ？ unwraps to 5
+    let src = "関数 割る（整数 Ａ、整数 Ｂ）ー＞ 結果＜整数、文字列＞ ｛\
+                 もし Ｂ ＝＝ ０ ならば ｛ 返す 失敗（「ゼロ除算」）； ｝\
+                 返す 成功（Ａ ／ Ｂ）；\
+               ｝\
+               関数 計算（）ー＞ 結果＜整数、文字列＞ ｛\
+                 整数 ｖ ＝ 割る（１０、２）？；\
+                 返す 成功（ｖ）；\
+               ｝\
+               照合 計算（） ｛\
+                 成功（ｎ） ならば ｛ 返す ｎ； ｝\
+                 失敗（ｅ） ならば ｛ 返す ー１； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(5)));
+}
+
+#[test]
+fn test_vm_question_operator_propagates_failure() {
+    // 割る returns 失敗 when B==0; ？ propagates it up through 計算
+    let src = "関数 割る（整数 Ａ、整数 Ｂ）ー＞ 結果＜整数、文字列＞ ｛\
+                 もし Ｂ ＝＝ ０ ならば ｛ 返す 失敗（「ゼロ除算」）； ｝\
+                 返す 成功（Ａ ／ Ｂ）；\
+               ｝\
+               関数 計算（）ー＞ 結果＜整数、文字列＞ ｛\
+                 整数 ｖ ＝ 割る（１０、０）？；\
+                 返す 成功（ｖ）；\
+               ｝\
+               照合 計算（） ｛\
+                 成功（ｎ） ならば ｛ 返す ｎ； ｝\
+                 失敗（ｅ） ならば ｛ 返す ー１； ｝\
+               ｝";
+    assert_eq!(run(src), Some(Value::Int(-1)));
+}
