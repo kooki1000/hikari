@@ -18,7 +18,7 @@ ordered by impact. Each phase is independently shippable.
 
 ## Status (updated 2026-06-18)
 
-**All roadmap phases are now complete.** Current state (434 tests passing):
+**All roadmap phases are now complete.** Current state (583 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -387,7 +387,7 @@ names the imported file instead of pointing into the importer. Folds into Phase 
 if a fuller module system lands first. *(KNOWN_ISSUES #2.)*
 
 **マイルストーン:** the four KNOWN_ISSUES reproductions all behave correctly; no
-regression in the 434-test suite.
+regression in the test suite.
 
 ---
 
@@ -560,3 +560,152 @@ dominate, intern constant-pool strings and consider a `SmallVec`-backed stack.
 3. **Phase 17** (stdlib) can proceed in parallel, module by module.
 4. **Phase 18** (modules) subsumes 14e and unblocks larger codebases.
 5. **Phases 19–20** (tooling, perf) are ongoing quality work, lowest urgency.
+
+---
+
+# Hikari Roadmap v4 — Toward a complete language
+
+Updated 2026-06-29. v2 made Hikari general-purpose; v3 made it robust and
+ergonomic. **v4 is the gap between "a small language that works" and "a language
+you could build real, non-trivial software in and hand to other people."**
+
+Status going in: all v3 KNOWN_ISSUES bug entries (#1–#5) have been fixed and are
+verified in code; a second review round fixed three more runtime bugs (`余り` /
+`経過` overflow panics and the empty-`総和` float-zero soundness hole, merged in
+PR #49). **One known issue remains open: #6, the formatter deletes comments.**
+What follows is grouped by what "complete" actually requires, roughly in priority
+order. Phases remain independently shippable.
+
+## Status (v4)
+
+| Phase | Theme | Status |
+|-------|-------|--------|
+| ２１ | Close the open correctness/quality gaps | ⬜ Not started |
+| ２２ | Finish the type system (errors-as-values, generic types, local fns) | ⬜ Not started |
+| ２３ | Batteries-included standard library (JSON, sets, iterators, I/O) | ⬜ Not started |
+| ２４ | Ecosystem to live in (editor support, test framework, packaging, traces) | ⬜ Not started |
+| ２５ | Performance (only if real programs demand it) | ◻ Deferred from v3 (20b/20d) |
+
+---
+
+## フェーズ２１ — 残課題の解消（Close the open gaps）
+
+*Small, concrete, mostly bug-shaped. Ship first.*
+
+**21a. Comment- & blank-line-preserving formatter.** `整形` silently deletes all
+comments (and blank lines) — and `整形 -i` does so destructively in place. The
+fix and full plan are in [KNOWN_ISSUES #6](KNOWN_ISSUES.md): lex comments into a
+side channel (parser untouched) and interleave them into the formatter's output
+by source position; preserve blank lines; relocate mid-expression comments to the
+nearest statement boundary. *(The single remaining open known issue.)*
+
+**21b. `i64::MIN` and large negative literals.** The lexer reads a number's
+magnitude before applying sign, so `ー９２２３３７２０３６８５４７７５８０８`
+(`i64::MIN`) fails to lex — its magnitude overflows `i64`. Parse signed integer
+literals as a unit, or special-case the `MIN` magnitude.
+
+**21c. Empty array literal inference from context.** `整数列 ｘ ＝ 【】；` is
+rejected (`EmptyArrayLiteral`) even though the declared type fixes the element
+type; today users must write `新配列＜整数＞`. Let an empty `【】` take its element
+type from the expected/declared type at the assignment (and at argument/return
+positions).
+
+**21d. Full expression-level spans (v3 19a).** `Expr::Call` already carries a
+span; extend spans to the remaining `Expr` variants and thread them into the
+checker and the compiler's span checkpoints, so a type error or a runtime
+division-by-zero can point at the *offending sub-expression*, not just the
+statement. The biggest remaining diagnostic-quality win.
+
+---
+
+## フェーズ２２ — 型システムの完成（Finish the Type System）
+
+**22a. `結果＜Ｔ、Ｅ＞` and the `？` operator (v3 15c).** A standard
+`成功（Ｔ）`/`失敗（Ｅ）` enum plus a `？` postfix that early-returns the error,
+lowering to a `照合` + `返す`. Bridges `照合`-style error values and `試す/失敗`,
+and completes the optionality story begun with `省略可` (15a/15b shipped).
+
+**22b. Generic records & enums (v3 16b).** `型 箱＜Ｔ＞ ｛ Ｔ 値； ｝` and
+`構造 対＜Ａ、Ｂ＞ ｛ … ｝`. Requires extending `HikariType::Record(name)` to carry
+type arguments at instantiation sites. Unblocks `項目一覧` (map entries as
+`対＜鍵、値＞` pairs, v3 17d) and a typed JSON value (23a).
+
+**22c. Nested / local function declarations.** The compiler currently rejects
+`関数` declared inside another body (codegen no-ops nested `FnDecl`; named bodies
+are isolated). Real programs want local helpers; support nested `関数` with proper
+lexical scoping (or document lambdas as the sanctioned alternative if this stays
+out).
+
+**22d. Bounded generics & tuples.** A `整列可`/orderable bound so user generics
+can sort/compare, and a lightweight tuple (or anonymous record) type so functions
+can return multiple values without declaring a one-off `型`.
+
+---
+
+## フェーズ２３ — 充実した標準ライブラリ（Batteries Included）
+
+*The line between "toy" and "useful" is usually the standard library.*
+
+**23a. JSON / 直列化 (v3 17f).** `JSON化（値）→文字列` and `JSON解析（文字列）`.
+Needs a dynamic/`任意` value or a `JSON値` enum (depends on 22b). The most-requested
+missing capability for real I/O.
+
+**23b. More collections.** A set type (`集合`), `項目一覧` for maps, dedup/chunk/
+`畳み込み右` (v3 17c leftovers), and richer string ops (split-by-regex or
+char-class, number parsing with a radix, padding/formatting).
+
+**23c. Iterators / ranges as values.** A `範囲（開始、終了）` value and lazy
+sequence operations, so `各` and the HOFs compose without materializing
+intermediate arrays. Currently every `マップ`/`絞り込み` allocates a new array.
+
+**23d. Richer I/O & process control.** Line-by-line stdin iteration, writing to
+stderr, explicit exit-code control, and an args-parsing helper above raw
+`引数（）`. Rounds out the `入出力`/`環境` modules.
+
+---
+
+## フェーズ２４ — 住める生態系（An Ecosystem to Live In）
+
+**24a. Editor support (v3 19d).** A Tree-sitter grammar (highlighting) and an LSP
+shim (go-to-definition, hovers, inline diagnostics). Huge ergonomics payoff for a
+full-width language where mis-spacing is easy.
+
+**24b. A test / assertion framework.** A built-in `確認（条件）` / assertion and a
+`hikari 試験 <file>` runner that reports pass/fail counts. Self-hosting the
+language's own test story makes it credible for real projects.
+
+**24c. Package & dependency story.** Beyond `HIKARI＿PATH` (18d): a manifest that
+names a project's library dependencies and a way to fetch/pin them, so sharing
+code doesn't mean copying `.hkr` files.
+
+**24d. Runtime stack traces.** On an uncaught error, print the call chain (frame
+by frame with source locations), not just the failing statement — the `frames`
+stack and per-chunk span checkpoints already hold what's needed.
+
+---
+
+## フェーズ２５ — 性能（Performance）
+
+*Carried over from v3; pursue only when real programs need it.*
+
+**25a. Faster dispatch (v3 20b).** Profile the `step` loop; consider
+computed-goto-style dispatch or superinstructions for hot patterns (loop
+increments).
+
+**25b. String interning / small-value optimization (v3 20d).** Intern
+constant-pool strings and consider a `SmallVec`-backed operand stack if
+string-heavy or call-heavy programs dominate.
+
+---
+
+## Sequencing summary (v4)
+
+1. **Phase 21** first — it closes the last known bug (21a) and two long-standing
+   papercuts (21b/21c) with no dependencies; 21d (expr spans) underpins better
+   diagnostics everywhere.
+2. **Phase 22** is the expressiveness core: `結果`/`？` (22a) and generic types
+   (22b) unblock much of Phase 23 (typed JSON, map entries).
+3. **Phase 23** (stdlib) proceeds module by module, JSON gated behind 22b.
+4. **Phase 24** (ecosystem) is what makes Hikari adoptable by others; editor
+   support (24a) and a test framework (24b) have the highest payoff.
+5. **Phase 25** (perf) stays last — correctness and ergonomics first.

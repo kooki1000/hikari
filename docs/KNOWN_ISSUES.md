@@ -1,18 +1,27 @@
 # Hikari Known Issues
 
-This document records bugs and limitations found in a comprehensive code review
+This document records bugs and limitations found in comprehensive code reviews
 of the implementation. Each entry has a severity, a reproduction (where
 practical), the root cause with a file reference, and a suggested fix. Items are
 ordered by impact.
 
 Status legend: 🔴 open bug · 🟡 latent / hard-to-trigger · 🔵 known limitation
-(by design today, but surprising)
+(by design today, but surprising) · ✅ resolved (kept for history).
+
+**Current status:** issues #1–#5 (the first review) are all **resolved** — they
+map to roadmap Phase 14/18 and are verified in the code. Issue **#6** (formatter
+deletes comments) is the only one still **open**; its fix is planned (see roadmap
+Phase 21a). A separate second review also fixed three runtime bugs not listed
+here (`余り`/`経過` overflow panics and the empty-`総和` float-zero soundness hole,
+merged in PR #49).
 
 ---
 
-## 1. 🔴 Exhaustive `照合` is not recognized as a returning path
+## 1. ✅ Exhaustive `照合` is not recognized as a returning path
 
-**Severity:** High (sound but spurious rejection of valid programs).
+**Status:** ✅ Resolved — [`always_returns`](../src/typechecker/symbols.rs:226)
+now has the `Stmt::Match` arm. **Severity:** was High (sound but spurious
+rejection of valid programs).
 
 A non-`無` function whose last statement is an **exhaustive** `照合` where every
 arm returns is wrongly rejected with `MissingReturn`:
@@ -48,9 +57,12 @@ The workaround today is a dead `返す` after the match.
 
 ---
 
-## 2. 🔵 Imported files lose their own imports and type declarations
+## 2. ✅ Imported files lose their own imports and type declarations
 
-**Severity:** Medium (breaks encapsulation of library files).
+**Status:** ✅ Resolved — [`resolve_imports`](../src/modules.rs:68) now splices an
+imported file's top-level `取り込む`/`型`/`構造` alongside its `関数` (and the
+namespaced-import path in Phase 18 mangles them per module). **Severity:** was
+Medium (broke encapsulation of library files).
 
 A function imported from another `.hkr` file fails to typecheck if it uses a
 gated stdlib builtin (or a record/enum) that the *library* file imported/declared:
@@ -89,9 +101,11 @@ treat as a bug.
 
 ---
 
-## 3. 🔵 `小数` whole numbers print identically to `整数`
+## 3. ✅ `小数` whole numbers print identically to `整数`
 
-**Severity:** Low (display only; misleading output).
+**Status:** ✅ Resolved — [`display_value`](../src/vm/value_ops.rs:5) renders an
+integral finite `小数` as `１．０` (`format!("{f:.1}")`). **Severity:** was Low
+(display only; misleading output).
 
 ```
 印刷（１．０）；        ＃ prints "1"
@@ -116,9 +130,11 @@ Value::Float(f) => {
 
 ---
 
-## 4. 🟡 `絶対値` of `i64::MIN` wraps instead of erroring
+## 4. ✅ `絶対値` of `i64::MIN` wraps instead of erroring
 
-**Severity:** Latent (hard to trigger; inconsistent with the rest of arithmetic).
+**Status:** ✅ Resolved — [`BuiltinFn::Abs`](../src/vm/builtins.rs:75) now uses
+`checked_abs → IntegerOverflow`. **Severity:** was Latent (hard to trigger;
+inconsistent with the rest of arithmetic).
 
 [`call_builtin` / `BuiltinFn::Abs`](../src/vm/builtins.rs:75) uses
 `n.wrapping_abs()`, which returns a **negative** `i64::MIN` for `i64::MIN` rather
@@ -132,9 +148,13 @@ principle.
 
 ---
 
-## 5. 🟡 Mixed-type sort comparators silently fall back to "equal"
+## 5. ✅ Mixed-type sort comparators silently fall back to "equal"
 
-**Severity:** Latent (currently unreachable; defensive concern only).
+**Status:** ✅ Resolved — [`sort_values`](../src/vm/value_ops.rs:148) and
+[`MapKeys`](../src/vm/builtins.rs:288) now use `unreachable!` for the mixed-type
+case (the remaining `partial_cmp` fallback is the legitimate float-vs-`NaN`
+case, not a type mismatch). **Severity:** was Latent (unreachable; defensive
+concern only).
 
 [`sort_values`](../src/vm/value_ops.rs:130) and the key sort in
 [`BuiltinFn::MapKeys`](../src/vm/builtins.rs:278) use comparators with a

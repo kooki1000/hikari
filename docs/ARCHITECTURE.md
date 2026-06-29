@@ -20,7 +20,7 @@ Source (.hkr, UTF-8)
 Lexer ──────────────► Vec<Token>            (each Token carries a Span: line, col, len)
    │
    ▼  src/parser/
-Parser (recursive descent) ──► Vec<Stmt>    (AST; statements carry spans, expressions do not)
+Parser (recursive descent) ──► Vec<Stmt>    (AST; statements carry spans; expressions mostly don't — Expr::Call is the exception)
    │
    ▼  src/modules.rs
 Import resolution ──► Vec<Stmt>             (file imports flattened; stdlib imports left as markers)
@@ -40,14 +40,20 @@ VM (stack machine) ──► Option<Value>        (the program's result, if any)
 Diagnostics ──► Japanese error with a source snippet (compile-time and runtime)
 ```
 
-The driver that wires these together is [`run_source`](../src/main.rs:101) (for
-files / `-c` / stdin) and [`eval_repl_line`](../src/main.rs:200) (for the REPL).
+The driver that wires these together is [`run_source`](../src/main.rs:133) (for
+files / `-c` / stdin) and [`eval_repl_line`](../src/main.rs:241) (for the REPL).
 
 A key design property: **the type checker does not transform the AST**. It only
 accepts or rejects. The compiler then re-walks the *same* AST. This means the
 compiler assumes well-typedness and uses `expect`/`panic!` at points the checker
 has already proven safe (e.g. "this name resolves to a slot"). When changing one
 stage, keep this contract in mind — a checker gap becomes a compiler panic.
+
+The one piece of information the checker passes forward is a small **side
+channel**, not an AST rewrite: the set of `総和` call sites whose argument is a
+`小数列` (keyed by `Expr::Call`'s span), so the compiler can lower an empty
+float-sum to `0.0` instead of the integer `0`. The driver hands this set from the
+checker to the compiler between the two passes.
 
 ---
 
@@ -56,15 +62,17 @@ stage, keep this contract in mind — a checker gap becomes a compiler panic.
 - Input is decoded to a `Vec<char>` up front; the lexer indexes into it. All
   source is full-width (ZenKaku) UTF-8 — there are **no ASCII symbols** in valid
   Hikari, with two deliberate exceptions: the `#!` shebang on line 1
-  ([`tokenize`](../src/lexer.rs:242)) and ASCII inside string literals.
+  ([`tokenize`](../src/lexer.rs:250)) and ASCII inside string literals.
 - Comments start with the full-width `＃` and run to end of line
-  ([`skip_whitespace`](../src/lexer.rs:131)).
+  ([`skip_whitespace`](../src/lexer.rs:135)). They are currently **discarded**
+  here (not emitted as tokens), which is why `整形` cannot preserve them — see
+  [Known Issues #6](KNOWN_ISSUES.md).
 - Numbers are read from full-width digits `０-９`; a `．` makes it a float
-  ([`read_number`](../src/lexer.rs:173)). An unparseable/overflowing literal
+  ([`read_number`](../src/lexer.rs:177)). An unparseable/overflowing literal
   becomes `TokenKind::Invalid(text)` rather than panicking — the parser turns
   that into a clean `ParseError::InvalidNumber`.
-- Identifiers vs keywords are resolved in [`keyword_or_ident`](../src/lexer.rs:202).
-  A word boundary is any whitespace or a symbol per [`is_symbol`](../src/lexer.rs:417).
+- Identifiers vs keywords are resolved in [`keyword_or_ident`](../src/lexer.rs:206).
+  A word boundary is any whitespace or a symbol per [`is_symbol`](../src/lexer.rs:425).
   Note `ー` (chōonpu / minus) is intentionally **excluded** from `is_symbol` so
   katakana words like `エラー` stay whole; `ー` only becomes `Minus`/`Arrow` when
   it *starts* a token.
@@ -106,14 +114,16 @@ fuzz harness found that tens of thousands of `（` could overflow the parser's o
 call stack. Keep new recursive parse entry points inside `with_depth`.
 
 The AST types live in [`src/parser/ast.rs`](../src/parser/ast.rs): `HikariType`,
-`Expr`, `Stmt`, `MatchArm`, `BinOpKind`. **Statements carry a `Span`; expressions
-do not** — this is why runtime/diagnostic granularity is statement-level.
+`Expr`, `Stmt`, `MatchArm`, `BinOpKind`. **Statements carry a `Span`; most
+expressions do not** — `Expr::Call` is the lone exception (its span is the callee
+name's location, used for call-site diagnostics and for keying the float-`総和`
+lowering). Runtime/diagnostic granularity is therefore still statement-level.
 
 ---
 
 ## 4. Module resolution — `src/modules.rs`
 
-[`resolve_imports`](../src/modules.rs:25) runs between parsing and type checking:
+[`resolve_imports`](../src/modules.rs:27) runs between parsing and type checking:
 
 - A `取り込む 「数学」；` whose name is a known stdlib module
   (`STDLIB_MODULES`) is **left in place** as a marker the type checker reads to
@@ -121,9 +131,12 @@ do not** — this is why runtime/diagnostic granularity is statement-level.
 - Any other name is treated as a **relative `.hkr` path**: the file is read,
   lexed, parsed, and recursively resolved. Cycles are deduplicated via a
   `visited` set of canonical paths (not an error).
-- **Only top-level `関数` declarations** from an imported file are spliced into
-  the program. See [Known Issues](KNOWN_ISSUES.md) — this currently drops the
-  imported file's own `取り込む`, `型`, and `構造` statements.
+- An imported file's top-level `関数`, `取り込む`, `型`, and `構造` are spliced
+  in (so a library file is self-contained — its own stdlib imports and type
+  declarations come along). A **flat** `取り込む 「lib.hkr」；` merges names as-is;
+  a **namespaced** `取り込む 「lib.hkr」 として エイリアス；` mangles every name to
+  `エイリアス。name` (see [`mangle_module`](../src/modules.rs:119)), and `公開`
+  marks which functions are callable across the module boundary.
 
 Imports are resolved at the top level only (not inside `もし`/`関数`/etc.).
 
@@ -150,7 +163,7 @@ Layout:
 
 ### Call-resolution order (`infer_expr`, `Expr::Call`)
 
-The order in [exprs.rs](../src/typechecker/exprs.rs:111) matters — it's the
+The order in [exprs.rs](../src/typechecker/exprs.rs:190) matters — it's the
 precedence by which a name is interpreted:
 
 1. **Enum variant constructor** (`variant_owner`) → returns `Record(enum_name)`.
@@ -175,15 +188,23 @@ This is what makes `要素数`/`マップ`/`畳み込み`/etc. work over any ele
 without per-builtin code. Unbound variables instantiate to `整数` (only affects
 the "expected type" shown in an error message).
 
-User-written generics (`関数＜Ｔ＞ …`) do **not** exist yet — see the roadmap.
+**User-written generics** (`関数＜Ｔ＞ …`, `関数＜Ｔ、Ｕ＞ …`) are supported: the
+parser reads a `＜…＞` type-variable list on `関数`, the checker registers each
+name as a scoped type variable, and at each call site the substitution is
+inferred from the argument types via the same `HikariType` unifier
+([generics.rs](../src/typechecker/generics.rs)) and the return type instantiated.
+This is **checker-only** — the VM is type-erased, so one shared chunk per generic
+function suffices (no monomorphization). Generic *records/enums* are not yet
+supported (see the roadmap).
 
 ### Exhaustive-return analysis
 
-[`always_returns`](../src/typechecker/symbols.rs:100) decides whether a non-`無`
+[`always_returns`](../src/typechecker/symbols.rs:206) decides whether a non-`無`
 function body is guaranteed to return on every path. It is **conservative**: only
-the last statement matters, loops never count (they may run zero times), and
-`もし` counts only with an `else` where both branches return. ⚠️ It does **not**
-yet recognize an exhaustive `照合` — see [Known Issues](KNOWN_ISSUES.md).
+the last statement matters, and loops never count (they may run zero times).
+`もし` counts only with an `else` where both branches return; `試す/失敗` only when
+both bodies return; and an **exhaustive `照合`** counts when every arm returns
+(exhaustiveness is already proven by the checker, so this is sound).
 
 ---
 
@@ -203,7 +224,7 @@ stack:
 
 ### Instruction set
 
-[`Instruction`](../src/compiler/bytecode.rs:9) is a flat enum. Jumps use
+[`Instruction`](../src/compiler/bytecode.rs:10) is a flat enum. Jumps use
 **absolute** offsets within a chunk. Highlights: arithmetic/compare ops pop two
 and push one; `JumpIfFalse/JumpIfTrue/Jump` for control flow; `Call(fn_idx,
 argc)` and `CallValue(argc)` for direct vs value calls; `CallBuiltin(fn, argc)`;
@@ -220,16 +241,19 @@ O(depth × body size)). `chunks[0]` is always the top-level script.
 
 ### Codegen — `src/compiler/codegen.rs`
 
-The [`Compiler`](../src/compiler/codegen.rs:18) compiles in two passes:
+The [`Compiler`](../src/compiler/codegen.rs:19) compiles in two passes:
 
 1. **Register function names** so forward calls resolve (reserve a chunk slot
    per `関数`).
 2. **Compile bodies and the top-level script** into instructions.
 
-Slot allocation is in [`Scopes`](../src/compiler/codegen.rs:56): `next_slot`
-increases monotonically per function and is never reused across sibling scopes,
-so shadowing gets a fresh slot without corrupting the outer binding. The VM grows
-a frame's locals vector on demand, so there is no hard slot ceiling.
+Slot allocation is in [`Scopes`](../src/compiler/codegen.rs:63): `next_slot`
+advances as bindings are declared, and a `watermarks` stack saved on `enter` /
+restored on `exit` lets **sibling block scopes reuse the same slots** (phase 20c
+— shrinks frame size). Shadowing is still safe: a same-scope re-declaration
+reuses its slot, but a name that exists only in an *outer* scope gets a fresh
+slot, so the new binding never corrupts the outer one. The VM grows a frame's
+locals vector on demand, so there is no hard slot ceiling.
 
 Notable lowering details:
 
@@ -238,10 +262,10 @@ Notable lowering details:
   increment step (compiled *after* the body), so those continues are deferred and
   back-patched (`ContinueTarget::Deferred`); `間`'s continue target is known up
   front (`ContinueTarget::Known`). See the comment block at
-  [codegen.rs:36](../src/compiler/codegen.rs:36).
+  [codegen.rs:42](../src/compiler/codegen.rs:42).
 - **`照合`** lowers to a chain of `TagEquals` + `JumpIfFalse`, reloading the
   subject from a local before each arm and extracting payloads with `GetPayload`.
-- **Closures**: a free-variable analysis ([`free_vars`](../src/compiler/codegen.rs:829))
+- **Closures**: a free-variable analysis ([`free_vars`](../src/compiler/codegen.rs:872))
   finds enclosing locals a lambda references, pushes their current values, and
   `MakeClosure` bundles them; captures are seeded into the callee's locals right
   after the params, so the body reads them as ordinary `LoadLocal`s.
@@ -249,7 +273,7 @@ Notable lowering details:
 **Boundary hardening.** Bytecode fields are fixed width (`u16` for
 constant/jump/chunk indices, `u8` for arg/payload/capture counts). `compile`
 returns `Result<_, CompileError>`: `u8` sites are checked inline via
-[`count_u8`](../src/compiler/codegen.rs:116) and `u16` structural limits are a
+[`count_u8`](../src/compiler/codegen.rs:146) and `u16` structural limits are a
 post-pass. Exceeding any limit yields "プログラムが大きすぎます" instead of a silent
 wrap (unreachable for hand-written programs; guards against corruption).
 
@@ -273,33 +297,36 @@ fetches one instruction, increments `ip`, and dispatches. Falling off the end of
 a chunk is a void return (pop the frame; if it was frame 0, halt).
 
 - **Calls** push a `Frame` (seeded with args, then captures for closures) via
-  [`push_frame`](../src/vm/machine.rs:705), which enforces
+  [`push_frame`](../src/vm/machine.rs:789), which enforces
   `MAX_FRAME_DEPTH = 1024` → catchable `RuntimeError::StackOverflow`
   (`再帰が深すぎます`).
-- **HOFs** (`マップ`/`絞り込み`/`畳み込み`) and `引数` are handled directly in
-  `step` (not `call_builtin`) because they need the frame machinery / VM state.
-  They drive a callee to completion synchronously via
-  [`call_function`](../src/vm/machine.rs:723).
+- **HOFs** (`マップ`/`絞り込み`/`畳み込み`/`どれか`/`すべて`/`数える`) and `引数`
+  are handled directly in `step` (not `call_builtin`) because they need the frame
+  machinery / VM state. They drive a callee to completion synchronously via
+  [`call_function`](../src/vm/machine.rs:807).
 
 ### Error handling / try-catch
 
 `TryStart` pushes a `TryHandler` recording the catch target, error slot, and the
-stack length + frame depth at entry. On any `RuntimeError`, [`run`](../src/vm/machine.rs:591)
+stack length + frame depth at entry. On any `RuntimeError`, [`run`](../src/vm/machine.rs:675)
 pops the nearest handler, **truncates frames first, then the stack** (order
 matters), binds the error message string into the error slot, and jumps to the
 catch target. With no handler, it records the failing instruction's span
-([`current_error_span`](../src/vm/machine.rs:692)) and returns the error.
+([`current_error_span`](../src/vm/machine.rs:776)) and returns the error.
 
 ### Arithmetic & safety
 
-Integer arithmetic is **checked** ([`arith`](../src/vm/value_ops.rs:148)):
-overflow → `IntegerOverflow`. Division/modulo guard a zero divisor
-(`checked_div` also covers `i64::MIN / -1`). Float division by zero is allowed
-(IEEE → inf/NaN). `＋` is overloaded for string concatenation.
+Integer arithmetic is **checked** ([`arith`](../src/vm/value_ops.rs:156)):
+overflow → `IntegerOverflow`. Division and modulo reject a zero divisor with
+`DivisionByZero` for **both** `整数` and `小数` (`checked_div` also covers
+`i64::MIN / -1`). The lone exception is **float modulo**: `a ％ 0.0` yields `NaN`
+(IEEE) rather than erroring. `＋` is overloaded for string concatenation. The
+non-HOF math builtins (`絶対値`/`累乗`/`余り`/…) likewise use checked arithmetic,
+so an overflow surfaces as a catchable error rather than a panic.
 
 ### REPL specifics
 
-[`run_repl_line`](../src/vm/machine.rs:619) appends a line's instructions to
+[`run_repl_line`](../src/vm/machine.rs:703) appends a line's instructions to
 frame 0 (rebuilding its `Rc` slice), shifts span checkpoints to absolute indices,
 and runs from the append point. On an uncaught error it resets transient state
 (drops in-progress frames, clears stack & try handlers, parks frame 0) while
@@ -315,14 +342,17 @@ a bad line leaves no half-declared state.
 `--> line:col` + source-snippet + caret format shared by compile-time and runtime
 errors. Runtime errors gained source spans via the per-chunk span checkpoints, so
 a division-by-zero deep in a function points at the failing statement, not the
-call site. Granularity is statement-level (expressions carry no spans).
+call site. Granularity is statement-level: the span checkpoints are emitted
+per statement, so even though `Expr::Call` now carries a span, sub-expression
+precision (e.g. pointing at one operand) would still require spans on the rest of
+the `Expr` variants — see roadmap 19a.
 
 ---
 
 ## 9. Testing
 
 - Unit/integration tests live next to each module (`*/tests.rs`,
-  `*/tests/*.rs`); ~434 tests cover lexer, parser, type checker, compiler, and VM
+  `*/tests/*.rs`); ~583 tests cover lexer, parser, type checker, compiler, and VM
   behavior end to end.
 - [`src/fuzz_tests.rs`](../src/fuzz_tests.rs) is a seeded, dependency-free
   property/fuzz harness driving ~25k random + hand-picked malformed inputs
