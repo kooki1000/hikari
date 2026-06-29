@@ -295,8 +295,18 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
             }
             out.push_str(&format!("{}｝\n", ind));
         }
-        Stmt::TypeDecl { name, fields, .. } => {
-            out.push_str(&format!("{}型 {} ｛\n", ind, name));
+        Stmt::TypeDecl {
+            name,
+            type_params,
+            fields,
+            ..
+        } => {
+            let tp_str = if type_params.is_empty() {
+                String::new()
+            } else {
+                format!("＜{}＞", type_params.join("、"))
+            };
+            out.push_str(&format!("{}型 {}{} ｛\n", ind, name, tp_str));
             for (ty, field_name) in fields {
                 out.push_str(&format!(
                     "{}{}{} {}；\n",
@@ -308,7 +318,17 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
             }
             out.push_str(&format!("{}｝\n", ind));
         }
-        Stmt::EnumDecl { name, variants, .. } => {
+        Stmt::EnumDecl {
+            name,
+            type_params,
+            variants,
+            ..
+        } => {
+            let tp_str = if type_params.is_empty() {
+                String::new()
+            } else {
+                format!("＜{}＞", type_params.join("、"))
+            };
             let variant_names: Vec<String> = variants
                 .iter()
                 .map(|(vname, payload)| {
@@ -325,9 +345,10 @@ fn format_stmt(stmt: &Stmt, level: usize, out: &mut String) {
                 })
                 .collect();
             out.push_str(&format!(
-                "{}構造 {} ｛ {} ｝\n",
+                "{}構造 {}{} ｛ {} ｝\n",
                 ind,
                 name,
+                tp_str,
                 variant_names.join("、")
             ));
         }
@@ -449,6 +470,7 @@ fn format_expr(expr: &Expr) -> String {
                 body_inline
             )
         }
+        Expr::Question(inner, _) => format!("{}？", format_expr(inner)),
     }
 }
 
@@ -495,6 +517,9 @@ pub fn format_type(ty: &HikariType) -> String {
             format!("関数＜（{}）ー＞{}＞", param_str, format_type(ret))
         }
         HikariType::Option(inner) => format!("省略可＜{}＞", format_type(inner)),
+        HikariType::Result(ok, err) => {
+            format!("結果＜{}、{}＞", format_type(ok), format_type(err))
+        }
     }
 }
 

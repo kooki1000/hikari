@@ -316,3 +316,96 @@ fn test_typecheck_option_type_mismatch_is_error() {
     let err = TypeChecker::new().check(&parse(src)).unwrap_err();
     assert!(matches!(err, TypeError::VarDeclMismatch { .. }));
 }
+
+// ── 22a: 結果＜T、E＞ — result type ──────────────────────────────────────
+
+#[test]
+fn test_typecheck_result_success_constructor() {
+    let src = "結果＜整数、文字列＞ ｒ ＝ 成功（４２）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_result_failure_constructor() {
+    let src = "結果＜整数、文字列＞ ｒ ＝ 失敗（「エラー」）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_result_match_exhaustive() {
+    let src = "結果＜整数、文字列＞ ｒ ＝ 成功（１）；\
+               照合 ｒ ｛\
+                 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝\
+                 失敗（ｅ） ならば ｛ 印刷（ｅ）； ｝\
+               ｝";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_result_match_non_exhaustive() {
+    let src = "結果＜整数、文字列＞ ｒ ＝ 成功（１）；\
+               照合 ｒ ｛\
+                 成功（ｎ） ならば ｛ 印刷（ｎ）； ｝\
+               ｝";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(err, TypeError::NonExhaustiveMatch(_)));
+}
+
+#[test]
+fn test_typecheck_question_operator_ok() {
+    let src = "関数 割る（整数 Ａ、整数 Ｂ）ー＞ 結果＜整数、文字列＞ ｛\
+                 もし Ｂ ＝＝ ０ ならば ｛ 返す 失敗（「ゼロ除算」）； ｝\
+                 返す 成功（Ａ ／ Ｂ）；\
+               ｝\
+               関数 計算（）ー＞ 結果＜整数、文字列＞ ｛\
+                 整数 ｖ ＝ 割る（１０、２）？；\
+                 返す 成功（ｖ）；\
+               ｝";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_question_on_non_result_errors() {
+    let src = "関数 テスト（）ー＞ 結果＜整数、文字列＞ ｛\
+                 整数 ｖ ＝ ４２；\
+                 整数 ｗ ＝ ｖ？；\
+                 返す 成功（ｗ）；\
+               ｝";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(err, TypeError::QuestionOnNonResult { .. }));
+}
+
+#[test]
+fn test_typecheck_question_outside_result_fn_errors() {
+    let src = "関数 テスト（結果＜整数、文字列＞ ｒ）ー＞ 整数 ｛\
+                 整数 ｖ ＝ ｒ？；\
+                 返す ｖ；\
+               ｝";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(err, TypeError::QuestionOutsideResultFn { .. }));
+}
+
+// ── 22b: generic type declarations ────────────────────────────────────────
+
+#[test]
+fn test_typecheck_generic_type_decl_parsed_ok() {
+    let src = "型 ペア＜Ｔ＞ ｛ Ｔ 最初； Ｔ 二番； ｝";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_generic_enum_decl_parsed_ok() {
+    let src = "構造 選択＜Ａ、Ｂ＞ ｛ 左（Ａ）、 右（Ｂ） ｝";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+// ── 22c: nested function not supported ────────────────────────────────────
+
+#[test]
+fn test_typecheck_nested_function_is_error() {
+    let src = "関数 外側（）ー＞ 無 ｛\
+                 関数 内側（）ー＞ 無 ｛ ｝\
+               ｝";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(err, TypeError::NestedFunctionNotSupported { .. }));
+}

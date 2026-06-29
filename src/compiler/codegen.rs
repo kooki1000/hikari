@@ -119,6 +119,8 @@ impl Compiler {
         let mut variant_enum = HashMap::new();
         variant_enum.insert("有る".to_string(), "省略可".to_string());
         variant_enum.insert("無し".to_string(), "省略可".to_string());
+        variant_enum.insert("成功".to_string(), "結果".to_string());
+        variant_enum.insert("失敗".to_string(), "結果".to_string());
         Self {
             constants: Vec::new(),
             chunks: Vec::new(),
@@ -858,6 +860,31 @@ impl Compiler {
                     });
                 }
             }
+
+            // expr？ — evaluate expr, propagate 失敗 (Return), or unwrap 成功.
+            Expr::Question(inner, _) => {
+                self.emit_expr(inner, instrs, scopes);
+                // Store into a synthetic local so we can reload without Dup.
+                let slot = scopes.declare(&format!("__question_{}", self.synthetic_counter));
+                self.synthetic_counter += 1;
+                instrs.push(Instruction::StoreLocal(slot));
+
+                // Check if tag is 成功.
+                instrs.push(Instruction::LoadLocal(slot));
+                instrs.push(Instruction::TagEquals("成功".to_string()));
+                let jif_idx = instrs.len();
+                instrs.push(Instruction::JumpIfTrue(0)); // placeholder → unwrap_label
+
+                // 失敗 path: reload value and return (propagate error).
+                instrs.push(Instruction::LoadLocal(slot));
+                instrs.push(Instruction::Return);
+
+                // unwrap_label: extract the 成功 payload.
+                let unwrap_label = instrs.len() as u16;
+                instrs[jif_idx] = Instruction::JumpIfTrue(unwrap_label);
+                instrs.push(Instruction::LoadLocal(slot));
+                instrs.push(Instruction::GetPayload(0));
+            }
         }
     }
 }
@@ -1058,5 +1085,6 @@ fn collect_expr(expr: &Expr, referenced: &mut Vec<String>, seen: &mut HashSet<St
                 add_ref(&name, referenced, seen);
             }
         }
+        Expr::Question(inner, _) => collect_expr(inner, referenced, seen),
     }
 }

@@ -72,6 +72,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::Colon => "「：」".to_string(),
         TokenKind::DoubleColon => "「：：」".to_string(),
         TokenKind::Pipe => "「｜」".to_string(),
+        TokenKind::Question => "「？」".to_string(),
         TokenKind::Ident(name) => format!("識別子「{}」", name),
         TokenKind::Invalid(text) => format!("不正な字句「{}」", text),
         TokenKind::Eof => "ファイルの末尾".to_string(),
@@ -94,6 +95,11 @@ pub fn hikari_type_japanese(ty: &HikariType) -> String {
             )
         }
         HikariType::Option(inner) => format!("省略可＜{}＞", hikari_type_japanese(inner)),
+        HikariType::Result(ok, err) => format!(
+            "結果＜{}、{}＞",
+            hikari_type_japanese(ok),
+            hikari_type_japanese(err)
+        ),
         HikariType::Record(name) => name.clone(),
         HikariType::Fn(params, ret) => {
             let param_strs: Vec<String> = params.iter().map(hikari_type_japanese).collect();

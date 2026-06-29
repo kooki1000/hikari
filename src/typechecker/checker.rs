@@ -16,6 +16,17 @@ pub(super) fn option_none_compatible(declared: &HikariType, got: &HikariType) ->
     )
 }
 
+// 成功(v) returns Result(T, Void) and 失敗(e) returns Result(Void, E).
+// Either is assignment-compatible when the declared type is Result<T, E>.
+pub(super) fn result_partial_compatible(declared: &HikariType, got: &HikariType) -> bool {
+    match (declared, got) {
+        (HikariType::Result(_, _), HikariType::Result(ok, err)) => {
+            ok.as_ref() == &HikariType::Void || err.as_ref() == &HikariType::Void
+        }
+        _ => false,
+    }
+}
+
 // Clone lets the REPL snapshot the checker before a line and roll back to it
 // if the line fails, so a partially-checked line leaves no half-declared state.
 #[derive(Clone)]
@@ -27,8 +38,8 @@ pub struct TypeChecker {
     pub(super) imported_modules: std::collections::HashSet<String>,
     // Number of enclosing 間／繰り返す／各 bodies; 抜ける／続ける require > 0.
     pub(super) loop_depth: u32,
-    // Record type name → ordered (field name, field type) pairs.
-    pub(super) records: HashMap<String, Vec<(String, HikariType)>>,
+    // Record type name → (type_params, ordered (field name, field type) pairs).
+    pub(super) records: HashMap<String, (Vec<String>, Vec<(String, HikariType)>)>,
     // Enum name → ordered (variant name, payload types) pairs.
     pub(super) enums: HashMap<String, Vec<(String, Vec<HikariType>)>>,
     // Variant name → owning enum name (variant names are globally unique).
@@ -115,6 +126,10 @@ impl TypeChecker {
             }
             HikariType::Array(inner) => self.check_type_declared(inner, span),
             HikariType::Option(inner) => self.check_type_declared(inner, span),
+            HikariType::Result(ok, err) => {
+                self.check_type_declared(ok, span)?;
+                self.check_type_declared(err, span)
+            }
             HikariType::Fn(params, ret) => {
                 for p in params {
                     self.check_type_declared(p, span)?;
@@ -255,7 +270,10 @@ impl TypeChecker {
                     return Ok(());
                 }
                 let inferred = self.infer_value_expr(value, *span)?;
-                if inferred != *ty && !option_none_compatible(ty, &inferred) {
+                if inferred != *ty
+                    && !option_none_compatible(ty, &inferred)
+                    && !result_partial_compatible(ty, &inferred)
+                {
                     return Err(TypeError::VarDeclMismatch {
                         name: name.clone(),
                         declared: ty.clone(),
@@ -276,6 +294,11 @@ impl TypeChecker {
                 is_public,
                 span,
             } => {
+                // Reject nested function declarations (22c).
+                if self.current_return_ty.is_some() {
+                    return Err(TypeError::NestedFunctionNotSupported { span: *span });
+                }
+
                 // Bring type-var names into scope before checking declared types
                 // so that e.g. `配列＜Ｔ＞` in a param type doesn't fail.
                 let outer_type_var_names = std::mem::replace(
@@ -340,6 +363,7 @@ impl TypeChecker {
                         if let Some(expected) = &self.current_return_ty
                             && got != *expected
                             && !option_none_compatible(expected, &got)
+                            && !result_partial_compatible(expected, &got)
                         {
                             return Err(TypeError::ReturnTypeMismatch {
                                 expected: expected.clone(),
@@ -592,9 +616,24 @@ impl TypeChecker {
                 Ok(())
             }
 
-            Stmt::TypeDecl { name, fields, .. } => {
-                let entry = fields.iter().map(|(t, n)| (n.clone(), t.clone())).collect();
-                self.records.insert(name.clone(), entry);
+            Stmt::TypeDecl {
+                name,
+                type_params,
+                fields,
+                span,
+            } => {
+                // Bring type-var names into scope when checking field types.
+                let outer_type_var_names = std::mem::replace(
+                    &mut self.type_var_names,
+                    type_params.iter().cloned().collect(),
+                );
+                for (ty, _) in fields {
+                    self.check_type_declared(ty, *span)?;
+                }
+                self.type_var_names = outer_type_var_names;
+                let field_list = fields.iter().map(|(t, n)| (n.clone(), t.clone())).collect();
+                self.records
+                    .insert(name.clone(), (type_params.clone(), field_list));
                 Ok(())
             }
 
@@ -617,7 +656,7 @@ impl TypeChecker {
                 let field_ty = self
                     .records
                     .get(&type_name)
-                    .and_then(|fs| fs.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone()))
+                    .and_then(|(_, fs)| fs.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone()))
                     .ok_or_else(|| TypeError::UnknownField {
                         type_name: type_name.clone(),
                         field: field.clone(),
@@ -640,6 +679,7 @@ impl TypeChecker {
                 name,
                 variants,
                 span,
+                ..
             } => {
                 for (variant_name, _) in variants {
                     if self.variant_owner.contains_key(variant_name) {
@@ -719,6 +759,73 @@ impl TypeChecker {
                         return Err(TypeError::NonExhaustiveMatch(Box::new(
                             NonExhaustiveMatchInfo {
                                 enum_name: "省略可".to_string(),
+                                missing,
+                                span: *span,
+                            },
+                        )));
+                    }
+                    return Ok(());
+                }
+
+                // Built-in 結果＜T、E＞ match: 成功(binder) and 失敗(binder).
+                if let HikariType::Result(ok_ty, err_ty) = &subject_ty {
+                    let ok_ty = *ok_ty.clone();
+                    let err_ty = *err_ty.clone();
+                    let mut covered: HashSet<String> = HashSet::new();
+                    for arm in arms {
+                        if !covered.insert(arm.variant.clone()) {
+                            return Err(TypeError::DuplicateMatchArm {
+                                variant: arm.variant.clone(),
+                                span: *span,
+                            });
+                        }
+                        match arm.variant.as_str() {
+                            "成功" => {
+                                if arm.binders.len() != 1 {
+                                    return Err(TypeError::ArgCountMismatch {
+                                        name: "成功".to_string(),
+                                        expected: 1,
+                                        got: arm.binders.len(),
+                                        span: *span,
+                                    });
+                                }
+                                self.enter_scope();
+                                self.declare_var(&arm.binders[0], ok_ty.clone());
+                                self.check(&arm.body)?;
+                                self.exit_scope();
+                            }
+                            "失敗" => {
+                                if arm.binders.len() != 1 {
+                                    return Err(TypeError::ArgCountMismatch {
+                                        name: "失敗".to_string(),
+                                        expected: 1,
+                                        got: arm.binders.len(),
+                                        span: *span,
+                                    });
+                                }
+                                self.enter_scope();
+                                self.declare_var(&arm.binders[0], err_ty.clone());
+                                self.check(&arm.body)?;
+                                self.exit_scope();
+                            }
+                            other => {
+                                return Err(TypeError::UndeclaredEnumVariant {
+                                    enum_name: "結果".to_string(),
+                                    variant: other.to_string(),
+                                    span: *span,
+                                });
+                            }
+                        }
+                    }
+                    let missing: Vec<String> = ["成功", "失敗"]
+                        .iter()
+                        .filter(|v| !covered.contains(**v))
+                        .map(|v| v.to_string())
+                        .collect();
+                    if !missing.is_empty() {
+                        return Err(TypeError::NonExhaustiveMatch(Box::new(
+                            NonExhaustiveMatchInfo {
+                                enum_name: "結果".to_string(),
                                 missing,
                                 span: *span,
                             },

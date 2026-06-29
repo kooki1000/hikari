@@ -156,6 +156,19 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+    // ？ used on a non-Result value.
+    QuestionOnNonResult {
+        got: HikariType,
+        span: Span,
+    },
+    // ？ used outside a function whose return type is 結果＜T、E＞.
+    QuestionOutsideResultFn {
+        span: Span,
+    },
+    // 関数 declaration inside another 関数 body is not supported.
+    NestedFunctionNotSupported {
+        span: Span,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -196,6 +209,9 @@ impl TypeError {
             TypeError::NonExhaustiveMatch(info) => info.span,
             TypeError::VoidValueUsed { span } => *span,
             TypeError::PrivateFunctionAccess { span, .. } => *span,
+            TypeError::QuestionOnNonResult { span, .. } => *span,
+            TypeError::QuestionOutsideResultFn { span } => *span,
+            TypeError::NestedFunctionNotSupported { span } => *span,
         }
     }
 }
@@ -373,6 +389,19 @@ impl std::fmt::Display for TypeError {
                 f,
                 "関数「{}」はモジュール非公開です。（ヒント: 公開するには「公開 関数」として宣言してください）",
                 name
+            ),
+            TypeError::QuestionOnNonResult { got, .. } => write!(
+                f,
+                "「？」は「結果」型の値にのみ使用できますが、「{}」型が指定されました。",
+                hikari_type_japanese(got)
+            ),
+            TypeError::QuestionOutsideResultFn { .. } => write!(
+                f,
+                "「？」は戻り値型が「結果」の関数の中でのみ使用できます。"
+            ),
+            TypeError::NestedFunctionNotSupported { .. } => write!(
+                f,
+                "関数の中に別の関数を定義することはサポートされていません。"
             ),
         }
     }

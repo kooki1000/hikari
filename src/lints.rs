@@ -252,6 +252,7 @@ fn collect_called_expr(expr: &Expr, called: &mut HashSet<String>, builtins: &mut
                 collect_called(s, called, builtins);
             }
         }
+        Expr::Question(inner, _) => collect_called_expr(inner, called, builtins),
         Expr::Ident(_)
         | Expr::LitInt(_)
         | Expr::LitFloat(_)
@@ -498,6 +499,7 @@ impl Linter {
                     .collect();
                 self.scoped_body(&extra, body);
             }
+            Expr::Question(inner, _) => self.expr(inner),
             Expr::LitInt(_)
             | Expr::LitFloat(_)
             | Expr::LitString(_)
