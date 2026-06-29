@@ -303,8 +303,13 @@ fn test_vm_i64_min_literal() {
 #[test]
 fn test_vm_i64_min_arithmetic() {
     // Adding 1 to i64::MIN overflows — must raise IntegerOverflow, not panic.
-    let result = run_result("整数 ｘ ＝ ー９２２３３７２０３６８５４７７５８０８；返す ｘ ＋ ー１；");
-    assert!(result.is_err(), "expected overflow error, got: {:?}", result);
+    let result =
+        run_result("整数 ｘ ＝ ー９２２３３７２０３６８５４７７５８０８；返す ｘ ＋ ー１；");
+    assert!(
+        result.is_err(),
+        "expected overflow error, got: {:?}",
+        result
+    );
 }
 
 // ── 21c: empty array literal inference ───────────────────────────────────────

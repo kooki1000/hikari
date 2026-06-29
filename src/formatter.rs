@@ -681,7 +681,11 @@ mod tests {
     fn test_format_no_blank_line_between_adjacent_stmts() {
         let src = "整数 ａ ＝ １；\n整数 ｂ ＝ ２；\n";
         let out = round_trip_with_comments(src);
-        assert!(!out.contains("\n\n"), "unexpected blank line; got: {:?}", out);
+        assert!(
+            !out.contains("\n\n"),
+            "unexpected blank line; got: {:?}",
+            out
+        );
     }
 
     #[test]
