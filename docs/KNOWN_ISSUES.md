@@ -172,9 +172,9 @@ or return a `TypeMismatch`, rather than `Equal`.
 
 ---
 
-## 6. 🔴 The formatter (`整形`) silently deletes all comments
+## 6. ✅ The formatter (`整形`) silently deletes all comments
 
-**Severity:** High (data loss — `整形 -i` permanently destroys comments in place).
+**Status:** ✅ Resolved — the lexer now captures comments into a `Vec<Comment>` side channel (`Lexer::into_comments()`); the formatter interleaves them into the output by source position, preserving blank lines between statements. Trailing comments are attached to the end of their statement's header line. Comments inside block bodies are relocated to the nearest top-level statement boundary (documented limitation; full in-place fidelity would require parser changes). **Severity:** was High (data loss — `整形 -i` permanently destroyed comments in place).
 
 ```
 ＃ This is an important comment

@@ -221,6 +221,21 @@ impl TypeChecker {
                 span,
             } => {
                 self.check_type_declared(ty, *span)?;
+                // Special case: an empty array literal 【】 is valid if the
+                // declared type is an Array — infer_expr cannot deduce element
+                // type from an empty literal, so trust the annotation.
+                if matches!(value, Expr::Array(elems) if elems.is_empty()) {
+                    if !matches!(ty, HikariType::Array(_)) {
+                        return Err(TypeError::VarDeclMismatch {
+                            name: name.clone(),
+                            declared: ty.clone(),
+                            got: HikariType::Array(Box::new(HikariType::Void)),
+                            span: *span,
+                        });
+                    }
+                    self.declare_var(name, ty.clone());
+                    return Ok(());
+                }
                 // Special case: an empty map literal ｛｝ is valid if the declared
                 // type is a Map — infer_expr can't deduce the element types from nothing,
                 // so we skip the inference and trust the annotation.

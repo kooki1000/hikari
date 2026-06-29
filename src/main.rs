@@ -68,13 +68,14 @@ fn main() {
                 eprintln!("エラー: ファイルを読み込めません '{}': {}", path, e);
                 process::exit(1);
             });
-            let ast = Parser::new(Lexer::new(&source).tokenize())
-                .parse()
-                .unwrap_or_else(|e| {
-                    eprintln!("{}", diagnostic::render(&source, e.span(), &e.to_string()));
-                    process::exit(1);
-                });
-            let formatted = formatter::format_stmts(&ast);
+            let mut lexer = Lexer::new(&source);
+            let tokens = lexer.tokenize();
+            let comments = lexer.into_comments();
+            let ast = Parser::new(tokens).parse().unwrap_or_else(|e| {
+                eprintln!("{}", diagnostic::render(&source, e.span(), &e.to_string()));
+                process::exit(1);
+            });
+            let formatted = formatter::format_stmts_with_comments(&ast, &comments);
             if in_place {
                 fs::write(path, &formatted).unwrap_or_else(|e| {
                     eprintln!("エラー: ファイルに書き込めません '{}': {}", path, e);

@@ -44,6 +44,10 @@ pub enum TokenKind {
 
     // Literals
     LitInt(i64),
+    // A positive integer magnitude that fits in u64 but not i64. The only value
+    // that produces this today is 9223372036854775808 (= |i64::MIN|); it is only
+    // valid directly after a negation operator (ー) where it folds to i64::MIN.
+    LitIntLarge(u64),
     LitFloat(f64),
     LitString(String),
     LitTrue,  // 真
@@ -97,11 +101,26 @@ pub struct Token {
     pub span: Span,
 }
 
+/// A single-line comment captured as a side channel during lexing.
+#[derive(Debug, Clone)]
+pub struct Comment {
+    /// Source line the comment starts on (1-based).
+    pub line: usize,
+    /// Column where `＃` appears (1-based). Reserved for future use (e.g.
+    /// distinguishing own-line from trailing comments at the lexer level).
+    #[allow(dead_code)]
+    pub col: usize,
+    /// Everything after the `＃` to end-of-line (may include a leading space).
+    pub text: String,
+}
+
 pub struct Lexer {
     source: Vec<char>,
     pos: usize,
     line: usize,
     col: usize,
+    /// Comments collected during tokenization; consumed by `into_comments`.
+    comments: Vec<Comment>,
 }
 
 impl Lexer {
@@ -111,7 +130,13 @@ impl Lexer {
             pos: 0,
             line: 1,
             col: 1,
+            comments: Vec::new(),
         }
+    }
+
+    /// Consume the lexer and return the comments collected during tokenization.
+    pub fn into_comments(self) -> Vec<Comment> {
+        self.comments
     }
 
     fn peek(&self) -> Option<char> {
@@ -138,12 +163,22 @@ impl Lexer {
                 self.advance();
             }
             if self.peek() == Some('＃') {
+                let comment_line = self.line;
+                let comment_col = self.col;
+                self.advance(); // consume ＃
+                let mut text = String::new();
                 while let Some(c) = self.peek() {
                     if c == '\n' {
                         break;
                     }
+                    text.push(c);
                     self.advance();
                 }
+                self.comments.push(Comment {
+                    line: comment_line,
+                    col: comment_col,
+                    text,
+                });
             } else {
                 break;
             }
@@ -196,9 +231,12 @@ impl Lexer {
                 Err(_) => TokenKind::Invalid(s),
             }
         } else {
-            match s.parse() {
-                Ok(n) => TokenKind::LitInt(n),
-                Err(_) => TokenKind::Invalid(s),
+            match s.parse::<u64>() {
+                Ok(n) if n <= i64::MAX as u64 => TokenKind::LitInt(n as i64),
+                // |i64::MIN| = 9223372036854775808 fits in u64 but not i64.
+                // Valid only when negated; the parser folds ー + LitIntLarge into i64::MIN.
+                Ok(n) if n == i64::MAX as u64 + 1 => TokenKind::LitIntLarge(n),
+                _ => TokenKind::Invalid(s),
             }
         }
     }

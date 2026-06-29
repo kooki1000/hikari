@@ -773,6 +773,12 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         if self.peek() == &TokenKind::Minus {
             self.advance();
+            // ー９２２３３７２０３６８５４７７５８０８ is i64::MIN — fold immediately rather
+            // than wrapping in UnaryMinus (whose negation would overflow at runtime).
+            if matches!(self.peek(), TokenKind::LitIntLarge(_)) {
+                self.advance();
+                return Ok(Expr::LitInt(i64::MIN));
+            }
             let inner = self.parse_primary()?;
             return Ok(Expr::UnaryMinus(Box::new(inner)));
         }

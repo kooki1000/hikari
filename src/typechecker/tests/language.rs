@@ -295,8 +295,16 @@ fn test_typecheck_array_element_type_mismatch() {
 }
 
 #[test]
-fn test_typecheck_empty_array_literal() {
+fn test_typecheck_empty_array_literal_typed_decl_ok() {
+    // 【】 is now accepted when the declared type fixes the element type.
     let ast = parse("整数列 数字 ＝ 【】；");
+    assert!(TypeChecker::new().check(&ast).is_ok());
+}
+
+#[test]
+fn test_typecheck_empty_array_literal_untyped_err() {
+    // 【】 inside an expression with no declared type is still an error.
+    let ast = parse("印刷（【】）；");
     let err = TypeChecker::new().check(&ast).unwrap_err();
     assert!(matches!(err, TypeError::EmptyArrayLiteral(_)));
 }

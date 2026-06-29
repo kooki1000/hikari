@@ -43,6 +43,7 @@ pub fn token_kind_japanese(kind: &TokenKind) -> String {
         TokenKind::KwAs => "「として」".to_string(),
         TokenKind::KwPub => "「公開」".to_string(),
         TokenKind::LitInt(n) => format!("整数リテラル「{}」", n),
+        TokenKind::LitIntLarge(n) => format!("整数リテラル「{}」", n),
         TokenKind::LitFloat(f) => format!("小数リテラル「{}」", f),
         TokenKind::LitString(s) => format!("文字列リテラル「{}」", s),
         TokenKind::LitTrue => "「真」".to_string(),

@@ -572,7 +572,7 @@ you could build real, non-trivial software in and hand to other people."**
 Status going in: all v3 KNOWN_ISSUES bug entries (#1–#5) have been fixed and are
 verified in code; a second review round fixed three more runtime bugs (`余り` /
 `経過` overflow panics and the empty-`総和` float-zero soundness hole, merged in
-PR #49). **One known issue remains open: #6, the formatter deletes comments.**
+PR #49). All KNOWN_ISSUES are now resolved.
 What follows is grouped by what "complete" actually requires, roughly in priority
 order. Phases remain independently shippable.
 
@@ -580,7 +580,7 @@ order. Phases remain independently shippable.
 
 | Phase | Theme | Status |
 |-------|-------|--------|
-| ２１ | Close the open correctness/quality gaps | ⬜ Not started |
+| ２１ | Close the open correctness/quality gaps | 🟡 In progress (21a/21b/21c done; 21d deferred) |
 | ２２ | Finish the type system (errors-as-values, generic types, local fns) | ⬜ Not started |
 | ２３ | Batteries-included standard library (JSON, sets, iterators, I/O) | ⬜ Not started |
 | ２４ | Ecosystem to live in (editor support, test framework, packaging, traces) | ⬜ Not started |
@@ -592,29 +592,35 @@ order. Phases remain independently shippable.
 
 *Small, concrete, mostly bug-shaped. Ship first.*
 
-**21a. Comment- & blank-line-preserving formatter.** `整形` silently deletes all
-comments (and blank lines) — and `整形 -i` does so destructively in place. The
-fix and full plan are in [KNOWN_ISSUES #6](KNOWN_ISSUES.md): lex comments into a
-side channel (parser untouched) and interleave them into the formatter's output
-by source position; preserve blank lines; relocate mid-expression comments to the
-nearest statement boundary. *(The single remaining open known issue.)*
+**21a. ✅ Comment- & blank-line-preserving formatter.** `整形` now preserves
+top-level own-line and trailing comments, and blank lines between statements.
+The lexer captures `＃…` comments into a `Vec<Comment>` side channel
+(`Lexer::into_comments()`) without touching the token stream; the formatter
+interleaves them into output by source position. Trailing comments are attached
+before the first `\n` of the statement's header line. Comments inside block
+bodies are relocated to the nearest top-level statement boundary (documented
+limitation; full in-place fidelity requires parser changes). `整形 -i` is safe.
+*(KNOWN_ISSUES #6 resolved.)*
 
-**21b. `i64::MIN` and large negative literals.** The lexer reads a number's
-magnitude before applying sign, so `ー９２２３３７２０３６８５４７７５８０８`
-(`i64::MIN`) fails to lex — its magnitude overflows `i64`. Parse signed integer
-literals as a unit, or special-case the `MIN` magnitude.
+**21b. ✅ `i64::MIN` and large negative literals.** A new `LitIntLarge(u64)`
+lexer token carries the magnitude `9223372036854775808` (= `|i64::MIN|`) without
+losing information. The parser folds `ー + LitIntLarge` directly into
+`Expr::LitInt(i64::MIN)`, avoiding the runtime overflow that would occur if
+`UnaryMinus` were applied to it.
 
-**21c. Empty array literal inference from context.** `整数列 ｘ ＝ 【】；` is
-rejected (`EmptyArrayLiteral`) even though the declared type fixes the element
-type; today users must write `新配列＜整数＞`. Let an empty `【】` take its element
-type from the expected/declared type at the assignment (and at argument/return
-positions).
+**21c. ✅ Empty array literal inference from context.** `整数列 ｘ ＝ 【】；` is
+now accepted — the type checker's `VarDecl` special-case (modelled after the
+existing empty-map `｛｝` pattern) trusts the declared type annotation instead of
+trying to infer the element type from the empty literal. Passing `【】` in
+argument or return positions where no annotation is present still raises
+`EmptyArrayLiteral`.
 
 **21d. Full expression-level spans (v3 19a).** `Expr::Call` already carries a
 span; extend spans to the remaining `Expr` variants and thread them into the
 checker and the compiler's span checkpoints, so a type error or a runtime
 division-by-zero can point at the *offending sub-expression*, not just the
-statement. The biggest remaining diagnostic-quality win.
+statement. The biggest remaining diagnostic-quality win. *(Deferred — touches
+every AST node and the entire checker/compiler.)*
 
 ---
 

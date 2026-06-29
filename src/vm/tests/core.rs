@@ -289,3 +289,31 @@ fn test_vm_float_display_negative_integral_value_shows_decimal_point() {
         Some(Value::Str("-2.0".to_string()))
     );
 }
+
+// ── 21b: i64::MIN literal ─────────────────────────────────────────────────────
+
+#[test]
+fn test_vm_i64_min_literal() {
+    assert_eq!(
+        run("返す ー９２２３３７２０３６８５４７７５８０８；"),
+        Some(Value::Int(i64::MIN))
+    );
+}
+
+#[test]
+fn test_vm_i64_min_arithmetic() {
+    // Adding 1 to i64::MIN overflows — must raise IntegerOverflow, not panic.
+    let result = run_result("整数 ｘ ＝ ー９２２３３７２０３６８５４７７５８０８；返す ｘ ＋ ー１；");
+    assert!(result.is_err(), "expected overflow error, got: {:?}", result);
+}
+
+// ── 21c: empty array literal inference ───────────────────────────────────────
+
+#[test]
+fn test_vm_empty_array_decl_and_append() {
+    // 【】 initializes an empty array; 追加 adds elements; 要素数 reads length.
+    assert_eq!(
+        run("取り込む 「配列」；整数列 ａ ＝ 【】；追加（ａ、 ４２）；返す 要素数（ａ）；"),
+        Some(Value::Int(1))
+    );
+}

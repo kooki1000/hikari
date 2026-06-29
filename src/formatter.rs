@@ -3,18 +3,114 @@
 //! `format_stmts` turns a parsed AST back into nicely formatted full-width
 //! source text. The output is canonical: consistent spacing around operators,
 //! one statement per line, and block bodies indented by two full-width spaces.
+//!
+//! `format_stmts_with_comments` additionally interleaves comments captured
+//! during lexing (a `Vec<Comment>` side channel) and preserves blank lines
+//! between top-level statements. Comments inside block bodies are relocated
+//! to the nearest top-level statement boundary — a known limitation documented
+//! in KNOWN_ISSUES #6.
 
+use crate::lexer::{Comment, Span};
 use crate::parser::{BinOpKind, Expr, HikariType, MatchArm, Stmt};
 
 const INDENT_UNIT: &str = "　　"; // two ideographic spaces per level
 
-/// Format a sequence of statements into a single source string.
-pub fn format_stmts(stmts: &[Stmt]) -> String {
+// ── Public entry points ───────────────────────────────────────────────────────
+
+/// Format a sequence of statements, preserving comments and blank lines from
+/// the original source. `comments` comes from `Lexer::into_comments()`.
+///
+/// Limitation: comments inside block bodies (function bodies, loop bodies,
+/// etc.) are relocated to just before the next top-level statement.
+pub fn format_stmts_with_comments(stmts: &[Stmt], comments: &[Comment]) -> String {
     let mut out = String::new();
+    let mut next_comment: usize = 0;
+    let mut prev_end_line: usize = 0;
+
     for stmt in stmts {
+        let stmt_line = span_of(stmt).line;
+
+        // Flush own-line comments that precede this statement, preserving
+        // blank lines between them and the previous content.
+        while next_comment < comments.len() && comments[next_comment].line < stmt_line {
+            let c = &comments[next_comment];
+            if prev_end_line > 0 && c.line > prev_end_line + 1 {
+                out.push('\n');
+            }
+            out.push_str(&format!("＃{}\n", c.text));
+            prev_end_line = c.line;
+            next_comment += 1;
+        }
+
+        // Preserve a single blank line when there is a source-line gap.
+        if prev_end_line > 0 && stmt_line > prev_end_line + 1 {
+            out.push('\n');
+        }
+
+        // Emit the statement.
+        let before = out.len();
         format_stmt(stmt, 0, &mut out);
+
+        // Attach a trailing comment that shares the statement's start line.
+        if next_comment < comments.len() && comments[next_comment].line == stmt_line {
+            let text = comments[next_comment].text.clone();
+            next_comment += 1;
+            // Insert before the first newline in the freshly emitted text.
+            if let Some(nl) = out[before..].find('\n') {
+                out.insert_str(before + nl, &format!(" ＃{}", text));
+            }
+        }
+
+        // Advance the "last used line" past the emitted output.
+        let newlines = out[before..].chars().filter(|&c| c == '\n').count();
+        prev_end_line = stmt_line + newlines.saturating_sub(1);
     }
+
+    // Flush any remaining comments (trailing file comments).
+    for c in &comments[next_comment..] {
+        if prev_end_line > 0 && c.line > prev_end_line + 1 {
+            out.push('\n');
+        }
+        out.push_str(&format!("＃{}\n", c.text));
+        prev_end_line = c.line;
+    }
+
     out
+}
+
+/// Format a sequence of statements into a single source string (no comment
+/// preservation). Use `format_stmts_with_comments` when the source is available.
+// Used in formatter tests via `round_trip`; the `#[cfg(test)]` context means
+// the compiler sees this as dead code in the lib, but it is exercised.
+#[allow(dead_code)]
+pub fn format_stmts(stmts: &[Stmt]) -> String {
+    format_stmts_with_comments(stmts, &[])
+}
+
+// ── Span helper ───────────────────────────────────────────────────────────────
+
+fn span_of(stmt: &Stmt) -> Span {
+    match stmt {
+        Stmt::VarDecl { span, .. }
+        | Stmt::FnDecl { span, .. }
+        | Stmt::Return(_, span)
+        | Stmt::Print(_, span)
+        | Stmt::If { span, .. }
+        | Stmt::While { span, .. }
+        | Stmt::Expr(_, span)
+        | Stmt::Assign { span, .. }
+        | Stmt::IndexAssign { span, .. }
+        | Stmt::ForRange { span, .. }
+        | Stmt::ForEach { span, .. }
+        | Stmt::TryCatch { span, .. }
+        | Stmt::Import { span, .. }
+        | Stmt::Break(span)
+        | Stmt::Continue(span)
+        | Stmt::TypeDecl { span, .. }
+        | Stmt::FieldAssign { span, .. }
+        | Stmt::EnumDecl { span, .. }
+        | Stmt::Match { span, .. } => *span,
+    }
 }
 
 fn indent(level: usize) -> String {
@@ -545,5 +641,61 @@ mod tests {
             "got: {:?}",
             out
         );
+    }
+
+    // ── comment-preserving formatter tests (21a) ─────────────────────────────
+
+    fn round_trip_with_comments(src: &str) -> String {
+        let mut lexer = Lexer::new(src);
+        let tokens = lexer.tokenize();
+        let comments = lexer.into_comments();
+        let ast = Parser::new(tokens).parse().unwrap();
+        format_stmts_with_comments(&ast, &comments)
+    }
+
+    #[test]
+    fn test_format_preserves_standalone_comment() {
+        let src = "＃ 重要なコメント\n整数 ｘ ＝ ４２；\n";
+        let out = round_trip_with_comments(src);
+        assert!(out.contains("＃ 重要なコメント"), "got: {:?}", out);
+        assert!(out.contains("整数 ｘ ＝ ４２；"), "got: {:?}", out);
+    }
+
+    #[test]
+    fn test_format_preserves_trailing_comment() {
+        let src = "整数 ｘ ＝ ４２；ＷＷＷ\n整数 ｙ ＝ １；\n".replace("ＷＷＷ", "＃ trailing");
+        let out = round_trip_with_comments(&src);
+        // Trailing comment should appear on the same line as the declaration.
+        let line_with_x = out.lines().find(|l| l.contains("ｘ ＝")).expect("has x");
+        assert!(line_with_x.contains("＃ trailing"), "got: {:?}", out);
+    }
+
+    #[test]
+    fn test_format_preserves_blank_line_between_stmts() {
+        let src = "整数 ａ ＝ １；\n\n整数 ｂ ＝ ２；\n";
+        let out = round_trip_with_comments(src);
+        assert!(out.contains("\n\n"), "blank line lost; got: {:?}", out);
+    }
+
+    #[test]
+    fn test_format_no_blank_line_between_adjacent_stmts() {
+        let src = "整数 ａ ＝ １；\n整数 ｂ ＝ ２；\n";
+        let out = round_trip_with_comments(src);
+        assert!(!out.contains("\n\n"), "unexpected blank line; got: {:?}", out);
+    }
+
+    #[test]
+    fn test_format_standalone_comment_without_source_stmts() {
+        let src = "＃ ファイルの先頭\n";
+        let out = round_trip_with_comments(src);
+        assert!(out.contains("＃ ファイルの先頭"), "got: {:?}", out);
+    }
+
+    #[test]
+    fn test_format_no_comments_unchanged_behaviour() {
+        let src = "整数 ｘ ＝ ４２；\n印刷（ｘ）；\n";
+        let plain = round_trip(src);
+        let with_c = round_trip_with_comments(src);
+        assert_eq!(plain, with_c);
     }
 }
