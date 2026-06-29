@@ -131,6 +131,29 @@ pub(super) fn generic_builtin_sig(name: &str) -> Option<GenericSig> {
             params: vec![arr(var(0)), func(vec![var(0)], SigType::Bool)],
             ret: SigType::Int,
         },
+        // ── Phase 23b: more 配列 ops ──
+        "重複除去" => GenericSig {
+            params: vec![arr(var(0))],
+            ret: arr(var(0)),
+        },
+        "分割列" => GenericSig {
+            params: vec![arr(var(0)), SigType::Int],
+            ret: arr(arr(var(0))),
+        },
+        // ── Phase 23b: 畳み込み右 (right fold) ──
+        "畳み込み右" => GenericSig {
+            params: vec![arr(var(0)), var(1), func(vec![var(0), var(1)], var(1))],
+            ret: var(1),
+        },
+        // ── Phase 23d: stderr builtins (print any value) ──
+        "エラー印刷" => GenericSig {
+            params: vec![var(0)],
+            ret: SigType::Void,
+        },
+        "エラー印字" => GenericSig {
+            params: vec![var(0)],
+            ret: SigType::Void,
+        },
         // ── Phase 17d: more 辞書 ops ──
         "併合" => GenericSig {
             params: vec![map(var(0), var(1)), map(var(0), var(1))],

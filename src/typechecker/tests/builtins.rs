@@ -421,3 +421,82 @@ fn test_typecheck_generic_fold_threads_accumulator_type() {
     let src = "取り込む 「関数」；整数列 ｎ ＝ 【１】；文字列 ｓ ＝ 畳み込み（ｎ、「」、｜ａ：文字列、ｘ：整数｜ ー＞ 文字列 ｛ 返す ａ； ｝）；";
     assert!(TypeChecker::new().check(&parse(src)).is_ok());
 }
+
+// ── Phase 23b: dedup, chunk, fold-right, string ops ───────────────────
+
+#[test]
+fn test_typecheck_dedup_ok() {
+    let src = "取り込む 「配列」；整数列 ａ ＝ 【１、２、１】；整数列 ｂ ＝ 重複除去（ａ）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_chunk_ok() {
+    let src =
+        "取り込む 「配列」；整数列 ａ ＝ 【１、２、３】；配列＜整数列＞ ｂ ＝ 分割列（ａ、２）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_fold_right_ok() {
+    let src = "取り込む 「関数」；整数列 ａ ＝ 【１、２、３】；整数 ｒ ＝ 畳み込み右（ａ、０、｜ｘ：整数、ｙ：整数｜ ー＞ 整数 ｛ 返す ｘ ＋ ｙ； ｝）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_pad_left_ok() {
+    let src = r#"取り込む 「文字列」；文字列 ｓ ＝ 左詰め（「hi」、５）；"#;
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_pad_right_ok() {
+    let src = r#"取り込む 「文字列」；文字列 ｓ ＝ 右詰め（「hi」、５）；"#;
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_format_radix_ok() {
+    let src = r#"取り込む 「文字列」；文字列 ｓ ＝ 基数変換（２５５、１６）；"#;
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+// ── Phase 23d: I/O builtins ───────────────────────────────────────────
+
+#[test]
+fn test_typecheck_print_stderr_ok() {
+    let src = r#"取り込む 「入出力」；エラー印刷（「エラー」）；"#;
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_print_stderr_no_newline_ok() {
+    let src = r#"取り込む 「入出力」；エラー印字（「エラー」）；"#;
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_exit_ok() {
+    let src = r#"取り込む 「入出力」；終了（０）；"#;
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_read_all_input_ok() {
+    let src = r#"取り込む 「入出力」；文字列列 行列 ＝ すべて入力（）；"#;
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_dedup_requires_array_module() {
+    let src = "整数列 ａ ＝ 【１、２】；整数列 ｂ ＝ 重複除去（ａ）；";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(err, TypeError::ModuleNotImported { .. }));
+}
+
+#[test]
+fn test_typecheck_exit_requires_io_module() {
+    let src = "終了（０）；";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(err, TypeError::ModuleNotImported { .. }));
+}

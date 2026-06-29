@@ -18,7 +18,7 @@ ordered by impact. Each phase is independently shippable.
 
 ## Status (updated 2026-06-29)
 
-**All roadmap phases through 22 are now complete.** Current state (610 tests passing):
+**All roadmap phases through 23 are now complete.** Current state (631 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -35,8 +35,9 @@ ordered by impact. Each phase is independently shippable.
 | １３ | CLI & distribution — install, `--version`/`--help`, stdin/`-c`, shebang, arg passthrough ✅ | ✅ **Done** |
 | ２１ | Close open gaps — comment-preserving formatter, `i64::MIN`, empty-array inference | ✅ **Done** |
 | ２２ | Finish the type system — `結果＜T、E＞` + `？` operator, generic type/enum decls, nested-fn error | ✅ **Done** |
+| ２３ | Batteries included — dedup/chunk/fold-right, string padding & base conversion, stderr I/O, exit code | ✅ **Done** |
 
-Every phase in this roadmap through 22 has shipped. Completed work is detailed ✅ inline below.
+Every phase in this roadmap through 23 has shipped. Completed work is detailed ✅ inline below.
 A possible *future* extension beyond this roadmap is **user-written** generic
 functions (`関数＜Ｔ＞ …`); 10b delivered the internal parametric signatures the
 roadmap called for (removing the per-builtin type special-casing).
@@ -656,25 +657,26 @@ tuple type. *(Deferred — requires significant type-system machinery.)*
 
 ---
 
-## フェーズ２３ — 充実した標準ライブラリ（Batteries Included）
+## フェーズ２３ — 充実した標準ライブラリ（Batteries Included） ✅ DONE
 
-*The line between "toy" and "useful" is usually the standard library.*
+**23a. JSON / 直列化 (v3 17f).** *(Deferred — requires a dynamic/`任意` value type.)*
 
-**23a. JSON / 直列化 (v3 17f).** `JSON化（値）→文字列` and `JSON解析（文字列）`.
-Needs a dynamic/`任意` value or a `JSON値` enum (depends on 22b). The most-requested
-missing capability for real I/O.
+**23b. ✅ More collections & string ops (partial).**
+- `重複除去（配列＜T＞）→配列＜T＞` — dedup, order-preserving. Requires `配列` module.
+- `分割列（配列＜T＞、整数）→配列＜配列＜T＞＞` — chunk into sub-arrays of given size. Requires `配列` module.
+- `畳み込み右（配列＜T＞、U、T×U→U）→U` — right fold HOF. Requires `関数` module.
+- `左詰め（文字列、整数）→文字列` — left-justify / pad-right with spaces. Requires `文字列` module.
+- `右詰め（文字列、整数）→文字列` — right-justify / pad-left with spaces. Requires `文字列` module.
+- `基数変換（整数、整数）→文字列` — format integer in base N (2–36). Requires `文字列` module.
+- `集合` set type and `項目一覧` map entries deferred (need new Value variant / tuple type).
 
-**23b. More collections.** A set type (`集合`), `項目一覧` for maps, dedup/chunk/
-`畳み込み右` (v3 17c leftovers), and richer string ops (split-by-regex or
-char-class, number parsing with a radix, padding/formatting).
+**23c. Iterators / ranges as values.** *(Deferred — requires new lazy-sequence Value type.)*
 
-**23c. Iterators / ranges as values.** A `範囲（開始、終了）` value and lazy
-sequence operations, so `各` and the HOFs compose without materializing
-intermediate arrays. Currently every `マップ`/`絞り込み` allocates a new array.
-
-**23d. Richer I/O & process control.** Line-by-line stdin iteration, writing to
-stderr, explicit exit-code control, and an args-parsing helper above raw
-`引数（）`. Rounds out the `入出力`/`環境` modules.
+**23d. ✅ Richer I/O & process control.**
+- `すべて入力（）→文字列列` — read all stdin lines into a string array. Requires `入出力` module.
+- `エラー印刷（値）→無` — print any value to stderr with newline. Requires `入出力` module.
+- `エラー印字（値）→無` — print any value to stderr without newline. Requires `入出力` module.
+- `終了（整数）→無` — exit the process with the given exit code. Requires `入出力` module.
 
 ---
 
