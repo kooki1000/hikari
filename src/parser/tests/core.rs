@@ -418,3 +418,40 @@ fn test_parse_print_no_values() {
     let ast = Parser::new(tokens).parse().unwrap();
     assert!(matches!(&ast[0], Stmt::Print(exprs, _) if exprs.is_empty()));
 }
+
+// ── 21b: i64::MIN literal ─────────────────────────────────────────────────────
+
+#[test]
+fn test_parse_i64_min_literal() {
+    // ー followed by the magnitude of i64::MIN should produce i64::MIN directly.
+    let tokens = Lexer::new("整数 ｘ ＝ ー９２２３３７２０３６８５４７７５８０８；").tokenize();
+    let ast = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &ast[0],
+        Stmt::VarDecl { value: Expr::LitInt(n), .. } if *n == i64::MIN
+    ));
+}
+
+#[test]
+fn test_parse_i64_min_as_expression() {
+    // As a standalone expression statement.
+    let tokens = Lexer::new("ー９２２３３７２０３６８５４７７５８０８；").tokenize();
+    let ast = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &ast[0],
+        Stmt::Expr(Expr::LitInt(n), _) if *n == i64::MIN
+    ));
+}
+
+// ── 21c: empty array literal inference ───────────────────────────────────────
+
+#[test]
+fn test_parse_empty_array_literal() {
+    // 【】 should parse successfully (no ParseError).
+    let tokens = Lexer::new("整数列 ａ ＝ 【】；").tokenize();
+    let ast = Parser::new(tokens).parse().unwrap();
+    assert!(matches!(
+        &ast[0],
+        Stmt::VarDecl { value: Expr::Array(elems), .. } if elems.is_empty()
+    ));
+}
