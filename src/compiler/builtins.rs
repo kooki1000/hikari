@@ -81,6 +81,18 @@ pub enum BuiltinFn {
     NowMillis, // 現在時刻
     Elapsed,   // 経過
     Sleep,     // 眠る
+    // Phase 23b: more collections / string ops
+    Dedup,       // 重複除去 ([T] → [T])
+    Chunk,       // 分割列 ([T] × Int → [[T]])
+    FoldRight,   // 畳み込み右 ([T] × U × (T×U→U) → U)
+    PadLeft,     // 左詰め (文字列, 整数) → 文字列
+    PadRight,    // 右詰め (文字列, 整数) → 文字列
+    FormatRadix, // 基数変換 (整数, 整数) → 文字列
+    // Phase 23d: richer I/O
+    ReadAllInput,         // すべて入力 () → 文字列列
+    PrintStderr,          // エラー印刷 (値) → 無
+    PrintStderrNoNewline, // エラー印字 (値) → 無
+    Exit,                 // 終了 (整数) → 無
 }
 
 pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
@@ -160,6 +172,18 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "現在時刻" => Some(BuiltinFn::NowMillis),
         "経過" => Some(BuiltinFn::Elapsed),
         "眠る" => Some(BuiltinFn::Sleep),
+        // 23b
+        "重複除去" => Some(BuiltinFn::Dedup),
+        "分割列" => Some(BuiltinFn::Chunk),
+        "畳み込み右" => Some(BuiltinFn::FoldRight),
+        "左詰め" => Some(BuiltinFn::PadLeft),
+        "右詰め" => Some(BuiltinFn::PadRight),
+        "基数変換" => Some(BuiltinFn::FormatRadix),
+        // 23d
+        "すべて入力" => Some(BuiltinFn::ReadAllInput),
+        "エラー印刷" => Some(BuiltinFn::PrintStderr),
+        "エラー印字" => Some(BuiltinFn::PrintStderrNoNewline),
+        "終了" => Some(BuiltinFn::Exit),
         _ => None,
     }
 }

@@ -356,6 +356,30 @@ impl Vm {
                         }
                         self.stack.push(Value::Int(count));
                     }
+                    BuiltinFn::FoldRight => {
+                        // Stack: [..., array, init, fn_val]
+                        let fn_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let init = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let arr_val = self.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                        let (chunk_index, captured) = match fn_val {
+                            Value::Function {
+                                chunk_index,
+                                captured,
+                                ..
+                            } => (chunk_index, captured),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let elements = match arr_val {
+                            Value::Array(a) => a.borrow().clone(),
+                            _ => return Err(RuntimeError::TypeMismatch),
+                        };
+                        let mut acc = init;
+                        for elem in elements.into_iter().rev() {
+                            acc =
+                                self.call_function(chunk_index, vec![elem, acc], captured.clone())?;
+                        }
+                        self.stack.push(acc);
+                    }
                     BuiltinFn::ProgramArgs => {
                         // Handled here (not call_builtin) because it reads the
                         // VM's stored program arguments.

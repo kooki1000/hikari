@@ -742,5 +742,127 @@ pub(super) fn call_builtin(
             }
             _ => Err(RuntimeError::TypeMismatch),
         },
+
+        // ── Phase 23b: more array ops ─────────────────────────────────────────
+        BuiltinFn::Dedup => match args.pop() {
+            Some(Value::Array(arr)) => {
+                let mut seen: Vec<Value> = Vec::new();
+                for v in arr.borrow().iter() {
+                    if !seen.iter().any(|s| s == v) {
+                        seen.push(v.clone());
+                    }
+                }
+                Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(
+                    seen,
+                ))))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Chunk => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Array(arr)), Some(Value::Int(size))) => {
+                if size <= 0 {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: size,
+                        len: 0,
+                    });
+                }
+                let size = size as usize;
+                let chunks: Vec<Value> = arr
+                    .borrow()
+                    .chunks(size)
+                    .map(|c| Value::Array(std::rc::Rc::new(std::cell::RefCell::new(c.to_vec()))))
+                    .collect();
+                Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(
+                    chunks,
+                ))))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        // FoldRight is a HOF — handled in the machine's step loop like MapArray/FoldArray.
+        BuiltinFn::FoldRight => Err(RuntimeError::TypeMismatch),
+
+        // ── Phase 23b: string ops ─────────────────────────────────────────────
+        BuiltinFn::PadLeft => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Str(s)), Some(Value::Int(width))) => {
+                let w = width.max(0) as usize;
+                Ok(Value::Str(format!("{:<width$}", s, width = w)))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::PadRight => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Str(s)), Some(Value::Int(width))) => {
+                let w = width.max(0) as usize;
+                Ok(Value::Str(format!("{:>width$}", s, width = w)))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::FormatRadix => match (args.first().cloned(), args.get(1).cloned()) {
+            (Some(Value::Int(n)), Some(Value::Int(radix))) => {
+                if radix < 2 || radix > 36 {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: radix,
+                        len: 0,
+                    });
+                }
+                let radix = radix as u32;
+                let result = if n < 0 {
+                    let abs = (n as i128).unsigned_abs();
+                    format!("-{}", radix_fmt(abs, radix))
+                } else {
+                    radix_fmt(n as u128, radix)
+                };
+                Ok(Value::Str(result))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+
+        // ── Phase 23d: richer I/O ─────────────────────────────────────────────
+        BuiltinFn::ReadAllInput => {
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            let lines: Vec<Value> = stdin
+                .lock()
+                .lines()
+                .map(|l| Value::Str(l.unwrap_or_default()))
+                .collect();
+            Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(
+                lines,
+            ))))
+        }
+        BuiltinFn::PrintStderr => match args.pop() {
+            Some(v) => {
+                eprintln!("{}", crate::vm::value_ops::display_value(&v));
+                Ok(Value::Int(0))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::PrintStderrNoNewline => match args.pop() {
+            Some(v) => {
+                use std::io::Write;
+                eprint!("{}", crate::vm::value_ops::display_value(&v));
+                std::io::stderr().flush().ok();
+                Ok(Value::Int(0))
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
+        BuiltinFn::Exit => match args.pop() {
+            Some(Value::Int(code)) => {
+                std::process::exit(code as i32);
+            }
+            _ => Err(RuntimeError::TypeMismatch),
+        },
     }
+}
+
+fn radix_fmt(mut n: u128, radix: u32) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut buf = Vec::new();
+    while n > 0 {
+        buf.push(DIGITS[(n % radix as u128) as usize] as char);
+        n /= radix as u128;
+    }
+    buf.iter().rev().collect()
 }

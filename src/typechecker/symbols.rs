@@ -167,6 +167,33 @@ pub(super) fn builtin_sig(name: &str) -> Option<FnSig> {
             return_ty: HikariType::Void,
             type_params: vec![],
         }),
+        // 23b: string ops (monomorphic)
+        "左詰め" => Some(FnSig {
+            params: vec![HikariType::String, HikariType::Int],
+            return_ty: HikariType::String,
+            type_params: vec![],
+        }),
+        "右詰め" => Some(FnSig {
+            params: vec![HikariType::String, HikariType::Int],
+            return_ty: HikariType::String,
+            type_params: vec![],
+        }),
+        "基数変換" => Some(FnSig {
+            params: vec![HikariType::Int, HikariType::Int],
+            return_ty: HikariType::String,
+            type_params: vec![],
+        }),
+        // 23d: I/O (monomorphic)
+        "すべて入力" => Some(FnSig {
+            params: vec![],
+            return_ty: HikariType::Array(Box::new(HikariType::String)),
+            type_params: vec![],
+        }),
+        "終了" => Some(FnSig {
+            params: vec![HikariType::Int],
+            return_ty: HikariType::Void,
+            type_params: vec![],
+        }),
         _ => None,
     }
 }
@@ -190,12 +217,16 @@ pub fn builtin_module(name: &str) -> Option<&'static str> {
         | "文字列位置"
         | "繰り返し文字列" => Some(MOD_STRING),
         "要素数" | "追加" | "取り出す" | "含む配列" | "位置" | "逆順" | "整列" | "部分列"
-        | "連結" | "平坦化" | "どれか" | "すべて" | "数える" => Some(MOD_ARRAY),
+        | "連結" | "平坦化" | "どれか" | "すべて" | "数える" | "重複除去" | "分割列" => {
+            Some(MOD_ARRAY)
+        }
         "鍵一覧" | "値一覧" | "削除" | "併合" | "数" | "取得既定" => Some(MOD_MAP),
-        "マップ" | "絞り込み" | "畳み込み" => Some(MOD_FUNC),
-        "ファイル読む" | "ファイル書く" | "印字" => Some(MOD_IO),
+        "マップ" | "絞り込み" | "畳み込み" | "畳み込み右" => Some(MOD_FUNC),
+        "ファイル読む" | "ファイル書く" | "印字" | "すべて入力" | "エラー印刷" | "エラー印字"
+        | "終了" => Some(MOD_IO),
         "引数" | "環境変数" => Some(MOD_ENV),
         "現在時刻" | "経過" | "眠る" => Some(MOD_TIME),
+        "左詰め" | "右詰め" | "基数変換" => Some(MOD_STRING),
         _ => None,
     }
 }

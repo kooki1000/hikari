@@ -333,3 +333,64 @@ fn test_vm_sleep_short_succeeds() {
     let src = "取り込む 「時間」；眠る（１）；";
     assert_eq!(run(src), None);
 }
+
+// ── Phase 23b: dedup, chunk, fold-right ───────────────────────────────
+
+#[test]
+fn test_vm_dedup_removes_duplicates() {
+    let src = "取り込む 「配列」；整数列 ａ ＝ 【１、２、１、３、２】；整数列 ｂ ＝ 重複除去（ａ）；返す 要素数（ｂ）；";
+    assert_eq!(run(src), Some(Value::Int(3)));
+}
+
+#[test]
+fn test_vm_dedup_preserves_order() {
+    let src = "取り込む 「配列」；整数列 ａ ＝ 【３、１、２、１、３】；整数列 ｂ ＝ 重複除去（ａ）；返す ｂ【０】；";
+    assert_eq!(run(src), Some(Value::Int(3)));
+}
+
+#[test]
+fn test_vm_chunk_basic() {
+    let src = "取り込む 「配列」；整数列 ａ ＝ 【１、２、３、４、５】；整数列列 ｂ ＝ 分割列（ａ、２）；返す 要素数（ｂ）；";
+    assert_eq!(run(src), Some(Value::Int(3)));
+}
+
+#[test]
+fn test_vm_fold_right_sum() {
+    // 畳み込み右 over 【１、２、３】 with add fn and init ０ should give ６
+    let src = "取り込む 「関数」；整数列 元 ＝ 【１、２、３】；整数 結果 ＝ 畳み込み右（元、０、｜ｘ：整数、ａ：整数｜ ー＞ 整数 ｛ 返す ｘ ＋ ａ； ｝）；返す 結果；";
+    assert_eq!(run(src), Some(Value::Int(6)));
+}
+
+// ── Phase 23b: string padding and base conversion ─────────────────────
+
+#[test]
+fn test_vm_pad_left() {
+    let src = r#"取り込む 「文字列」；返す 左詰め（「hi」、５）；"#;
+    assert_eq!(run(src), Some(Value::Str("hi   ".to_string())));
+}
+
+#[test]
+fn test_vm_pad_right() {
+    let src = r#"取り込む 「文字列」；返す 右詰め（「hi」、５）；"#;
+    assert_eq!(run(src), Some(Value::Str("   hi".to_string())));
+}
+
+#[test]
+fn test_vm_format_radix_hex() {
+    let src = r#"取り込む 「文字列」；返す 基数変換（２５５、１６）；"#;
+    assert_eq!(run(src), Some(Value::Str("ff".to_string())));
+}
+
+#[test]
+fn test_vm_format_radix_binary() {
+    let src = r#"取り込む 「文字列」；返す 基数変換（１０、２）；"#;
+    assert_eq!(run(src), Some(Value::Str("1010".to_string())));
+}
+
+// ── Phase 23d: exit, stderr (smoke tests) ────────────────────────────
+
+#[test]
+fn test_vm_print_stderr_does_not_crash() {
+    let src = r#"取り込む 「入出力」；エラー印刷（「エラーです」）；"#;
+    assert_eq!(run(src), None);
+}
