@@ -394,3 +394,23 @@ fn test_vm_print_stderr_does_not_crash() {
     let src = r#"取り込む 「入出力」；エラー印刷（「エラーです」）；"#;
     assert_eq!(run(src), None);
 }
+
+// ── Phase 24b: assertions ─────────────────────────────────────────────
+
+#[test]
+fn test_vm_assert_true_succeeds() {
+    let src = "確認（１ ＋ １ ＝＝ ２）；返す １；";
+    assert_eq!(run(src), Some(Value::Int(1)));
+}
+
+#[test]
+fn test_vm_assert_false_raises_assertion_failed() {
+    let src = "確認（１ ＝＝ ２）；";
+    assert_eq!(run_result(src), Err(RuntimeError::AssertionFailed));
+}
+
+#[test]
+fn test_vm_assert_false_caught_by_try_catch() {
+    let src = "整数 結果 ＝ ０；試す ｛ 確認（偽）； ｝ 失敗 内容 ｛ 結果 ＝ １； ｝返す 結果；";
+    assert_eq!(run(src), Some(Value::Int(1)));
+}

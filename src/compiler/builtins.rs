@@ -93,6 +93,8 @@ pub enum BuiltinFn {
     PrintStderr,          // エラー印刷 (値) → 無
     PrintStderrNoNewline, // エラー印字 (値) → 無
     Exit,                 // 終了 (整数) → 無
+    // Phase 24b: assertions
+    Assert, // 確認 (真偽) → 無 — raises RuntimeError::AssertionFailed on false
 }
 
 pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
@@ -184,6 +186,8 @@ pub fn builtin_name(name: &str) -> Option<BuiltinFn> {
         "エラー印刷" => Some(BuiltinFn::PrintStderr),
         "エラー印字" => Some(BuiltinFn::PrintStderrNoNewline),
         "終了" => Some(BuiltinFn::Exit),
+        // 24b
+        "確認" => Some(BuiltinFn::Assert),
         _ => None,
     }
 }

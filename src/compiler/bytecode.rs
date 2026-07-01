@@ -84,4 +84,8 @@ pub struct Chunk {
     // (expressions have no spans), so a runtime error maps to its statement's
     // source line. See `Frame::span_at`, which performs the lookup at runtime.
     pub spans: Rc<[(usize, Span)]>,
+    // The declared function name, if this chunk is a named `関数` body (None
+    // for the top-level script chunk and for lambda bodies). Used to render
+    // per-frame names in an uncaught error's stack trace.
+    pub name: Option<Rc<str>>,
 }

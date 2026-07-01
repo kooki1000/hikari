@@ -167,6 +167,7 @@ impl Compiler {
                     instructions: Rc::from([]),
                     param_count,
                     spans: Rc::from([]),
+                    name: Some(Rc::from(name.as_str())),
                 });
             }
         }
@@ -823,6 +824,7 @@ impl Compiler {
                     instructions: Rc::from([]),
                     param_count: arity,
                     spans: Rc::from([]),
+                    name: None,
                 });
                 // Params take slots 0..arity; captures take arity..arity+C, so
                 // body references resolve as ordinary locals.

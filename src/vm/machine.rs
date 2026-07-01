@@ -20,6 +20,11 @@ pub struct Vm {
     try_stack: Vec<TryHandler>,
     // Source span of the most recent uncaught runtime error, for diagnostics.
     error_span: Option<Span>,
+    // Call chain at the moment of the most recent uncaught runtime error, one
+    // entry per active frame from innermost (where the error occurred) to
+    // outermost, as (function name, span). Frames without a name (the
+    // top-level script, lambda bodies) carry `None`.
+    error_trace: Vec<(Option<Rc<str>>, Option<Span>)>,
     // CLI arguments passed to the running program, returned by the 引数 builtin.
     program_args: Vec<String>,
 }
@@ -42,6 +47,7 @@ impl Vm {
             instructions: instructions.into(),
             param_count: 0,
             spans: Rc::from([]),
+            name: None,
         };
         let frame = Frame::new(&script_chunk, vec![]);
         Self {
@@ -51,6 +57,7 @@ impl Vm {
             frames: vec![frame],
             try_stack: Vec::new(),
             error_span: None,
+            error_trace: Vec::new(),
             program_args: Vec::new(),
         }
     }
@@ -65,6 +72,7 @@ impl Vm {
             instructions: script.into(),
             param_count: 0,
             spans: Rc::from([]),
+            name: None,
         };
         let frame = Frame::new(&script_chunk, vec![]);
         Self {
@@ -74,6 +82,7 @@ impl Vm {
             frames: vec![frame],
             try_stack: Vec::new(),
             error_span: None,
+            error_trace: Vec::new(),
             program_args: Vec::new(),
         }
     }
@@ -90,6 +99,13 @@ impl Vm {
     /// The source span of the most recent uncaught runtime error, if known.
     pub fn error_span(&self) -> Option<Span> {
         self.error_span
+    }
+
+    /// The call chain at the moment of the most recent uncaught runtime
+    /// error: one `(function name, span)` entry per active frame, innermost
+    /// first. Only meaningful right after `run`/`run_repl_line` returns `Err`.
+    pub fn error_trace(&self) -> &[(Option<Rc<str>>, Option<Span>)] {
+        &self.error_trace
     }
 
     /// Set the CLI arguments the program sees via the 引数 builtin.
@@ -717,6 +733,7 @@ impl Vm {
                         frame.ip = handler.catch_target;
                     } else {
                         self.error_span = self.current_error_span();
+                        self.error_trace = self.current_error_trace();
                         return Err(e);
                     }
                 }
@@ -759,6 +776,7 @@ impl Vm {
                             ip: 0,
                             locals: vec![None; INITIAL_LOCALS],
                             spans: Rc::from([]),
+                            name: None,
                         });
                     }
                     return Ok(v);
@@ -775,6 +793,7 @@ impl Vm {
                         frame.ip = handler.catch_target;
                     } else {
                         self.error_span = self.current_error_span();
+                        self.error_trace = self.current_error_trace();
                         // Reset transient execution state so the REPL session
                         // can continue cleanly after an uncaught error: drop any
                         // in-progress call frames, clear the operand stack and
@@ -800,6 +819,19 @@ impl Vm {
     fn current_error_span(&self) -> Option<Span> {
         let frame = self.frames.last()?;
         frame.span_at(frame.ip.saturating_sub(1))
+    }
+
+    /// The full call chain at the current point of execution, innermost frame
+    /// first. The innermost frame's `ip` has already advanced past the
+    /// erroring instruction (see `current_error_span`); every other frame's
+    /// `ip` sits just past the `Call`/`CallValue` that invoked the next frame,
+    /// so both cases resolve correctly via `span_at(ip - 1)`.
+    fn current_error_trace(&self) -> Vec<(Option<Rc<str>>, Option<Span>)> {
+        self.frames
+            .iter()
+            .rev()
+            .map(|f| (f.name.clone(), f.span_at(f.ip.saturating_sub(1))))
+            .collect()
     }
 
     pub fn sync_program(&mut self, constants: Vec<Value>, chunks: Vec<Chunk>) {

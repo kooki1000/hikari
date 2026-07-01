@@ -85,6 +85,16 @@ fn main() {
                 print!("{}", formatted);
             }
         }
+        // `hikari 試験 <file>` — run every zero-arg, 無-returning top-level
+        // 関数 whose name starts with 「試験_」, using 確認 for assertions
+        // inside them, and report a pass/fail count.
+        Some("試験") => {
+            let Some(path) = args.get(1) else {
+                eprintln!("使い方: hikari 試験 <ファイル.hkr>");
+                process::exit(1);
+            };
+            run_tests(path);
+        }
         Some(flag) if flag.starts_with('-') => {
             eprintln!("エラー: 不明なオプション '{}'", flag);
             print_usage();
@@ -118,6 +128,7 @@ fn print_usage() {
   hikari -c \"<コード>\" [引数...]        コードを直接実行する
   hikari 整形 <ファイル.hkr>            整形済みコードを標準出力に表示する
   hikari 整形 -i <ファイル.hkr>         ファイルを直接整形する（上書き）
+  hikari 試験 <ファイル.hkr>            「試験_」で始まる関数を実行して結果を報告する
 
 （[引数...] は「環境」モジュールの 引数（） で取得できます）
 
@@ -184,11 +195,97 @@ fn run_source(source: &str, entry_dir: &Path, program_args: Vec<String>) {
             ),
             None => eprintln!("実行時エラー: {}", e),
         }
+        print_stack_trace(vm.error_trace());
         process::exit(1);
     });
 
     if let Some(value) = result {
         println!("{}", display_value(&value));
+    }
+}
+
+/// Run every zero-arg, 無-returning top-level 関数 whose name starts with
+/// 「試験_」 in `path`, reporting a pass/fail count. Each test function is
+/// invoked inside a synthesized 試す/失敗 so one failing 確認 (or any other
+/// runtime error) doesn't stop the remaining tests from running. Exits
+/// non-zero if any test fails.
+fn run_tests(path: &str) {
+    let source = fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("エラー: ファイルを読み込めません '{}': {}", path, e);
+        process::exit(1);
+    });
+    let tokens = Lexer::new(&source).tokenize();
+    let ast = Parser::new(tokens).parse().unwrap_or_else(|e| {
+        eprintln!("{}", diagnostic::render(&source, e.span(), &e.to_string()));
+        process::exit(1);
+    });
+
+    let test_names: Vec<String> = ast
+        .iter()
+        .filter_map(|stmt| match stmt {
+            parser::Stmt::FnDecl {
+                name,
+                params,
+                return_ty,
+                ..
+            } if name.starts_with("試験_")
+                && params.is_empty()
+                && *return_ty == parser::HikariType::Void =>
+            {
+                Some(name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+
+    if test_names.is_empty() {
+        eprintln!("エラー: 「試験_」で始まる関数（引数なし、無を返す）が見つかりません。");
+        process::exit(1);
+    }
+
+    // Each test runs inside its own 試す/失敗 so a failing 確認 (or any other
+    // runtime error) is caught and tallied instead of aborting the run.
+    let mut harness = String::from("取り込む 「入出力」；整数 合格数 ＝ ０；整数 失敗数 ＝ ０；");
+    for name in &test_names {
+        harness.push_str(&format!(
+            "試す ｛ {name}（）； 合格数 ＝ 合格数 ＋ １； ｝ \
+             失敗 エラー内容 ｛ 失敗数 ＝ 失敗数 ＋ １； \
+             エラー印刷（「  失敗: {name} - 」＋エラー内容）； ｝",
+        ));
+    }
+    harness.push_str(
+        "印刷（「合格: 」＋文字列化（合格数）＋「  失敗: 」＋文字列化（失敗数）＋\
+         「  (全」＋文字列化（合格数＋失敗数）＋「件)」）；\
+         もし 失敗数 ＞ ０ ならば ｛ 終了（１）； ｝",
+    );
+
+    let combined = format!("{}\n{}", source, harness);
+    let entry_dir = Path::new(path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    run_source(&combined, &entry_dir, Vec::new());
+}
+
+/// Print an uncaught runtime error's call chain beneath the primary
+/// diagnostic, innermost frame first (skipping the innermost frame itself,
+/// already shown by the diagnostic snippet). No-op if there's nothing beyond
+/// the top-level script frame.
+fn print_stack_trace(trace: &[(Option<std::rc::Rc<str>>, Option<lexer::Span>)]) {
+    if trace.len() <= 1 {
+        return;
+    }
+    eprintln!("呼び出し元:");
+    for (name, span) in &trace[1..] {
+        let where_ = match name {
+            Some(n) => format!("関数 {}", n),
+            None => "トップレベル".to_string(),
+        };
+        match span {
+            Some(s) => eprintln!("  {} (行 {})", where_, s.line),
+            None => eprintln!("  {}", where_),
+        }
     }
 }
 

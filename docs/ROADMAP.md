@@ -16,9 +16,9 @@ ordered by impact. Each phase is independently shippable.
 
 ---
 
-## Status (updated 2026-06-29)
+## Status (updated 2026-07-01)
 
-**All roadmap phases through 23 are now complete.** Current state (631 tests passing):
+**All roadmap phases through 24 (partial) are now complete.** Current state (638 tests passing):
 
 | Phase | Theme | Status |
 |-------|-------|--------|
@@ -36,8 +36,9 @@ ordered by impact. Each phase is independently shippable.
 | ２１ | Close open gaps — comment-preserving formatter, `i64::MIN`, empty-array inference | ✅ **Done** |
 | ２２ | Finish the type system — `結果＜T、E＞` + `？` operator, generic type/enum decls, nested-fn error | ✅ **Done** |
 | ２３ | Batteries included — dedup/chunk/fold-right, string padding & base conversion, stderr I/O, exit code | ✅ **Done** |
+| ２４ | Ecosystem — `確認`/`hikari 試験`, runtime stack traces (24b/24d); editor support & package manifest deferred | 🟡 **Partial** |
 
-Every phase in this roadmap through 23 has shipped. Completed work is detailed ✅ inline below.
+Every phase in this roadmap through 24b/24d has shipped. Completed work is detailed ✅ inline below.
 A possible *future* extension beyond this roadmap is **user-written** generic
 functions (`関数＜Ｔ＞ …`); 10b delivered the internal parametric signatures the
 roadmap called for (removing the per-builtin type special-casing).
@@ -680,23 +681,33 @@ tuple type. *(Deferred — requires significant type-system machinery.)*
 
 ---
 
-## フェーズ２４ — 住める生態系（An Ecosystem to Live In）
+## フェーズ２４ — 住める生態系（An Ecosystem to Live In） 🟡 PARTIAL
 
 **24a. Editor support (v3 19d).** A Tree-sitter grammar (highlighting) and an LSP
-shim (go-to-definition, hovers, inline diagnostics). Huge ergonomics payoff for a
-full-width language where mis-spacing is easy.
+shim (go-to-definition, hovers, inline diagnostics). *(Deferred — a separate
+tooling project outside this codebase's compiler/VM scope.)*
 
-**24b. A test / assertion framework.** A built-in `確認（条件）` / assertion and a
-`hikari 試験 <file>` runner that reports pass/fail counts. Self-hosting the
-language's own test story makes it credible for real projects.
+**24b. ✅ A test / assertion framework.** `確認（真偽）→無` is a new ungated
+built-in (a core language feature, not gated behind a stdlib module import)
+that raises `RuntimeError::AssertionFailed`（`「確認が失敗しました。」`) on
+`偽`. `hikari 試験 <file>` discovers every zero-arg, `無`-returning top-level
+`関数` whose name starts with `試験_`, runs each inside a synthesized
+`試す`/`失敗` so one failing `確認` (or any other runtime error) doesn't stop
+the remaining tests, and prints a `合格`/`失敗` tally — exiting non-zero if any
+test failed.
 
 **24c. Package & dependency story.** Beyond `HIKARI＿PATH` (18d): a manifest that
 names a project's library dependencies and a way to fetch/pin them, so sharing
-code doesn't mean copying `.hkr` files.
+code doesn't mean copying `.hkr` files. *(Deferred — needs a package-registry
+design decision beyond this roadmap's scope.)*
 
-**24d. Runtime stack traces.** On an uncaught error, print the call chain (frame
-by frame with source locations), not just the failing statement — the `frames`
-stack and per-chunk span checkpoints already hold what's needed.
+**24d. ✅ Runtime stack traces.** `Chunk`/`Frame` now carry the declared
+function name (`None` for the top-level script and lambda bodies). On an
+uncaught error, `Vm::error_trace()` returns the full call chain — one
+`(name, span)` per active frame, innermost first — captured at the same two
+throw sites that already set `error_span`. `main.rs` renders it as a
+`呼び出し元:` list beneath the primary diagnostic (skipping the innermost
+frame, already shown by the diagnostic snippet).
 
 ---
 

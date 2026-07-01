@@ -851,6 +851,13 @@ pub(super) fn call_builtin(
             }
             _ => Err(RuntimeError::TypeMismatch),
         },
+
+        // ── Phase 24b: assertions ─────────────────────────────────────────────
+        BuiltinFn::Assert => match args.pop() {
+            Some(Value::Bool(true)) => Ok(Value::Int(0)),
+            Some(Value::Bool(false)) => Err(RuntimeError::AssertionFailed),
+            _ => Err(RuntimeError::TypeMismatch),
+        },
     }
 }
 

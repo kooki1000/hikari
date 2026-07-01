@@ -353,3 +353,34 @@ fn test_vm_repl_locals_survive_a_later_failed_line() {
         Ok(Some(Value::Int(7)))
     );
 }
+
+// ── Phase 24d: stack traces ────────────────────────────────────────────
+
+#[test]
+fn test_vm_error_trace_captures_call_chain() {
+    let src = "関数 内側（）ー＞整数｛ 返す １／０； ｝関数 外側（）ー＞整数｛ 返す 内側（）； ｝返す 外側（）；";
+    let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+    let mut compiler = Compiler::new();
+    let script = compiler.compile(&ast).unwrap();
+    let script_spans = compiler.script_spans.clone();
+    let mut vm = Vm::with_chunks(compiler.constants, compiler.chunks, script);
+    vm.set_script_spans(script_spans);
+    assert!(vm.run().is_err());
+    let trace = vm.error_trace();
+    // Innermost frame (内側) first, then 外側, then the top-level script.
+    assert_eq!(trace.len(), 3);
+    assert_eq!(trace[0].0.as_deref(), Some("内側"));
+    assert_eq!(trace[1].0.as_deref(), Some("外側"));
+    assert_eq!(trace[2].0, None);
+}
+
+#[test]
+fn test_vm_error_trace_empty_for_top_level_only_error() {
+    let src = "返す １／０；";
+    let ast = Parser::new(Lexer::new(src).tokenize()).parse().unwrap();
+    let mut compiler = Compiler::new();
+    let script = compiler.compile(&ast).unwrap();
+    let mut vm = Vm::with_chunks(compiler.constants, compiler.chunks, script);
+    assert!(vm.run().is_err());
+    assert_eq!(vm.error_trace().len(), 1);
+}
