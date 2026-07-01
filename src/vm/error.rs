@@ -18,6 +18,8 @@ pub enum RuntimeError {
     StackOverflow,
     // A file I/O operation failed (open/read/write).
     IoError(String),
+    // 確認（真偽） was called with 偽.
+    AssertionFailed,
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -56,6 +58,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::IoError(msg) => {
                 write!(f, "ファイル操作に失敗しました: {}", msg)
             }
+            RuntimeError::AssertionFailed => write!(f, "確認が失敗しました。"),
         }
     }
 }

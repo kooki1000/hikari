@@ -500,3 +500,18 @@ fn test_typecheck_exit_requires_io_module() {
     let err = TypeChecker::new().check(&parse(src)).unwrap_err();
     assert!(matches!(err, TypeError::ModuleNotImported { .. }));
 }
+
+// ── Phase 24b: assertions ─────────────────────────────────────────────
+
+#[test]
+fn test_typecheck_assert_ungated_ok() {
+    let src = "確認（１ ＝＝ １）；";
+    assert!(TypeChecker::new().check(&parse(src)).is_ok());
+}
+
+#[test]
+fn test_typecheck_assert_requires_bool_arg() {
+    let src = "確認（５）；";
+    let err = TypeChecker::new().check(&parse(src)).unwrap_err();
+    assert!(matches!(err, TypeError::ArgTypeMismatch { .. }));
+}

@@ -194,6 +194,12 @@ pub(super) fn builtin_sig(name: &str) -> Option<FnSig> {
             return_ty: HikariType::Void,
             type_params: vec![],
         }),
+        // 24b: assertion (ungated — a core language feature, not a stdlib module)
+        "確認" => Some(FnSig {
+            params: vec![HikariType::Bool],
+            return_ty: HikariType::Void,
+            type_params: vec![],
+        }),
         _ => None,
     }
 }

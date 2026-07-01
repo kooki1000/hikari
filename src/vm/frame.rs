@@ -14,6 +14,9 @@ pub(super) struct Frame {
     // Span checkpoints for `instructions` (see Chunk::spans). Used to attach a
     // source location to a runtime error raised in this frame.
     pub(super) spans: Rc<[(usize, Span)]>,
+    // The chunk's declared function name, if any (see Chunk::name). Used to
+    // render a per-frame name in an uncaught error's stack trace.
+    pub(super) name: Option<Rc<str>>,
 }
 
 // Initial local-slot capacity for a fresh frame. Slots beyond this are
@@ -33,6 +36,7 @@ impl Frame {
             ip: 0,
             locals,
             spans: chunk.spans.clone(),
+            name: chunk.name.clone(),
         }
     }
 
